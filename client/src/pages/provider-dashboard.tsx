@@ -1,0 +1,397 @@
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useAuth } from "@/hooks/use-auth";
+import { useToast } from "@/hooks/use-toast";
+import { useLocation } from "wouter";
+import {
+  Phone, BarChart3, Coins, LogOut, Zap, AlertCircle,
+  Share2, Copy, Clock, Wrench, Search, User, Plus, Minus,
+  Menu, X, Home, Settings, Moon, Sun, History, Info, ScrollText, Camera, Briefcase
+} from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { usePwaInstall } from "@/hooks/use-pwa-install";
+import { useTheme } from "@/lib/theme";
+import { useLanguage, LANGUAGE_NAMES, Language } from "@/lib/language";
+import { BackButton } from "@/components/BackButton";
+import logoImg from "@assets/772B17C5-7738-43B8-B5C0-04A7F2A6561B_1773842365564.png";
+import type { CallLog } from "@shared/schema";
+
+export default function ProviderDashboardPage() {
+  const { user, logout } = useAuth();
+  const { toast } = useToast();
+  const { t, lang, setLang } = useLanguage();
+  const [, setLocation] = useLocation();
+  const { canInstall, install: installPwa } = usePwaInstall();
+  const { theme, toggleTheme } = useTheme();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [buyAmount, setBuyAmount] = useState(10);
+  const [forceCallConfirmOpen, setForceCallConfirmOpen] = useState(false);
+
+  const { data: profile } = useQuery({ queryKey: ["/api/profiles/me", "provider"], queryFn: async () => {
+    const res = await fetch("/api/profiles/me?role=provider", { credentials: "include" });
+    if (!res.ok) throw new Error("Not found");
+    return res.json();
+  }});
+  const { data: provider } = useQuery({ queryKey: ["/api/providers/me"] });
+  const { data: credits } = useQuery<{ freeCredits: number; purchasedCredits: number; totalCredits: number }>({
+    queryKey: ["/api/credits/me"],
+    queryFn: async () => {
+      const res = await fetch("/api/credits/me", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+  });
+  const { data: callHistory } = useQuery<CallLog[]>({ queryKey: ["/api/calls/provider"] });
+  const { data: myPromo } = useQuery({ queryKey: ["/api/promo-codes/mine"] });
+  const { data: recruitmentLink } = useQuery<string>({
+    queryKey: ["/api/content", "recruitment_link"],
+    queryFn: async () => { const res = await fetch("/api/content/recruitment_link"); if (!res.ok) return "https://forms.gle/C54uAz7pkupe6g136"; return res.json(); },
+  });
+
+  const purchaseCredits = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/cashfree/create-order", { credits: buyAmount });
+      return res.json();
+    },
+    onSuccess: (data: { paymentSessionId: string; orderId: string; cfMode?: string }) => {
+      window.location.href = `/payment/checkout?session_id=${encodeURIComponent(data.paymentSessionId)}&order_id=${encodeURIComponent(data.orderId)}&credits=${buyAmount}&mode=${data.cfMode || "sandbox"}`;
+    },
+    onError: () => {
+      toast({ title: "Purchase failed", description: "Could not start payment. Please try again.", variant: "destructive" });
+    },
+  });
+
+  const setForceCalling = useMutation({
+    mutationFn: async (value: boolean) => {
+      const res = await apiRequest("PATCH", "/api/profile/preferences", {
+        role: "provider",
+        acceptDoubleCharge: value,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/profiles/me", "provider"] });
+      toast({ title: t("save") });
+    },
+    onError: (err: any) => {
+      toast({ title: t("callFailed"), description: err.message, variant: "destructive" });
+    },
+  });
+
+  const copyPromo = () => {
+    if (myPromo?.code) {
+      navigator.clipboard.writeText(myPromo.code);
+      toast({ title: "Copied!" });
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background">
+      {menuOpen && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="w-72 bg-card border-r shadow-xl h-full flex flex-col">
+            <div className="p-4 border-b flex items-center justify-between">
+              <div
+                className="flex items-center gap-2 cursor-pointer"
+                onClick={() => { setMenuOpen(false); setLocation("/provider/dashboard"); }}
+                data-testid="link-logo"
+              >
+                <img src={logoImg} alt="Mitrify" className="w-7 h-7 rounded-md" />
+                <span className="font-bold text-lg">Mitrify</span>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setMenuOpen(false)} data-testid="button-close-menu">
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
+
+            <div className="flex-1 p-4 space-y-2">
+              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/customer/home"); }} data-testid="link-home">
+                <Home className="w-4 h-4" /> {t("home")}
+              </Button>
+              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/provider/balance"); }} data-testid="link-balance">
+                <Coins className="w-4 h-4" /> {t("myCredits")}
+              </Button>
+              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/provider/dashboard"); setTimeout(() => { document.getElementById("provider-call-history")?.scrollIntoView({ behavior: "smooth" }); }, 100); }} data-testid="link-call-history">
+                <History className="w-4 h-4" /> {t("callHistory")}
+              </Button>
+              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/provider/edit-profile"); }} data-testid="link-edit-profile">
+                <Settings className="w-4 h-4" /> {t("editProfile")}
+              </Button>
+              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/customer/home"); }} data-testid="button-search-providers">
+                <Search className="w-4 h-4" /> {t("searchProviders")}
+              </Button>
+              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); window.open(recruitmentLink || "https://forms.gle/C54uAz7pkupe6g136", "_blank"); }} data-testid="button-recruitment">
+                <Briefcase className="w-4 h-4" /> {t("recruitment")}
+              </Button>
+              <Button variant="ghost" className="w-full justify-start gap-3" onClick={toggleTheme} data-testid="button-theme-toggle">
+                {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                {theme === "dark" ? t("lightMode") : t("darkMode")}
+              </Button>
+
+              {/* Language Switcher */}
+              <div className="pt-1">
+                <p className="text-xs text-muted-foreground px-3 pb-1 font-medium">{t("language")}</p>
+                <div className="flex gap-1 px-1">
+                  {(["en", "hi", "hl"] as Language[]).map((l) => (
+                    <button
+                      key={l}
+                      onClick={() => setLang(l)}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${lang === l ? "bg-primary text-primary-foreground shadow" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
+                      data-testid={`button-lang-${l}`}
+                    >
+                      {l === "en" ? "EN" : l === "hi" ? "हिं" : "HL"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t space-y-2">
+              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/about"); }} data-testid="link-about">
+                <Info className="w-4 h-4" /> {t("aboutUs")}
+              </Button>
+              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/terms"); }} data-testid="link-terms">
+                <ScrollText className="w-4 h-4" /> {t("terms")}
+              </Button>
+              <Button variant="ghost" className="w-full justify-start gap-3 text-destructive" onClick={() => logout()} data-testid="button-logout">
+                <LogOut className="w-4 h-4" /> {t("logout")}
+              </Button>
+            </div>
+          </div>
+          <div className="flex-1 bg-black/30" onClick={() => setMenuOpen(false)} />
+        </div>
+      )}
+
+      <header className="sticky top-0 z-40 bg-card border-b px-4 py-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <Button variant="ghost" size="icon" onClick={() => setMenuOpen(true)} data-testid="button-menu">
+            <Menu className="w-5 h-5" />
+          </Button>
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setLocation("/provider/dashboard")} data-testid="link-header-logo">
+            <img src={logoImg} alt="Mitrify" className="w-6 h-6 rounded-md" />
+            <span className="font-bold">Mitrify</span>
+            <Badge variant="secondary" className="text-[10px]">Provider</Badge>
+          </div>
+          <div className="w-10" />
+        </div>
+      </header>
+
+      <main className="p-4 max-w-2xl mx-auto space-y-4">
+        {profile && (
+          <div className="flex items-center gap-3 mb-2 p-3 bg-card rounded-xl border">
+            <div className="w-14 h-14 rounded-full overflow-hidden bg-primary/10 border-2 border-border flex items-center justify-center shrink-0">
+              {provider?.profilePhoto ? (
+                <img src={provider.profilePhoto} alt={profile.name} className="w-full h-full object-cover" data-testid="img-provider-photo" />
+              ) : (
+                <User className="w-7 h-7 text-primary/60" />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg font-semibold truncate">Hi, {profile.name}!</h2>
+              <p className="text-sm text-muted-foreground flex items-center gap-1">
+                <Wrench className="w-3 h-3" /> {provider?.serviceName || "Service Provider"}
+              </p>
+            </div>
+            <Button variant="ghost" size="sm" className="shrink-0 text-xs" onClick={() => setLocation("/provider/edit-profile")} data-testid="button-edit-photo">
+              <Camera className="w-3.5 h-3.5 mr-1" /> Edit
+            </Button>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3">
+          <Card>
+            <CardContent className="p-3 text-center">
+              <Coins className="w-5 h-5 mx-auto mb-1 text-primary" />
+              <p className="text-2xl font-bold" data-testid="text-total-credits">{credits?.totalCredits ?? 0}</p>
+              <p className="text-[10px] text-muted-foreground">{t("totalCredits")}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-3 text-center">
+              <Phone className="w-5 h-5 mx-auto mb-1 text-primary" />
+              <p className="text-2xl font-bold">{callHistory?.length || 0}</p>
+              <p className="text-[10px] text-muted-foreground">{t("totalCalls")}</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {credits && credits.totalCredits <= 0 && (
+          <Card className="border-red-300 dark:border-red-800 bg-red-50/60 dark:bg-red-950/30">
+            <CardContent className="p-4 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm text-red-800 dark:text-red-200 leading-snug">
+                  {t("lowBalanceBannerProvider")}
+                </p>
+                {profile?.acceptDoubleCharge && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {t("forceCallingHint")}
+                  </p>
+                )}
+                <Button
+                  size="sm"
+                  className="mt-2 bg-red-600 hover:bg-red-700 text-white"
+                  onClick={() => setLocation("/provider/balance")}
+                  data-testid="button-recharge-banner"
+                >
+                  {t("rechargeNow")}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Force Calling toggle — provider opts in to receive calls from
+            zero-balance customers (provider pays 2 credits per such call). */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-primary" />
+                  <Label htmlFor="force-calling-toggle" className="font-semibold cursor-pointer">
+                    {t("forceCallingTitle")}
+                  </Label>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                  {t("forceCallingHint")}
+                </p>
+              </div>
+              <Switch
+                id="force-calling-toggle"
+                checked={!!profile?.acceptDoubleCharge}
+                onCheckedChange={(next) => {
+                  if (next) {
+                    setForceCallConfirmOpen(true);
+                  } else {
+                    setForceCalling.mutate(false);
+                  }
+                }}
+                disabled={setForceCalling.isPending}
+                data-testid="switch-force-calling"
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Dialog open={forceCallConfirmOpen} onOpenChange={setForceCallConfirmOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{t("forceCallingConfirmTitle")}</DialogTitle>
+              <DialogDescription>{t("forceCallingConfirmBody")}</DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="flex flex-row gap-2 sm:justify-end">
+              <Button variant="outline" onClick={() => setForceCallConfirmOpen(false)} data-testid="button-force-call-cancel">
+                {t("cancel")}
+              </Button>
+              <Button
+                onClick={() => { setForceCallConfirmOpen(false); setForceCalling.mutate(true); }}
+                data-testid="button-force-call-confirm"
+              >
+                {t("confirm")}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {credits && credits.totalCredits <= 2 && (
+          <Card className="border-orange-200 dark:border-orange-800">
+            <CardContent className="p-4">
+              <h3 className="font-semibold mb-2 flex items-center gap-2">
+                <Coins className="w-4 h-4" /> Buy Provider Credits
+              </h3>
+              <p className="text-sm text-muted-foreground mb-3">
+                Each call received uses 1 credit (Rs.1/credit). Buy credits to keep receiving calls.
+              </p>
+              <div className="flex items-center gap-3 mb-3">
+                <Button variant="outline" size="icon" onClick={() => setBuyAmount(Math.max(1, buyAmount - 1))} data-testid="button-decrease-amount">
+                  <Minus className="w-4 h-4" />
+                </Button>
+                <Input
+                  type="number"
+                  min={1}
+                  max={10000}
+                  value={buyAmount}
+                  onChange={(e) => setBuyAmount(Math.max(1, Math.min(10000, parseInt(e.target.value) || 1)))}
+                  className="text-center text-lg font-bold w-24"
+                  data-testid="input-buy-amount"
+                />
+                <Button variant="outline" size="icon" onClick={() => setBuyAmount(Math.min(10000, buyAmount + 1))} data-testid="button-increase-amount">
+                  <Plus className="w-4 h-4" />
+                </Button>
+              </div>
+              <Button className="w-full" onClick={() => purchaseCredits.mutate()} disabled={purchaseCredits.isPending} data-testid="button-buy-credits">
+                Buy {buyAmount} Credits (Rs.{buyAmount})
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {myPromo && (
+          <Card>
+            <CardContent className="p-4">
+              <h3 className="font-semibold mb-2 flex items-center gap-2">
+                <Share2 className="w-4 h-4" /> Your Referral Code
+              </h3>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 bg-muted px-3 py-2 rounded-md text-sm font-mono" data-testid="text-promo-code">
+                  {myPromo.code}
+                </code>
+                <Button size="icon" variant="outline" onClick={copyPromo} data-testid="button-copy-promo">
+                  <Copy className="w-4 h-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">Used {myPromo.usageCount} times</p>
+            </CardContent>
+          </Card>
+        )}
+
+        <Card>
+          <CardContent className="p-4">
+            <h3 id="provider-call-history" className="font-semibold mb-3 flex items-center gap-2">
+              <BarChart3 className="w-4 h-4" /> Recent Calls
+            </h3>
+            {(!callHistory || callHistory.length === 0) ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No calls yet</p>
+            ) : (
+              <div className="space-y-2">
+                {callHistory.slice(0, 10).map((call) => (
+                  <div key={call.id} className="flex items-center justify-between py-2 border-b last:border-0" data-testid={`call-log-${call.id}`}>
+                    <div>
+                      <p className="text-sm font-medium">{call.customerName}</p>
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <Clock className="w-3 h-3" />
+                        {call.timestamp ? new Date(call.timestamp).toLocaleString() : "Unknown"}
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-0.5">
+                      <Badge variant="secondary" className="text-xs">{call.paymentStatus}</Badge>
+                      <span className="text-[10px] font-semibold" data-testid={`text-credits-${call.id}`}>
+                        {t("creditsCharged").replace("{n}", String(call.creditsCharged ?? 1))}
+                      </span>
+                      <span className="text-[9px] text-muted-foreground">
+                        {(() => {
+                          const r = call.chargeReason || "normal";
+                          if (r === "customer_no_balance") return t("callReasonCustomerNoBalance");
+                          if (r === "provider_no_balance") return t("callReasonProviderNoBalance");
+                          return t("callReasonNormal");
+                        })()}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </main>
+    </div>
+  );
+}
