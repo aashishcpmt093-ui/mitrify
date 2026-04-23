@@ -22,9 +22,9 @@ async function sendBackupAlert(opts: {
   filename?: string;
   errorMessage: string;
   dashboardUrl?: string;
-}): Promise<void> {
+}): Promise<{ sent: boolean; error?: string }> {
   const webhookUrl = process.env.BACKUP_ALERT_WEBHOOK;
-  if (!webhookUrl) return;
+  if (!webhookUrl) return { sent: false, error: "BACKUP_ALERT_WEBHOOK not configured" };
 
   const { filename, errorMessage, dashboardUrl } = opts;
   const dash = dashboardUrl ?? (process.env.REPLIT_DEV_DOMAIN
@@ -52,12 +52,18 @@ async function sendBackupAlert(opts: {
     });
 
     if (!res.ok) {
-      console.error(`[backup] alert webhook returned ${res.status}: ${await res.text()}`);
+      const detail = await res.text().catch(() => "");
+      const errMsg = `Webhook returned ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`;
+      console.error(`[backup] alert webhook returned ${res.status}: ${detail}`);
+      return { sent: false, error: errMsg };
     } else {
       console.log("[backup] alert sent to webhook");
+      return { sent: true };
     }
-  } catch (err) {
+  } catch (err: any) {
+    const errMsg = String(err?.message || err);
     console.error("[backup] failed to send alert webhook:", err);
+    return { sent: false, error: errMsg };
   }
 }
 
@@ -548,6 +554,8 @@ export interface BackupHistoryEntry {
   gcsName?: string;
   gcsError?: string;
   durationMs: number;
+  alertSent: boolean;
+  alertError?: string;
 }
 
 export interface BackupStatus {
@@ -702,6 +710,9 @@ export async function runDailyBackup(): Promise<BackupHistoryEntry> {
     throw err;
   }
 
+  let alertSent = false;
+  let alertError: string | undefined;
+
   const size = fs.statSync(filepath).size;
 
   // Email it (best-effort)
@@ -730,10 +741,12 @@ export async function runDailyBackup(): Promise<BackupHistoryEntry> {
   }
 
   if (!emailed && emailError) {
-    await sendBackupAlert({
+    const alertResult = await sendBackupAlert({
       filename,
       errorMessage: `Backup email delivery failed: ${emailError}`,
     });
+    alertSent = alertResult.sent;
+    alertError = alertResult.error;
   }
 
   pruneOldBackups();
@@ -764,6 +777,8 @@ export async function runDailyBackup(): Promise<BackupHistoryEntry> {
     gcsName,
     gcsError,
     durationMs: Date.now() - startedAt,
+    alertSent,
+    alertError,
   };
 
   const status = await readStatus();

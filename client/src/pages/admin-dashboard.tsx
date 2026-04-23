@@ -49,9 +49,9 @@ function avatarColor(name: string) {
 
 interface BackupStatusResponse {
   lastSuccessAt: string | null;
-  lastSuccess: { filename: string; size: number; emailed: boolean; emailError?: string; gcsUploaded?: boolean; gcsName?: string } | null;
+  lastSuccess: { filename: string; size: number; emailed: boolean; emailError?: string; gcsUploaded?: boolean; gcsName?: string; alertSent: boolean; alertError?: string } | null;
   lastError: { at: string; message: string } | null;
-  history: Array<{ filename: string; size: number; generatedAt: string; emailed: boolean; gcsUploaded?: boolean }>;
+  history: Array<{ filename: string; size: number; generatedAt: string; emailed: boolean; emailError?: string; durationMs: number; gcsUploaded?: boolean; alertSent: boolean; alertError?: string }>;
 }
 
 function formatBytes(n: number) {
@@ -401,6 +401,12 @@ export default function AdminDashboardPage() {
   });
 
   useEffect(() => { if (isAdmin === false) setLocation("/admin/login"); }, [isAdmin]);
+
+  const { data: backupStatus } = useQuery<BackupStatusResponse>({
+    queryKey: ["/api/admin/backup/status"],
+    refetchInterval: 5 * 60 * 1000,
+    enabled: !!isAdmin,
+  });
 
   const { data: stats } = useQuery<AdminStats>({ queryKey: ["/api/admin/stats"], enabled: !!isAdmin });
   const { data: providersList } = useQuery<any[]>({ queryKey: ["/api/admin/providers"], enabled: !!isAdmin });
@@ -3290,6 +3296,65 @@ export default function AdminDashboardPage() {
               </>
             )}
           </div>
+
+          {/* Backup history */}
+          {backupStatus && backupStatus.history.length > 0 && (
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/30 p-4 space-y-2 mt-3" data-testid="backup-history-section">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-slate-600 dark:text-slate-400" />
+                <h3 className="font-semibold text-sm">Recent backup history</h3>
+              </div>
+              <div className="overflow-x-auto rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+                <table className="w-full text-[11px]">
+                  <thead className="bg-slate-100/80 dark:bg-slate-800/80 sticky top-0">
+                    <tr>
+                      <th className="text-left px-2 py-1.5 font-semibold">File</th>
+                      <th className="text-right px-2 py-1.5 font-semibold">Size</th>
+                      <th className="text-center px-2 py-1.5 font-semibold">Email</th>
+                      <th className="text-center px-2 py-1.5 font-semibold">Alert</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {backupStatus.history.map((entry, idx) => (
+                      <tr key={entry.filename} className="border-t border-slate-100 dark:border-slate-800" data-testid={`row-backup-history-${idx}`}>
+                        <td className="px-2 py-1.5">
+                          <span className="font-mono truncate block max-w-[140px]" title={entry.filename}>
+                            {entry.filename.replace("mitrify-backup-", "")}
+                          </span>
+                          <span className="text-muted-foreground">{formatRelative(entry.generatedAt)}</span>
+                        </td>
+                        <td className="px-2 py-1.5 text-right text-muted-foreground">{formatBytes(entry.size)}</td>
+                        <td className="px-2 py-1.5 text-center" data-testid={`status-email-${idx}`}>
+                          {entry.emailed ? (
+                            <span className="inline-flex items-center gap-0.5 text-emerald-700 dark:text-emerald-400 font-semibold" title="Email sent">
+                              <CheckCircle className="w-3 h-3" /> sent
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-0.5 text-red-600 dark:text-red-400 font-semibold" title={entry.emailError ?? "Email not sent"}>
+                              <XCircle className="w-3 h-3" /> failed
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-2 py-1.5 text-center" data-testid={`status-alert-${idx}`}>
+                          {entry.alertSent ? (
+                            <span className="inline-flex items-center gap-0.5 text-emerald-700 dark:text-emerald-400 font-semibold" title="Alert webhook delivered">
+                              <CheckCircle className="w-3 h-3" /> sent
+                            </span>
+                          ) : entry.alertError ? (
+                            <span className="inline-flex items-center gap-0.5 text-red-600 dark:text-red-400 font-semibold" title={entry.alertError}>
+                              <XCircle className="w-3 h-3" /> failed
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Restore section */}
           <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-900/20 p-4 space-y-3 mt-3">
