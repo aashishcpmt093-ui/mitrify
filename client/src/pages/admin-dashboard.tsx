@@ -73,9 +73,23 @@ function formatRelative(iso: string) {
 }
 
 function BackupStatusLine() {
-  const { data, isLoading } = useQuery<BackupStatusResponse>({
+  const { toast } = useToast();
+  const { data, isLoading, refetch } = useQuery<BackupStatusResponse>({
     queryKey: ["/api/admin/backup/status"],
     refetchInterval: 5 * 60 * 1000,
+  });
+
+  const runNowMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/admin/backup/run-now"),
+    onSuccess: () => {
+      toast({ title: "Backup complete", description: "Backup ran successfully." });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/backup/status"] });
+      refetch();
+    },
+    onError: (err: any) => {
+      const msg = err?.message || "Backup failed";
+      toast({ title: "Backup failed", description: msg, variant: "destructive" });
+    },
   });
 
   if (isLoading) return null;
@@ -103,15 +117,32 @@ function BackupStatusLine() {
           )}
         </span>
       </div>
-      {err && (
-        <span
-          className="text-[10px] font-semibold text-red-700 dark:text-red-300 truncate"
-          data-testid="text-backup-error"
-          title={err.message}
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {err && (
+          <span
+            className="text-[10px] font-semibold text-red-700 dark:text-red-300 truncate"
+            data-testid="text-backup-error"
+            title={err.message}
+          >
+            last error: {err.message.slice(0, 40)}
+          </span>
+        )}
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-6 px-2 text-[11px] border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+          onClick={() => runNowMutation.mutate()}
+          disabled={runNowMutation.isPending}
+          data-testid="button-run-backup-now"
         >
-          last error: {err.message.slice(0, 40)}
-        </span>
-      )}
+          {runNowMutation.isPending ? (
+            <Loader2 className="w-3 h-3 animate-spin mr-1" />
+          ) : (
+            <Database className="w-3 h-3 mr-1" />
+          )}
+          Run now
+        </Button>
+      </div>
     </div>
   );
 }

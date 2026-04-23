@@ -13,7 +13,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup } from "./backupJob";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -1783,6 +1783,27 @@ export async function registerRoutes(
       res.json(status);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to load backup status" });
+    }
+  });
+
+  // POST /api/admin/backup/run-now — triggers the same pipeline as the nightly
+  // job on demand. Rate-limited to one run per 5 minutes.
+  let lastRunNowAt = 0;
+  const RUN_NOW_COOLDOWN_MS = 5 * 60 * 1000;
+
+  app.post("/api/admin/backup/run-now", adminCheck, async (_req, res) => {
+    const now = Date.now();
+    const remaining = RUN_NOW_COOLDOWN_MS - (now - lastRunNowAt);
+    if (remaining > 0) {
+      const secs = Math.ceil(remaining / 1000);
+      return res.status(429).json({ message: `Rate limited. Try again in ${secs}s.` });
+    }
+    lastRunNowAt = now;
+    try {
+      const entry = await runDailyBackup();
+      res.json(entry);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Backup failed" });
     }
   });
 
