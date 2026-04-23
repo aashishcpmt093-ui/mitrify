@@ -208,6 +208,8 @@ export default function AdminDashboardPage() {
     durationMs: number;
     tables: Array<{ table: string; rowsBefore: number; rowsAfter: number; delta: number }>;
   } | null>(null);
+  const [parsedTables, setParsedTables] = useState<Array<{ name: string; rowCount: number }> | null>(null);
+  const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
   const [downloadInProgress, setDownloadInProgress] = useState(false);
 
   async function handleBackupDownload() {
@@ -243,13 +245,34 @@ export default function AdminDashboardPage() {
     }
   }
 
+  function parseSqlTables(text: string): Array<{ name: string; rowCount: number }> {
+    const re = /-- Table: (\S+)\s+\|\s+rows in dump: (\d+)/g;
+    const results: Array<{ name: string; rowCount: number }> = [];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      results.push({ name: m[1], rowCount: parseInt(m[2], 10) });
+    }
+    return results;
+  }
+
   async function handleRestoreSubmit() {
     if (!restoreFile || !restoreConfirmed || restoreInProgress) return;
+    if (parsedTables && parsedTables.length > 0 && selectedTables.size === 0) {
+      toast({ title: "No tables selected", description: "Tick at least one table to restore.", variant: "destructive" });
+      return;
+    }
     setRestoreInProgress(true);
     setRestoreSummary(null);
     try {
       const fd = new FormData();
       fd.append("file", restoreFile);
+      // Always send the explicit table list when we have parsed metadata —
+      // even if every table is ticked. This ensures the server only touches
+      // tables that actually exist in this dump, leaving any DB tables that
+      // are absent from the dump completely untouched.
+      if (parsedTables !== null && parsedTables.length > 0) {
+        fd.append("tables", JSON.stringify(Array.from(selectedTables)));
+      }
       const res = await fetch("/api/admin/restore", {
         method: "POST",
         credentials: "include",
@@ -907,6 +930,8 @@ export default function AdminDashboardPage() {
                 setRestoreFile(null);
                 setRestoreConfirmed(false);
                 setRestoreSummary(null);
+                setParsedTables(null);
+                setSelectedTables(new Set());
                 setBackupDialogOpen(true);
               } },
           ];
@@ -3077,6 +3102,8 @@ export default function AdminDashboardPage() {
           setRestoreFile(null);
           setRestoreConfirmed(false);
           setRestoreSummary(null);
+          setParsedTables(null);
+          setSelectedTables(new Set());
         }
       }}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="dialog-backup">
@@ -3123,9 +3150,13 @@ export default function AdminDashboardPage() {
             <div className="flex items-start gap-2 rounded-lg bg-red-100/70 dark:bg-red-900/40 p-2.5 border border-red-200 dark:border-red-800">
               <AlertTriangle className="w-4 h-4 text-red-700 dark:text-red-300 flex-shrink-0 mt-0.5" />
               <p className="text-[11px] leading-snug text-red-800 dark:text-red-200">
-                <strong>Warning:</strong> Restoring will <strong>overwrite all current data</strong> with the
-                contents of the uploaded file. Every table is wiped first, then re-populated from the backup.
-                This cannot be undone — download a fresh backup first if you might need to roll back.
+                {parsedTables !== null && parsedTables.length > 0 && selectedTables.size < parsedTables.length && selectedTables.size > 0 ? (
+                  <><strong>Warning:</strong> Only the <strong>{selectedTables.size} ticked table{selectedTables.size !== 1 ? "s" : ""}</strong> will be cleared and re-populated from the backup. All other tables are left untouched. This cannot be undone.</>
+                ) : (
+                  <><strong>Warning:</strong> Restoring will <strong>overwrite all selected tables</strong> with the
+                  contents of the uploaded file. Each selected table is cleared first, then re-populated from the backup.
+                  This cannot be undone — download a fresh backup first if you might need to roll back.</>
+                )}
               </p>
             </div>
 
@@ -3137,11 +3168,23 @@ export default function AdminDashboardPage() {
                 id="restore-file"
                 type="file"
                 accept=".sql,application/sql,text/plain"
-                onChange={(e) => {
+                onChange={async (e) => {
                   const f = e.target.files?.[0] || null;
                   setRestoreFile(f);
                   setRestoreConfirmed(false);
                   setRestoreSummary(null);
+                  setParsedTables(null);
+                  setSelectedTables(new Set());
+                  if (f) {
+                    try {
+                      const text = await f.text();
+                      const tables = parseSqlTables(text);
+                      setParsedTables(tables);
+                      setSelectedTables(new Set(tables.map((t) => t.name)));
+                    } catch {
+                      setParsedTables([]);
+                    }
+                  }
                 }}
                 disabled={restoreInProgress}
                 data-testid="input-restore-file"
@@ -3154,6 +3197,68 @@ export default function AdminDashboardPage() {
               )}
             </div>
 
+            {/* Table selection checklist */}
+            {parsedTables !== null && parsedTables.length > 0 && (
+              <div className="space-y-1.5" data-testid="restore-table-selector">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold">Tables in this backup ({parsedTables.length})</p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-40"
+                      disabled={restoreInProgress}
+                      onClick={() => setSelectedTables(new Set(parsedTables.map((t) => t.name)))}
+                      data-testid="button-select-all-tables"
+                    >
+                      Select all
+                    </button>
+                    <span className="text-[11px] text-muted-foreground">·</span>
+                    <button
+                      type="button"
+                      className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-40"
+                      disabled={restoreInProgress}
+                      onClick={() => setSelectedTables(new Set())}
+                      data-testid="button-deselect-all-tables"
+                    >
+                      Deselect all
+                    </button>
+                  </div>
+                </div>
+                <div className="max-h-44 overflow-y-auto rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800">
+                  {parsedTables.map((t) => (
+                    <label
+                      key={t.name}
+                      className="flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 select-none"
+                      data-testid={`label-restore-table-${t.name}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedTables.has(t.name)}
+                        onChange={(e) => {
+                          const next = new Set(selectedTables);
+                          e.target.checked ? next.add(t.name) : next.delete(t.name);
+                          setSelectedTables(next);
+                        }}
+                        disabled={restoreInProgress}
+                        className="flex-shrink-0"
+                        data-testid={`checkbox-restore-table-${t.name}`}
+                      />
+                      <span className="font-mono text-[11px] flex-1 truncate">{t.name}</span>
+                      <span className="text-[10px] text-muted-foreground flex-shrink-0">
+                        {t.rowCount.toLocaleString("en-IN")} rows
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {selectedTables.size > 0 && selectedTables.size < parsedTables.length && (
+                  <p className="text-[11px] text-amber-700 dark:text-amber-400 flex items-center gap-1" data-testid="text-selective-restore-note">
+                    <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                    Only {selectedTables.size} of {parsedTables.length} tables will be restored — unticked tables are untouched.
+                  </p>
+                )}
+              </div>
+            )}
+
             <label className="flex items-start gap-2 text-[11px] leading-snug cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -3164,8 +3269,10 @@ export default function AdminDashboardPage() {
                 data-testid="checkbox-restore-confirm"
               />
               <span>
-                I understand this will permanently overwrite all existing data with the contents of
-                <strong> {restoreFile?.name || "the uploaded file"}</strong>.
+                {parsedTables && selectedTables.size < (parsedTables?.length ?? 0) && selectedTables.size > 0
+                  ? <>I understand this will permanently overwrite the <strong>{selectedTables.size} selected table{selectedTables.size !== 1 ? "s" : ""}</strong> with data from <strong>{restoreFile?.name || "the uploaded file"}</strong>. Unselected tables are left unchanged.</>
+                  : <>I understand this will permanently overwrite all existing data with the contents of <strong>{restoreFile?.name || "the uploaded file"}</strong>.</>
+                }
               </span>
             </label>
 
@@ -3173,7 +3280,12 @@ export default function AdminDashboardPage() {
               size="sm"
               variant="destructive"
               onClick={handleRestoreSubmit}
-              disabled={!restoreFile || !restoreConfirmed || restoreInProgress}
+              disabled={
+                !restoreFile ||
+                !restoreConfirmed ||
+                restoreInProgress ||
+                (parsedTables !== null && parsedTables.length > 0 && selectedTables.size === 0)
+              }
               className="w-full"
               data-testid="button-restore-submit"
             >

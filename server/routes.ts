@@ -13,7 +13,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump } from "./backupJob";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -1845,8 +1845,35 @@ export async function registerRoutes(
       if (!sql.trim()) {
         return res.status(400).json({ message: "Uploaded file is empty" });
       }
+      // Optional allow-list of table names to selectively restore.
+      let allowList: string[] | undefined;
+      const tablesField = req.body?.tables;
+      if (typeof tablesField === "string" && tablesField.trim()) {
+        try {
+          const parsed = JSON.parse(tablesField);
+          if (Array.isArray(parsed) && parsed.every((t) => typeof t === "string")) {
+            allowList = parsed as string[];
+          } else {
+            return res.status(400).json({ message: "Invalid tables field — expected a JSON array of strings" });
+          }
+        } catch {
+          return res.status(400).json({ message: "Invalid tables field — expected a JSON array of strings" });
+        }
+        // Validate that every requested table actually exists in the uploaded dump.
+        // This prevents a caller from requesting a truncate-without-reinsert by
+        // naming a table that is not in the backup file.
+        if (allowList && allowList.length > 0) {
+          const dumpTables = new Set(parseTablesFromDump(sql));
+          const unknown = allowList.filter((t) => !dumpTables.has(t));
+          if (unknown.length > 0) {
+            return res.status(400).json({
+              message: `The following tables are not present in the uploaded dump: ${unknown.join(", ")}`,
+            });
+          }
+        }
+      }
       try {
-        const result = await restoreFromSql(sql);
+        const result = await restoreFromSql(sql, allowList);
         res.json({
           message: "Restore completed successfully",
           ...result,

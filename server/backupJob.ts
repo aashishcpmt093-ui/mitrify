@@ -298,17 +298,70 @@ async function countRowsPerTable(tables: string[]): Promise<Record<string, numbe
 }
 
 /**
+ * Parse a dump produced by streamBackupSql into per-table SQL sections.
+ * Returns a map of table name → the SQL lines that belong to that table
+ * (including the CREATE TABLE, INSERTs, and setval lines).
+ * The preamble content (before the first table block) is stored under the
+ * key "" (empty string).
+ */
+function parseDumpSections(sql: string): Map<string, string> {
+  const sections = new Map<string, string>();
+
+  // Each table block starts with a comment line: "-- Table: <name>  |  rows …"
+  // We split on the triple-line separator that surrounds it.
+  const tableHeaderRe = /-- ─+[\r\n]+-- Table: (\S+)[^\r\n]*[\r\n]+-- ─+[\r\n]*/g;
+
+  const matches: Array<{ table: string; headerStart: number; contentStart: number }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = tableHeaderRe.exec(sql)) !== null) {
+    matches.push({ table: m[1], headerStart: m.index, contentStart: m.index + m[0].length });
+  }
+
+  // Preamble (everything before the first table block)
+  const preamble = matches.length > 0 ? sql.slice(0, matches[0].headerStart) : sql;
+  sections.set("", preamble);
+
+  for (let i = 0; i < matches.length; i++) {
+    const { table, headerStart } = matches[i];
+    const sectionEnd = i + 1 < matches.length ? matches[i + 1].headerStart : sql.length;
+    sections.set(table, sql.slice(headerStart, sectionEnd));
+  }
+
+  return sections;
+}
+
+/**
+ * Return the ordered list of table names present in a dump produced by
+ * `streamBackupSql`. Used by the restore route to validate the caller's
+ * allow-list against what is actually in the uploaded file.
+ */
+export function parseTablesFromDump(sql: string): string[] {
+  const sections = parseDumpSections(sql);
+  const tables: string[] = [];
+  sections.forEach((_block, table) => {
+    if (table) tables.push(table);
+  });
+  return tables;
+}
+
+/**
  * Replay an uploaded .sql backup. The dump is run inside a single
  * transaction with FK-trigger checks disabled (session_replication_role
- * = 'replica') so cross-table inserts apply in any order. Existing tables
- * are TRUNCATEd first so the restore is a clean overwrite — this matches
- * the warning shown in the admin UI.
+ * = 'replica') so cross-table inserts apply in any order.
+ *
+ * When `allowList` is provided only those tables are TRUNCATEd and
+ * re-populated; all other tables are left untouched. When it is omitted
+ * (or empty) every table is overwritten — the original full-restore
+ * behaviour.
  *
  * The dump's own outer BEGIN/COMMIT are stripped because Postgres does
  * not support nested transactions (a literal COMMIT inside our wrapper
  * would prematurely end the transaction).
  */
-export async function restoreFromSql(sql: string): Promise<RestoreResult> {
+export async function restoreFromSql(
+  sql: string,
+  allowList?: string[],
+): Promise<RestoreResult> {
   const startedAt = Date.now();
 
   // Strip the outer BEGIN; / COMMIT; the dump emits — we run the whole
@@ -319,6 +372,22 @@ export async function restoreFromSql(sql: string): Promise<RestoreResult> {
 
   const tablesBefore = await listPublicTables();
   const beforeCounts = await countRowsPerTable(tablesBefore);
+
+  // Selective mode: filter the SQL down to only the allowed table sections.
+  const selective = allowList && allowList.length > 0;
+  let sqlToRun = stripped;
+  let tablesToTruncate = tablesBefore;
+
+  if (selective) {
+    const allowed = new Set(allowList!);
+    const sections = parseDumpSections(stripped);
+    const parts: string[] = [sections.get("") ?? ""];
+    sections.forEach((block, table) => {
+      if (table && allowed.has(table)) parts.push(block);
+    });
+    sqlToRun = parts.join("");
+    tablesToTruncate = tablesBefore.filter((t) => allowed.has(t));
+  }
 
   const client = await pool.connect();
   try {
@@ -333,12 +402,31 @@ export async function restoreFromSql(sql: string): Promise<RestoreResult> {
     } catch {}
     try { await client.query("SET CONSTRAINTS ALL DEFERRED"); } catch {}
 
-    if (tablesBefore.length > 0) {
-      const list = tablesBefore.map(quoteIdent).join(", ");
-      await client.query(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);
+    if (tablesToTruncate.length > 0) {
+      if (selective) {
+        // In selective mode we use DELETE rather than TRUNCATE so that we
+        // never accidentally clear tables outside the allow-list.
+        // PostgreSQL enforces FK constraints at the planning stage of TRUNCATE
+        // (before triggers run), meaning TRUNCATE on a referenced table would
+        // need CASCADE and could wipe unselected child tables even when
+        // session_replication_role = 'replica' is set.
+        // DELETE operates via trigger-based FK checks, which ARE suppressed
+        // by session_replication_role = 'replica', so each selected table
+        // can be cleared independently without touching anything else.
+        // Sequence reset is handled by the setval statements already present
+        // in the dump SQL that runs immediately after.
+        for (const t of tablesToTruncate) {
+          await client.query(`DELETE FROM ${quoteIdent(t)}`);
+        }
+      } else {
+        // Full restore: TRUNCATE all tables at once with CASCADE — safe because
+        // we are about to repopulate every table from the dump.
+        const list = tablesToTruncate.map(quoteIdent).join(", ");
+        await client.query(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);
+      }
     }
 
-    await client.query(stripped);
+    await client.query(sqlToRun);
 
     if (replicationRoleSet) {
       try { await client.query("SET session_replication_role = 'origin'"); } catch {}
@@ -354,6 +442,7 @@ export async function restoreFromSql(sql: string): Promise<RestoreResult> {
   const tablesAfter = await listPublicTables();
   const afterCounts = await countRowsPerTable(tablesAfter);
 
+  // Summary covers all tables that existed before OR after.
   const allTables = Array.from(new Set([...tablesBefore, ...tablesAfter])).sort();
   const tables: RestoreTableSummary[] = allTables.map((t) => {
     const rowsBefore = beforeCounts[t] ?? 0;
