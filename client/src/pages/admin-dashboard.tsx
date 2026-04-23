@@ -17,7 +17,7 @@ import {
   Ban, Trash2, Download, TicketPlus, ToggleLeft, ToggleRight,
   Moon, Sun, Pencil, X, Save, FileText, Plus, Minus,
   Snowflake, RotateCcw, AlertTriangle, Coins, Search,
-  SortAsc, Filter, TrendingUp, Activity, Briefcase, Link, EyeOff,
+  SortAsc, Filter, TrendingUp, Activity, Briefcase, Link, Eye, EyeOff,
   UserCog, ExternalLink, Key, CheckCircle, Loader2,
   Calendar, Award, Clock, XCircle, ChevronRight, Upload, FileSpreadsheet,
   Copy, MapPin, Star, Database
@@ -211,6 +211,12 @@ export default function AdminDashboardPage() {
   const [parsedTables, setParsedTables] = useState<Array<{ name: string; rowCount: number }> | null>(null);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
   const [downloadInProgress, setDownloadInProgress] = useState(false);
+  const [dryRunInProgress, setDryRunInProgress] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState<{
+    tableCount: number;
+    tables: Array<{ name: string; rowsInDump: number }>;
+    unknownStatements: string[];
+  } | null>(null);
 
   async function handleBackupDownload() {
     setDownloadInProgress(true);
@@ -253,6 +259,42 @@ export default function AdminDashboardPage() {
       results.push({ name: m[1], rowCount: parseInt(m[2], 10) });
     }
     return results;
+  }
+
+  async function handleDryRun() {
+    if (!restoreFile || dryRunInProgress || restoreInProgress) return;
+    if (parsedTables && parsedTables.length > 0 && selectedTables.size === 0) {
+      toast({ title: "No tables selected", description: "Tick at least one table to preview.", variant: "destructive" });
+      return;
+    }
+    setDryRunInProgress(true);
+    setDryRunResult(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", restoreFile);
+      if (parsedTables !== null && parsedTables.length > 0) {
+        fd.append("tables", JSON.stringify(Array.from(selectedTables)));
+      }
+      const res = await fetch("/api/admin/restore/preview", {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.message || `HTTP ${res.status}`);
+      }
+      setDryRunResult({
+        tableCount: data.tableCount ?? 0,
+        tables: Array.isArray(data.tables) ? data.tables : [],
+        unknownStatements: Array.isArray(data.unknownStatements) ? data.unknownStatements : [],
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Preview failed";
+      toast({ title: "Preview failed", description: msg, variant: "destructive" });
+    } finally {
+      setDryRunInProgress(false);
+    }
   }
 
   async function handleRestoreSubmit() {
@@ -3173,6 +3215,7 @@ export default function AdminDashboardPage() {
                   setRestoreFile(f);
                   setRestoreConfirmed(false);
                   setRestoreSummary(null);
+                  setDryRunResult(null);
                   setParsedTables(null);
                   setSelectedTables(new Set());
                   if (f) {
@@ -3207,7 +3250,7 @@ export default function AdminDashboardPage() {
                       type="button"
                       className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-40"
                       disabled={restoreInProgress}
-                      onClick={() => setSelectedTables(new Set(parsedTables.map((t) => t.name)))}
+                      onClick={() => { setDryRunResult(null); setSelectedTables(new Set(parsedTables.map((t) => t.name))); }}
                       data-testid="button-select-all-tables"
                     >
                       Select all
@@ -3217,7 +3260,7 @@ export default function AdminDashboardPage() {
                       type="button"
                       className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-40"
                       disabled={restoreInProgress}
-                      onClick={() => setSelectedTables(new Set())}
+                      onClick={() => { setDryRunResult(null); setSelectedTables(new Set()); }}
                       data-testid="button-deselect-all-tables"
                     >
                       Deselect all
@@ -3237,6 +3280,7 @@ export default function AdminDashboardPage() {
                         onChange={(e) => {
                           const next = new Set(selectedTables);
                           e.target.checked ? next.add(t.name) : next.delete(t.name);
+                          setDryRunResult(null);
                           setSelectedTables(next);
                         }}
                         disabled={restoreInProgress}
@@ -3276,25 +3320,94 @@ export default function AdminDashboardPage() {
               </span>
             </label>
 
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={handleRestoreSubmit}
-              disabled={
-                !restoreFile ||
-                !restoreConfirmed ||
-                restoreInProgress ||
-                (parsedTables !== null && parsedTables.length > 0 && selectedTables.size === 0)
-              }
-              className="w-full"
-              data-testid="button-restore-submit"
-            >
-              {restoreInProgress ? (
-                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Restoring…</>
-              ) : (
-                <><RotateCcw className="w-4 h-4 mr-2" />Restore database</>
-              )}
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleDryRun}
+                disabled={
+                  !restoreFile ||
+                  dryRunInProgress ||
+                  restoreInProgress ||
+                  (parsedTables !== null && parsedTables.length > 0 && selectedTables.size === 0)
+                }
+                className="flex-1"
+                data-testid="button-restore-preview"
+              >
+                {dryRunInProgress ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Previewing…</>
+                ) : (
+                  <><Eye className="w-4 h-4 mr-2" />Preview</>
+                )}
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={handleRestoreSubmit}
+                disabled={
+                  !restoreFile ||
+                  !restoreConfirmed ||
+                  restoreInProgress ||
+                  dryRunInProgress ||
+                  !dryRunResult ||
+                  (parsedTables !== null && parsedTables.length > 0 && selectedTables.size === 0)
+                }
+                className="flex-1"
+                data-testid="button-restore-submit"
+              >
+                {restoreInProgress ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Restoring…</>
+                ) : (
+                  <><RotateCcw className="w-4 h-4 mr-2" />Restore database</>
+                )}
+              </Button>
+            </div>
+
+            {/* Dry-run preview result */}
+            {dryRunResult && (
+              <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-900/20 p-3 space-y-2" data-testid="dry-run-result">
+                <div className="flex items-center gap-2">
+                  <Eye className="w-4 h-4 text-blue-700 dark:text-blue-300 flex-shrink-0" />
+                  <p className="text-xs font-semibold text-blue-800 dark:text-blue-200">
+                    Preview — {dryRunResult.tableCount} table{dryRunResult.tableCount !== 1 ? "s" : ""} would be restored
+                  </p>
+                </div>
+                <div className="max-h-44 overflow-y-auto rounded border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900">
+                  <table className="w-full text-[11px]">
+                    <thead className="bg-blue-100/60 dark:bg-blue-900/30 sticky top-0">
+                      <tr>
+                        <th className="text-left px-2 py-1 font-semibold">Table</th>
+                        <th className="text-right px-2 py-1 font-semibold">Rows in dump</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dryRunResult.tables.map((t) => (
+                        <tr key={t.name} className="border-t border-blue-100 dark:border-blue-900/40" data-testid={`row-preview-${t.name}`}>
+                          <td className="px-2 py-1 font-mono">{t.name}</td>
+                          <td className="px-2 py-1 text-right">{t.rowsInDump.toLocaleString("en-IN")}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {dryRunResult.unknownStatements.length > 0 && (
+                  <div className="space-y-1" data-testid="dry-run-unknown-statements">
+                    <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                      {dryRunResult.unknownStatements.length} unrecognised statement type{dryRunResult.unknownStatements.length !== 1 ? "s" : ""} found:
+                    </p>
+                    <ul className="list-disc list-inside space-y-0.5">
+                      {dryRunResult.unknownStatements.map((stmt, i) => (
+                        <li key={i} className="font-mono text-[10px] text-muted-foreground truncate" data-testid={`dry-run-unknown-${i}`}>{stmt}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <p className="text-[11px] text-blue-700 dark:text-blue-300">
+                  No data was written. Click <strong>Restore database</strong> to apply these changes.
+                </p>
+              </div>
+            )}
 
             {/* Per-table summary after restore */}
             {restoreSummary && (

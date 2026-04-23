@@ -275,6 +275,78 @@ export interface RestoreResult {
   tables: RestoreTableSummary[];
 }
 
+export interface PreviewTableEntry {
+  name: string;
+  rowsInDump: number;
+}
+
+export interface PreviewResult {
+  tableCount: number;
+  tables: PreviewTableEntry[];
+  unknownStatements: string[];
+}
+
+/**
+ * Parse a .sql dump produced by streamBackupSql and return a summary of what
+ * a restore would do — without executing any SQL or touching the database.
+ *
+ * When `allowList` is provided only those tables are included in the result
+ * (mirroring the selective-restore behaviour of restoreFromSql).
+ */
+export function previewSqlBackup(
+  sql: string,
+  allowList?: string[],
+): PreviewResult {
+  const sections = parseDumpSections(sql);
+
+  // Row counts embedded in dump comments: "-- Table: <name>  |  rows in dump: <n>"
+  const tableRowCounts = new Map<string, number>();
+  const headerRe = /-- Table: (\S+)\s+\|\s+rows in dump: (\d+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = headerRe.exec(sql)) !== null) {
+    tableRowCounts.set(m[1], parseInt(m[2], 10));
+  }
+
+  // All table names present in the dump (ordered as they appear).
+  const allTables: string[] = [];
+  sections.forEach((_, table) => {
+    if (table) allTables.push(table);
+  });
+
+  const targetTables =
+    allowList && allowList.length > 0
+      ? allTables.filter((t) => allowList.includes(t))
+      : allTables;
+
+  const tables: PreviewTableEntry[] = targetTables.map((name) => {
+    // Prefer the metadata comment count; fall back to counting INSERT lines.
+    const block = sections.get(name) ?? "";
+    const insertCount = (block.match(/^INSERT\s+INTO\s+/gim) ?? []).length;
+    return {
+      name,
+      rowsInDump: tableRowCounts.get(name) ?? insertCount,
+    };
+  });
+
+  // Collect statement keywords that are not part of a normal pg_dump output.
+  const knownPrefixRe =
+    /^\s*(--|\/\*|\*|INSERT\s|CREATE\s|SET\s|BEGIN\s*;|COMMIT\s*;|ROLLBACK\s*;|TRUNCATE\s|ALTER\s|DROP\s|SELECT\s|COPY\s|\\\.|\$\$)/i;
+  const seenKeywords = new Set<string>();
+  const unknownStatements: string[] = [];
+  for (const line of sql.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (knownPrefixRe.test(trimmed)) continue;
+    const keyword = trimmed.split(/\s+/)[0].toUpperCase();
+    if (!seenKeywords.has(keyword)) {
+      seenKeywords.add(keyword);
+      unknownStatements.push(trimmed.slice(0, 120));
+    }
+  }
+
+  return { tableCount: tables.length, tables, unknownStatements };
+}
+
 async function listPublicTables(): Promise<string[]> {
   const res = await pool.query(
     `SELECT table_name FROM information_schema.tables

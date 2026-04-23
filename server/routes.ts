@@ -13,7 +13,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup } from "./backupJob";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -1825,6 +1825,54 @@ export async function registerRoutes(
       }
     }
   });
+
+  // POST /api/admin/restore/preview — parse a .sql dump and return a
+  // dry-run summary (table list + row counts from the file) without
+  // touching the database.
+  app.post(
+    "/api/admin/restore/preview",
+    adminCheck,
+    restoreUpload.single("file"),
+    async (req: any, res) => {
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file) {
+        return res.status(400).json({ message: "No file uploaded" });
+      }
+      const name = (file.originalname || "").toLowerCase();
+      if (!name.endsWith(".sql")) {
+        return res.status(400).json({ message: "Only .sql files are accepted" });
+      }
+      const sql = file.buffer.toString("utf8");
+      if (!sql.trim()) {
+        return res.status(400).json({ message: "Uploaded file is empty" });
+      }
+      let allowList: string[] | undefined;
+      const tablesField = req.body?.tables;
+      if (typeof tablesField === "string" && tablesField.trim()) {
+        try {
+          const parsed = JSON.parse(tablesField);
+          if (Array.isArray(parsed) && parsed.every((t) => typeof t === "string")) {
+            allowList = parsed as string[];
+          } else {
+            return res.status(400).json({ message: "Invalid tables field — expected a JSON array of strings" });
+          }
+        } catch {
+          return res.status(400).json({ message: "Invalid tables field — expected a JSON array of strings" });
+        }
+        if (allowList && allowList.length > 0) {
+          const dumpTables = new Set(parseTablesFromDump(sql));
+          const unknown = allowList.filter((t) => !dumpTables.has(t));
+          if (unknown.length > 0) {
+            return res.status(400).json({
+              message: `The following tables are not present in the uploaded dump: ${unknown.join(", ")}`,
+            });
+          }
+        }
+      }
+      const preview = previewSqlBackup(sql, allowList);
+      res.json(preview);
+    },
+  );
 
   // POST /api/admin/restore — admin uploads a .sql backup file and we
   // replay it inside a single transaction. Returns per-table row counts.
