@@ -595,6 +595,61 @@ export async function getBackupStatus(): Promise<BackupStatus> {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Run-now rate-limit timestamp — persisted so restarts don't
+// reset the 5-minute cooldown.
+//
+// claimRunNowSlot() atomically checks and updates the timestamp
+// inside a transaction using SELECT FOR UPDATE so that concurrent
+// requests cannot both pass the cooldown check simultaneously.
+// ─────────────────────────────────────────────────────────────
+const RUN_NOW_KEY = "backup_run_now_at";
+
+export async function claimRunNowSlot(
+  cooldownMs: number,
+): Promise<{ allowed: true } | { allowed: false; remainingSecs: number }> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Ensure the row exists (no-op if it was already created).
+    await client.query(
+      `INSERT INTO site_content (key, value, updated_at)
+       VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (key) DO NOTHING`,
+      [RUN_NOW_KEY, JSON.stringify({ ts: 0 })],
+    );
+
+    // Lock the row exclusively so parallel requests wait here.
+    const { rows } = await client.query<{ value: { ts: number } }>(
+      `SELECT value FROM site_content WHERE key = $1 FOR UPDATE`,
+      [RUN_NOW_KEY],
+    );
+
+    const storedTs: number =
+      typeof rows[0]?.value?.ts === "number" ? rows[0].value.ts : 0;
+    const now = Date.now();
+    const remaining = cooldownMs - (now - storedTs);
+
+    if (remaining > 0) {
+      await client.query("ROLLBACK");
+      return { allowed: false, remainingSecs: Math.ceil(remaining / 1000) };
+    }
+
+    await client.query(
+      `UPDATE site_content SET value = $2::jsonb, updated_at = NOW() WHERE key = $1`,
+      [RUN_NOW_KEY, JSON.stringify({ ts: now })],
+    );
+    await client.query("COMMIT");
+    return { allowed: true };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // Run a backup: write to disk, email, prune, persist status
 // ─────────────────────────────────────────────────────────────
 

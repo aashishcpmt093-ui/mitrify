@@ -15,7 +15,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot } from "./backupJob";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -1790,18 +1790,17 @@ export async function registerRoutes(
 
   // POST /api/admin/backup/run-now — triggers the same pipeline as the nightly
   // job on demand. Rate-limited to one run per 5 minutes.
-  let lastRunNowAt = 0;
+  // The timestamp is persisted to the DB so server restarts don't bypass the limit.
+  // claimRunNowSlot() uses SELECT FOR UPDATE inside a transaction to make the
+  // check-and-update atomic, preventing bypass via concurrent requests.
   const RUN_NOW_COOLDOWN_MS = 5 * 60 * 1000;
 
   app.post("/api/admin/backup/run-now", adminCheck, async (_req, res) => {
-    const now = Date.now();
-    const remaining = RUN_NOW_COOLDOWN_MS - (now - lastRunNowAt);
-    if (remaining > 0) {
-      const secs = Math.ceil(remaining / 1000);
-      return res.status(429).json({ message: `Rate limited. Try again in ${secs}s.` });
-    }
-    lastRunNowAt = now;
     try {
+      const claim = await claimRunNowSlot(RUN_NOW_COOLDOWN_MS);
+      if (!claim.allowed) {
+        return res.status(429).json({ message: `Rate limited. Try again in ${claim.remainingSecs}s.` });
+      }
       const entry = await runDailyBackup();
       res.json(entry);
     } catch (err: any) {
