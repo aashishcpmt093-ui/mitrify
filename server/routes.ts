@@ -1770,38 +1770,11 @@ export async function registerRoutes(
   });
 
   // ── FULL DATABASE BACKUP (admin only) ──
-  // GET /api/admin/backup?days=7|30|90|all
-  // Streams a .sql file with INSERT statements for every table.
-  // For tables with a date column, ?days=N filters to rows from the last N days.
-  // ?days=all (or omitted) dumps every row.
+  // GET /api/admin/backup
+  // Streams a .sql file containing a CREATE TABLE IF NOT EXISTS statement
+  // and every row of every table in the live database. No filtering, no
+  // sampling — 100% snapshot. Self-restorable via `psql < backup.sql`.
   app.get("/api/admin/backup", adminCheck, async (req, res) => {
-    const daysParam = String(req.query.days || "all").toLowerCase();
-    const days = daysParam === "all" ? null : Math.max(1, parseInt(daysParam, 10) || 0);
-
-    // Map of table -> column to filter by date (null = always include all)
-    const dateColumnMap: Record<string, string | null> = {
-      profiles: "created_at",
-      providers: "created_at",
-      local_users: "created_at",
-      jobs: "created_at",
-      pending_providers: "created_at",
-      credit_payments: "created_at",
-      salary_payments: "created_at",
-      promo_codes: "created_at",
-      employees: "created_at",
-      co_admins: "created_at",
-      calls: "timestamp",
-      subscriptions: "start_date",
-      promo_usage_log: "used_at",
-      search_log: "last_searched",
-      // tables without time-based filtering — always include all rows:
-      credits: null,
-      site_content: null,
-      visitor_stats: null,
-      sessions: null,
-      users: null,
-    };
-
     function sqlLiteral(val: any): string {
       if (val === null || val === undefined) return "NULL";
       if (typeof val === "boolean") return val ? "TRUE" : "FALSE";
@@ -1823,11 +1796,49 @@ export async function registerRoutes(
       return `'${String(val).replace(/'/g, "''")}'`;
     }
 
+    function quoteIdent(s: string) { return `"${s.replace(/"/g, '""')}"`; }
+
+    // Map information_schema column metadata back to a Postgres type literal.
+    function columnTypeSql(col: any): string {
+      const dt: string = col.data_type;
+      const udt: string = col.udt_name;
+      const len: number | null = col.character_maximum_length;
+      const prec: number | null = col.numeric_precision;
+      const scale: number | null = col.numeric_scale;
+      switch (dt) {
+        case "character varying": return len ? `varchar(${len})` : "varchar";
+        case "character":         return len ? `char(${len})` : "char";
+        case "text":              return "text";
+        case "integer":           return "integer";
+        case "bigint":            return "bigint";
+        case "smallint":          return "smallint";
+        case "boolean":           return "boolean";
+        case "real":              return "real";
+        case "double precision":  return "double precision";
+        case "numeric":           return prec ? `numeric(${prec}${scale != null ? `,${scale}` : ""})` : "numeric";
+        case "json":              return "json";
+        case "jsonb":             return "jsonb";
+        case "uuid":              return "uuid";
+        case "date":              return "date";
+        case "timestamp without time zone": return "timestamp";
+        case "timestamp with time zone":    return "timestamptz";
+        case "time without time zone":      return "time";
+        case "time with time zone":         return "timetz";
+        case "bytea":             return "bytea";
+        case "ARRAY": {
+          // udt_name like "_text" → "text[]"
+          const base = udt && udt.startsWith("_") ? udt.slice(1) : (udt || "text");
+          return `${base}[]`;
+        }
+        default:
+          return udt || dt;
+      }
+    }
+
     function pad(n: number) { return n.toString().padStart(2, "0"); }
     const now = new Date();
     const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
-    const rangeLabel = days ? `last-${days}d` : "full";
-    const filename = `mitrify-backup-${stamp}-${rangeLabel}.sql`;
+    const filename = `mitrify-backup-${stamp}.sql`;
 
     res.setHeader("Content-Type", "application/sql; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
@@ -1838,11 +1849,8 @@ export async function registerRoutes(
     try {
       write(`-- Mitrify database backup\n`);
       write(`-- Generated: ${now.toISOString()}\n`);
-      write(`-- Range: ${days ? `last ${days} days` : "ALL DATA (100% snapshot)"}\n`);
-      write(`-- Restore steps:\n`);
-      write(`--   1) Create empty Postgres database\n`);
-      write(`--   2) Run \`npm run db:push\` from the Mitrify codebase to create the schema\n`);
-      write(`--   3) Run \`psql <connection-url> < ${filename}\` to load this data\n`);
+      write(`-- Contents: 100% full snapshot of every table, every row\n`);
+      write(`-- Restore: psql <connection-url> < ${filename}\n`);
       write(`\nBEGIN;\n\n`);
 
       // Discover all public tables in the live DB
@@ -1858,38 +1866,73 @@ export async function registerRoutes(
       for (const table of tableNames) {
         // Get column metadata, ordered by ordinal_position
         const colsRes = await pool.query(
-          `SELECT column_name, data_type FROM information_schema.columns
-           WHERE table_schema = 'public' AND table_name = $1
-           ORDER BY ordinal_position`,
+          `SELECT column_name, data_type, udt_name, character_maximum_length,
+                  numeric_precision, numeric_scale, is_nullable, column_default
+             FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = $1
+            ORDER BY ordinal_position`,
           [table]
         );
-        const cols: string[] = colsRes.rows.map((r: any) => r.column_name);
+        const colRows: any[] = colsRes.rows;
+        const cols: string[] = colRows.map((r) => r.column_name);
         const colTypes: Record<string, string> = Object.fromEntries(
-          colsRes.rows.map((r: any) => [r.column_name, r.data_type])
+          colRows.map((r) => [r.column_name, r.data_type])
         );
         if (cols.length === 0) continue;
 
-        const dateCol = table in dateColumnMap ? dateColumnMap[table] : null;
-        const useFilter = days !== null && dateCol !== null;
-        const whereClause = useFilter
-          ? ` WHERE "${dateCol}" >= NOW() - INTERVAL '${days} days'`
-          : "";
+        // Primary key columns (used inside CREATE TABLE)
+        const pkRes = await pool.query(
+          `SELECT a.attname AS column_name
+             FROM pg_index i
+             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+            WHERE i.indrelid = ('public.' || $1)::regclass AND i.indisprimary
+            ORDER BY array_position(i.indkey, a.attnum)`,
+          [table]
+        );
+        const pkCols: string[] = pkRes.rows.map((r: any) => r.column_name);
 
         const countRes = await pool.query(
-          `SELECT COUNT(*)::int AS c FROM "${table}"${whereClause}`
+          `SELECT COUNT(*)::int AS c FROM ${quoteIdent(table)}`
         );
         const total: number = countRes.rows[0]?.c ?? 0;
 
         write(`-- ─────────────────────────────────────────\n`);
-        write(`-- Table: ${table}  |  rows in dump: ${total}${useFilter ? `  |  filter: ${dateCol} >= now() - ${days}d` : "  |  full"}\n`);
+        write(`-- Table: ${table}  |  rows in dump: ${total}\n`);
         write(`-- ─────────────────────────────────────────\n`);
+
+        // Emit CREATE TABLE IF NOT EXISTS so the file is self-restorable
+        // against an empty Postgres database. When a column default is a
+        // sequence (nextval('...')), use the matching SERIAL pseudo-type so
+        // Postgres auto-creates the backing sequence on restore.
+        const colDefs = colRows.map((c) => {
+          const isSerialDefault =
+            typeof c.column_default === "string" &&
+            c.column_default.startsWith("nextval(");
+          let typeSql: string;
+          let emitDefault = c.column_default !== null && c.column_default !== undefined;
+          if (isSerialDefault) {
+            const dt = c.data_type;
+            typeSql = dt === "bigint" ? "bigserial" : dt === "smallint" ? "smallserial" : "serial";
+            emitDefault = false;
+          } else {
+            typeSql = columnTypeSql(c);
+          }
+          const parts: string[] = [quoteIdent(c.column_name), typeSql];
+          if (emitDefault) parts.push(`DEFAULT ${c.column_default}`);
+          if (c.is_nullable === "NO" && !isSerialDefault) parts.push("NOT NULL");
+          return "  " + parts.join(" ");
+        });
+        if (pkCols.length > 0) {
+          colDefs.push(`  PRIMARY KEY (${pkCols.map(quoteIdent).join(", ")})`);
+        }
+        write(`CREATE TABLE IF NOT EXISTS ${quoteIdent(table)} (\n${colDefs.join(",\n")}\n);\n`);
 
         if (total === 0) {
           write(`-- (no rows)\n\n`);
           continue;
         }
 
-        const colList = cols.map((c) => `"${c}"`).join(", ");
+        const colList = cols.map(quoteIdent).join(", ");
 
         // Stream rows in batches. Use keyset pagination on numeric "id" when
         // present (much faster than OFFSET on large tables like
@@ -1900,16 +1943,13 @@ export async function registerRoutes(
         if (hasNumericId) {
           let lastId = 0;
           while (true) {
-            const keysetWhere = whereClause
-              ? `${whereClause} AND "id" > ${lastId}`
-              : ` WHERE "id" > ${lastId}`;
             const rowsRes = await pool.query(
-              `SELECT ${colList} FROM "${table}"${keysetWhere} ORDER BY "id" LIMIT ${BATCH}`
+              `SELECT ${colList} FROM ${quoteIdent(table)} WHERE "id" > ${lastId} ORDER BY "id" LIMIT ${BATCH}`
             );
             if (rowsRes.rows.length === 0) break;
             for (const row of rowsRes.rows) {
               const vals = cols.map((c) => sqlLiteral(row[c])).join(", ");
-              write(`INSERT INTO "${table}" (${colList}) VALUES (${vals});\n`);
+              write(`INSERT INTO ${quoteIdent(table)} (${colList}) VALUES (${vals});\n`);
               lastId = Number(row.id) || lastId;
             }
           }
@@ -1918,15 +1958,21 @@ export async function registerRoutes(
           let offset = 0;
           while (offset < total) {
             const rowsRes = await pool.query(
-              `SELECT ${colList} FROM "${table}"${whereClause} ORDER BY "${orderCol}" LIMIT ${BATCH} OFFSET ${offset}`
+              `SELECT ${colList} FROM ${quoteIdent(table)} ORDER BY ${quoteIdent(orderCol)} LIMIT ${BATCH} OFFSET ${offset}`
             );
             if (rowsRes.rows.length === 0) break;
             for (const row of rowsRes.rows) {
               const vals = cols.map((c) => sqlLiteral(row[c])).join(", ");
-              write(`INSERT INTO "${table}" (${colList}) VALUES (${vals});\n`);
+              write(`INSERT INTO ${quoteIdent(table)} (${colList}) VALUES (${vals});\n`);
             }
             offset += rowsRes.rows.length;
           }
+        }
+
+        // Sync the serial sequence on "id" (if any) so future inserts after
+        // restore don't collide with the dumped IDs.
+        if (hasNumericId) {
+          write(`SELECT setval(pg_get_serial_sequence('${table.replace(/'/g, "''")}', 'id'), COALESCE((SELECT MAX("id") FROM ${quoteIdent(table)}), 1), true);\n`);
         }
         write(`\n`);
       }

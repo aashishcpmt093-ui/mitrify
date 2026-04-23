@@ -57,8 +57,6 @@ export default function AdminDashboardPage() {
   const [editPromoCode, setEditPromoCode] = useState("");
   const [editPromoCredits, setEditPromoCredits] = useState("");
   const [editProvider, setEditProvider] = useState<EditProviderState>({ open: false, profile: null, providerData: null });
-  const [backupOpen, setBackupOpen] = useState(false);
-  const [backupRange, setBackupRange] = useState<"7" | "30" | "90" | "all">("all");
   const [editName, setEditName] = useState("");
   const [editMobile, setEditMobile] = useState("");
   const [editServiceName, setEditServiceName] = useState("");
@@ -726,7 +724,39 @@ export default function AdminDashboardPage() {
             { value: "creditpurchase", icon: Coins, label: "Credit Buy", count: purchaseCount,         iconBg: "bg-purple-100 dark:bg-purple-900/60",  iconColor: "text-purple-600 dark:text-purple-400",  activeBg: "bg-purple-600",  border: "border-purple-200 dark:border-purple-800" },
             { value: "duplicateentry", icon: Copy,  label: "Duplicate",  count: duplicateData?.length, iconBg: "bg-red-100 dark:bg-red-900/60",         iconColor: "text-red-600 dark:text-red-400",        activeBg: "bg-red-600",     border: "border-red-200 dark:border-red-800" },
             { value: "backup",    icon: Database,   label: "Backup",     count: undefined,             iconBg: "bg-amber-100 dark:bg-amber-900/60",     iconColor: "text-amber-600 dark:text-amber-400",    activeBg: "bg-amber-600",   border: "border-amber-200 dark:border-amber-800",
-              onClick: () => { setBackupOpen(true); } },
+              onClick: async () => {
+                toast({
+                  title: "Backup download started",
+                  description: "Sab data download ho raha hai. Bada file hai, thoda time lag sakta hai.",
+                });
+                try {
+                  const res = await fetch("/api/admin/backup", { credentials: "include" });
+                  if (!res.ok) {
+                    const text = await res.text().catch(() => "");
+                    throw new Error(text || `HTTP ${res.status}`);
+                  }
+                  const disposition = res.headers.get("content-disposition") || "";
+                  const match = /filename="?([^"]+)"?/.exec(disposition);
+                  const filename = match?.[1] || "mitrify-backup.sql";
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = filename;
+                  a.rel = "noopener";
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                } catch (err: unknown) {
+                  const msg = err instanceof Error ? err.message : "Download shuru nahi ho saki";
+                  toast({
+                    title: "Backup failed",
+                    description: msg,
+                    variant: "destructive",
+                  });
+                }
+              } },
           ];
           return (
             <div id="section-cards" className="grid grid-cols-4 gap-2.5 mb-5">
@@ -2884,71 +2914,6 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {/* ── BACKUP DIALOG ── */}
-      <Dialog open={backupOpen} onOpenChange={setBackupOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Database Backup</DialogTitle>
-            <DialogDescription>
-              Kitne din ka data download karna hai? "All Data" 100% backup degi (sare users, calls, profiles, location, sab kuch).
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2 py-2">
-            {[
-              { v: "7" as const, label: "Last 7 days" },
-              { v: "30" as const, label: "Last 30 days" },
-              { v: "90" as const, label: "Last 90 days" },
-              { v: "all" as const, label: "All Data (recommended)" },
-            ].map((opt) => (
-              <button
-                key={opt.v}
-                type="button"
-                data-testid={`button-backup-range-${opt.v}`}
-                onClick={() => setBackupRange(opt.v)}
-                className={`w-full text-left px-4 py-3 rounded-xl border transition-all ${
-                  backupRange === opt.v
-                    ? "bg-amber-600 text-white border-transparent shadow-md"
-                    : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800"
-                }`}
-              >
-                <span className="text-sm font-semibold">{opt.label}</span>
-              </button>
-            ))}
-          </div>
-          <DialogFooter className="gap-2 sm:gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setBackupOpen(false)}
-              data-testid="button-backup-cancel"
-            >
-              Cancel
-            </Button>
-            <Button
-              className="bg-amber-600 hover:bg-amber-700 text-white"
-              data-testid="button-backup-download"
-              onClick={() => {
-                const url = `/api/admin/backup?days=${backupRange}`;
-                const a = document.createElement("a");
-                a.href = url;
-                a.rel = "noopener";
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                setBackupOpen(false);
-                toast({
-                  title: "Backup shuru ho gayi",
-                  description: backupRange === "all"
-                    ? "Poora data download ho raha hai. Bada file hai, thoda time lag sakta hai."
-                    : `Last ${backupRange} days ka data download ho raha hai.`,
-                });
-              }}
-            >
-              <Download className="w-4 h-4 mr-1" />
-              Download Backup
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
