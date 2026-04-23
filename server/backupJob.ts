@@ -716,6 +716,40 @@ export async function uploadToGCS(
   return { url, gcsName };
 }
 
+/**
+ * List backup files in the configured GCS bucket. Returns name, size, and
+ * generation time. Sorted newest-first.
+ */
+export async function listGCSBackups(): Promise<Array<{ name: string; size: number; updated: string }>> {
+  const gcs = getGCSClient();
+  if (!gcs) throw new Error("GCS not configured — GCS_SERVICE_ACCOUNT_KEY / GCS_BUCKET_NAME missing");
+  const { storage, bucketName } = gcs;
+  const [files] = await storage.bucket(bucketName).getFiles();
+  const out = files
+    .filter((f) => f.name.endsWith(".sql"))
+    .map((f) => ({
+      name: f.name,
+      size: Number(f.metadata.size ?? 0),
+      updated: String(f.metadata.updated ?? f.metadata.timeCreated ?? ""),
+    }))
+    .sort((a, b) => (b.updated || "").localeCompare(a.updated || ""));
+  return out;
+}
+
+/**
+ * Download a backup file from GCS and return its SQL content as a string.
+ */
+export async function downloadFromGCS(gcsName: string): Promise<string> {
+  const gcs = getGCSClient();
+  if (!gcs) throw new Error("GCS not configured — GCS_SERVICE_ACCOUNT_KEY / GCS_BUCKET_NAME missing");
+  const { storage, bucketName } = gcs;
+  const file = storage.bucket(bucketName).file(gcsName);
+  const [exists] = await file.exists();
+  if (!exists) throw new Error(`File "${gcsName}" not found in bucket`);
+  const [buf] = await file.download();
+  return buf.toString("utf8");
+}
+
 function pruneOldBackups(): void {
   try {
     if (!fs.existsSync(BACKUPS_DIR)) return;

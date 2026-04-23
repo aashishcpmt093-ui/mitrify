@@ -245,6 +245,9 @@ export default function AdminDashboardPage() {
   const [gcsMode, setGcsMode] = useState<"overwrite" | "new">("new");
   const [gcsUploadResult, setGcsUploadResult] = useState<{ gcsName: string; url: string; size: number } | null>(null);
   const [testAlertPending, setTestAlertPending] = useState(false);
+  const [restoreSource, setRestoreSource] = useState<"local" | "gcs">("local");
+  const [selectedGcsName, setSelectedGcsName] = useState<string>("");
+  const [gcsListLoading, setGcsListLoading] = useState(false);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [restoreConfirmed, setRestoreConfirmed] = useState(false);
   const [restoreInProgress, setRestoreInProgress] = useState(false);
@@ -307,8 +310,13 @@ export default function AdminDashboardPage() {
     return results;
   }
 
+  const restoreReady =
+    restoreSource === "local" ? !!restoreFile : !!selectedGcsName;
+  const restoreLabel =
+    restoreSource === "local" ? restoreFile?.name || "the uploaded file" : selectedGcsName || "the selected GCS file";
+
   async function handleDryRun() {
-    if (!restoreFile || dryRunInProgress || restoreInProgress) return;
+    if (!restoreReady || dryRunInProgress || restoreInProgress) return;
     if (parsedTables && parsedTables.length > 0 && selectedTables.size === 0) {
       toast({ title: "No tables selected", description: "Tick at least one table to preview.", variant: "destructive" });
       return;
@@ -316,16 +324,29 @@ export default function AdminDashboardPage() {
     setDryRunInProgress(true);
     setDryRunResult(null);
     try {
-      const fd = new FormData();
-      fd.append("file", restoreFile);
-      if (parsedTables !== null && parsedTables.length > 0) {
-        fd.append("tables", JSON.stringify(Array.from(selectedTables)));
+      let res: Response;
+      if (restoreSource === "local") {
+        const fd = new FormData();
+        fd.append("file", restoreFile!);
+        if (parsedTables !== null && parsedTables.length > 0) {
+          fd.append("tables", JSON.stringify(Array.from(selectedTables)));
+        }
+        res = await fetch("/api/admin/restore/preview", {
+          method: "POST",
+          credentials: "include",
+          body: fd,
+        });
+      } else {
+        res = await fetch("/api/admin/restore/gcs-preview", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            gcsName: selectedGcsName,
+            ...(parsedTables !== null && parsedTables.length > 0 ? { tables: Array.from(selectedTables) } : {}),
+          }),
+        });
       }
-      const res = await fetch("/api/admin/restore/preview", {
-        method: "POST",
-        credentials: "include",
-        body: fd,
-      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data?.message || `HTTP ${res.status}`);
@@ -335,6 +356,13 @@ export default function AdminDashboardPage() {
         tables: Array.isArray(data.tables) ? data.tables : [],
         unknownStatements: Array.isArray(data.unknownStatements) ? data.unknownStatements : [],
       });
+      // For GCS: also use the preview response to populate the table checklist
+      // on first preview (when we don't yet know what tables exist).
+      if (restoreSource === "gcs" && parsedTables === null && Array.isArray(data.tables)) {
+        const list = data.tables.map((t: any) => ({ name: String(t.name), rowCount: Number(t.rowsInDump || 0) }));
+        setParsedTables(list);
+        setSelectedTables(new Set(list.map((t: { name: string }) => t.name)));
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Preview failed";
       toast({ title: "Preview failed", description: msg, variant: "destructive" });
@@ -344,7 +372,7 @@ export default function AdminDashboardPage() {
   }
 
   async function handleRestoreSubmit() {
-    if (!restoreFile || !restoreConfirmed || restoreInProgress) return;
+    if (!restoreReady || !restoreConfirmed || restoreInProgress) return;
     if (parsedTables && parsedTables.length > 0 && selectedTables.size === 0) {
       toast({ title: "No tables selected", description: "Tick at least one table to restore.", variant: "destructive" });
       return;
@@ -352,20 +380,29 @@ export default function AdminDashboardPage() {
     setRestoreInProgress(true);
     setRestoreSummary(null);
     try {
-      const fd = new FormData();
-      fd.append("file", restoreFile);
-      // Always send the explicit table list when we have parsed metadata —
-      // even if every table is ticked. This ensures the server only touches
-      // tables that actually exist in this dump, leaving any DB tables that
-      // are absent from the dump completely untouched.
-      if (parsedTables !== null && parsedTables.length > 0) {
-        fd.append("tables", JSON.stringify(Array.from(selectedTables)));
+      let res: Response;
+      if (restoreSource === "local") {
+        const fd = new FormData();
+        fd.append("file", restoreFile!);
+        if (parsedTables !== null && parsedTables.length > 0) {
+          fd.append("tables", JSON.stringify(Array.from(selectedTables)));
+        }
+        res = await fetch("/api/admin/restore", {
+          method: "POST",
+          credentials: "include",
+          body: fd,
+        });
+      } else {
+        res = await fetch("/api/admin/restore/gcs", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            gcsName: selectedGcsName,
+            ...(parsedTables !== null && parsedTables.length > 0 ? { tables: Array.from(selectedTables) } : {}),
+          }),
+        });
       }
-      const res = await fetch("/api/admin/restore", {
-        method: "POST",
-        credentials: "include",
-        body: fd,
-      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data?.message || `HTTP ${res.status}`);
@@ -539,6 +576,12 @@ export default function AdminDashboardPage() {
     queryKey: ["/api/admin/backup/gcs-status"],
     enabled: !!isAdmin,
     staleTime: 60 * 1000,
+  });
+
+  const gcsListQuery = useQuery<{ files: Array<{ name: string; size: number; updated: string }> }>({
+    queryKey: ["/api/admin/backup/gcs-list"],
+    enabled: !!isAdmin && backupDialogOpen && restoreSource === "gcs" && gcsStatus?.configured === true,
+    staleTime: 30 * 1000,
   });
 
   const gcsUploadMutation = useMutation({
@@ -1048,6 +1091,8 @@ export default function AdminDashboardPage() {
                 setRestoreSummary(null);
                 setParsedTables(null);
                 setSelectedTables(new Set());
+                setSelectedGcsName("");
+                setRestoreSource("local");
                 setBackupDialogOpen(true);
               } },
           ];
@@ -3220,6 +3265,8 @@ export default function AdminDashboardPage() {
           setRestoreSummary(null);
           setParsedTables(null);
           setSelectedTables(new Set());
+          setSelectedGcsName("");
+          setRestoreSource("local");
           setGcsUploadResult(null);
           setGcsMode("new");
         }
@@ -3458,43 +3505,139 @@ export default function AdminDashboardPage() {
               </p>
             </div>
 
-            <div>
-              <Label htmlFor="restore-file" className="text-xs font-semibold mb-1 block">
-                Select .sql backup file
-              </Label>
-              <Input
-                id="restore-file"
-                type="file"
-                accept=".sql,application/sql,text/plain"
-                onChange={async (e) => {
-                  const f = e.target.files?.[0] || null;
-                  setRestoreFile(f);
-                  setRestoreConfirmed(false);
-                  setRestoreSummary(null);
-                  setDryRunResult(null);
-                  setParsedTables(null);
-                  setSelectedTables(new Set());
-                  if (f) {
-                    try {
-                      const text = await f.text();
-                      const tables = parseSqlTables(text);
-                      setParsedTables(tables);
-                      setSelectedTables(new Set(tables.map((t) => t.name)));
-                    } catch {
-                      setParsedTables([]);
+            <Tabs
+              value={restoreSource}
+              onValueChange={(v) => {
+                if (restoreInProgress || dryRunInProgress) return;
+                setRestoreSource(v as "local" | "gcs");
+                setRestoreFile(null);
+                setSelectedGcsName("");
+                setRestoreConfirmed(false);
+                setRestoreSummary(null);
+                setDryRunResult(null);
+                setParsedTables(null);
+                setSelectedTables(new Set());
+              }}
+            >
+              <TabsList className="grid grid-cols-2 w-full h-9">
+                <TabsTrigger value="local" data-testid="tab-restore-local" className="text-xs">
+                  <Upload className="w-3.5 h-3.5 mr-1.5" />Local file
+                </TabsTrigger>
+                <TabsTrigger value="gcs" data-testid="tab-restore-gcs" className="text-xs">
+                  <Cloud className="w-3.5 h-3.5 mr-1.5" />Google Cloud
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="local" className="mt-3">
+                <Label htmlFor="restore-file" className="text-xs font-semibold mb-1 block">
+                  Select .sql backup file
+                </Label>
+                <Input
+                  id="restore-file"
+                  type="file"
+                  accept=".sql,application/sql,text/plain"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0] || null;
+                    setRestoreFile(f);
+                    setRestoreConfirmed(false);
+                    setRestoreSummary(null);
+                    setDryRunResult(null);
+                    setParsedTables(null);
+                    setSelectedTables(new Set());
+                    if (f) {
+                      try {
+                        const text = await f.text();
+                        const tables = parseSqlTables(text);
+                        setParsedTables(tables);
+                        setSelectedTables(new Set(tables.map((t) => t.name)));
+                      } catch {
+                        setParsedTables([]);
+                      }
                     }
-                  }
-                }}
-                disabled={restoreInProgress}
-                data-testid="input-restore-file"
-                className="text-xs"
-              />
-              {restoreFile && (
-                <p className="text-[11px] text-muted-foreground mt-1" data-testid="text-restore-filename">
-                  {restoreFile.name} · {formatBytes(restoreFile.size)}
-                </p>
-              )}
-            </div>
+                  }}
+                  disabled={restoreInProgress}
+                  data-testid="input-restore-file"
+                  className="text-xs"
+                />
+                {restoreFile && (
+                  <p className="text-[11px] text-muted-foreground mt-1" data-testid="text-restore-filename">
+                    {restoreFile.name} · {formatBytes(restoreFile.size)}
+                  </p>
+                )}
+              </TabsContent>
+              <TabsContent value="gcs" className="mt-3 space-y-2">
+                {gcsStatus?.configured === false ? (
+                  <p className="text-[11px] text-muted-foreground p-2 rounded border border-dashed border-slate-300 dark:border-slate-700">
+                    Google Cloud Storage configured nahi hai. <code className="font-mono">GCS_SERVICE_ACCOUNT_KEY</code> aur <code className="font-mono">GCS_BUCKET_NAME</code> add karo.
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-semibold">Cloud backup file chuno</Label>
+                      <button
+                        type="button"
+                        className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-40 flex items-center gap-1"
+                        disabled={gcsListQuery.isFetching || restoreInProgress}
+                        onClick={() => gcsListQuery.refetch()}
+                        data-testid="button-gcs-refresh"
+                      >
+                        {gcsListQuery.isFetching ? <Loader2 className="w-3 h-3 animate-spin" /> : "Refresh"}
+                      </button>
+                    </div>
+                    {gcsListQuery.isLoading ? (
+                      <div className="flex items-center gap-2 text-[11px] text-muted-foreground p-2">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Loading cloud backups…
+                      </div>
+                    ) : gcsListQuery.error ? (
+                      <p className="text-[11px] text-red-600 dark:text-red-400 p-2 rounded border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20">
+                        {(gcsListQuery.error as Error).message}
+                      </p>
+                    ) : (gcsListQuery.data?.files?.length ?? 0) === 0 ? (
+                      <p className="text-[11px] text-muted-foreground p-2 rounded border border-dashed border-slate-300 dark:border-slate-700">
+                        Bucket mein koi backup file nahi hai. Pehle "Run now" se ek backup banao ya cloud upload karo.
+                      </p>
+                    ) : (
+                      <div className="max-h-44 overflow-y-auto rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800" data-testid="list-gcs-backups">
+                        {gcsListQuery.data!.files.map((f) => (
+                          <label
+                            key={f.name}
+                            className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60 select-none ${selectedGcsName === f.name ? "bg-blue-50 dark:bg-blue-900/20" : ""}`}
+                            data-testid={`label-gcs-file-${f.name}`}
+                          >
+                            <input
+                              type="radio"
+                              name="gcs-file"
+                              checked={selectedGcsName === f.name}
+                              onChange={() => {
+                                setSelectedGcsName(f.name);
+                                setRestoreConfirmed(false);
+                                setRestoreSummary(null);
+                                setDryRunResult(null);
+                                setParsedTables(null);
+                                setSelectedTables(new Set());
+                              }}
+                              disabled={restoreInProgress}
+                              className="flex-shrink-0"
+                              data-testid={`radio-gcs-file-${f.name}`}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="font-mono text-[11px] truncate">{f.name}</p>
+                              <p className="text-[10px] text-muted-foreground">
+                                {formatBytes(f.size)}
+                                {f.updated ? ` · ${new Date(f.updated).toLocaleString("en-IN")}` : ""}
+                              </p>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-[10px] text-muted-foreground leading-snug">
+                      Tip: Pehle "Preview" dabao — table list aur row counts dikhenge, phir confirm karke restore kar sakte ho.
+                    </p>
+                  </>
+                )}
+              </TabsContent>
+            </Tabs>
 
             {/* Table selection checklist */}
             {parsedTables !== null && parsedTables.length > 0 && (

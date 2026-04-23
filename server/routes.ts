@@ -15,7 +15,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS } from "./backupJob";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -1982,6 +1982,83 @@ export async function registerRoutes(
       }
     },
   );
+
+  // GET /api/admin/backup/gcs-list — list backup files in the GCS bucket
+  app.get("/api/admin/backup/gcs-list", adminCheck, async (_req, res) => {
+    if (!isGCSConfigured()) {
+      return res.status(400).json({ message: "GCS not configured — GCS_SERVICE_ACCOUNT_KEY / GCS_BUCKET_NAME missing" });
+    }
+    try {
+      const files = await listGCSBackups();
+      res.json({ files });
+    } catch (err: any) {
+      console.error("GCS list failed:", err);
+      res.status(500).json({ message: err?.message || "Failed to list GCS backups" });
+    }
+  });
+
+  // POST /api/admin/restore/gcs-preview — body: { gcsName, tables? }
+  app.post("/api/admin/restore/gcs-preview", adminCheck, async (req, res) => {
+    const gcsName = String(req.body?.gcsName || "").trim();
+    if (!gcsName || !/^[A-Za-z0-9._-]+\.sql$/.test(gcsName)) {
+      return res.status(400).json({ message: "Invalid gcsName" });
+    }
+    if (!isGCSConfigured()) {
+      return res.status(400).json({ message: "GCS not configured" });
+    }
+    try {
+      const sql = await downloadFromGCS(gcsName);
+      if (!sql.trim()) return res.status(400).json({ message: "GCS file is empty" });
+      let allowList: string[] | undefined;
+      const tablesField = req.body?.tables;
+      if (Array.isArray(tablesField) && tablesField.every((t) => typeof t === "string")) {
+        allowList = tablesField as string[];
+        if (allowList.length > 0) {
+          const dumpTables = new Set(parseTablesFromDump(sql));
+          const unknown = allowList.filter((t) => !dumpTables.has(t));
+          if (unknown.length > 0) {
+            return res.status(400).json({ message: `The following tables are not present in the dump: ${unknown.join(", ")}` });
+          }
+        }
+      }
+      res.json(previewSqlBackup(sql, allowList));
+    } catch (err: any) {
+      console.error("GCS restore preview failed:", err);
+      res.status(500).json({ message: err?.message || "Preview failed" });
+    }
+  });
+
+  // POST /api/admin/restore/gcs — body: { gcsName, tables? }
+  app.post("/api/admin/restore/gcs", adminCheck, async (req, res) => {
+    const gcsName = String(req.body?.gcsName || "").trim();
+    if (!gcsName || !/^[A-Za-z0-9._-]+\.sql$/.test(gcsName)) {
+      return res.status(400).json({ message: "Invalid gcsName" });
+    }
+    if (!isGCSConfigured()) {
+      return res.status(400).json({ message: "GCS not configured" });
+    }
+    try {
+      const sql = await downloadFromGCS(gcsName);
+      if (!sql.trim()) return res.status(400).json({ message: "GCS file is empty" });
+      let allowList: string[] | undefined;
+      const tablesField = req.body?.tables;
+      if (Array.isArray(tablesField) && tablesField.every((t) => typeof t === "string")) {
+        allowList = tablesField as string[];
+        if (allowList.length > 0) {
+          const dumpTables = new Set(parseTablesFromDump(sql));
+          const unknown = allowList.filter((t) => !dumpTables.has(t));
+          if (unknown.length > 0) {
+            return res.status(400).json({ message: `The following tables are not present in the dump: ${unknown.join(", ")}` });
+          }
+        }
+      }
+      const result = await restoreFromSql(sql, allowList);
+      res.json({ message: "Restore completed successfully", source: gcsName, ...result });
+    } catch (err: any) {
+      console.error("GCS restore failed:", err);
+      res.status(500).json({ message: err?.message || "Restore failed — database has been rolled back" });
+    }
+  });
 
   startBackupScheduler();
 
