@@ -883,6 +883,46 @@ export default function AdminDashboardPage() {
         {/* ── Auto-backup status line ── */}
         <BackupStatusLine />
 
+        <input
+          ref={restoreInputRef}
+          type="file"
+          accept=".sql"
+          className="hidden"
+          data-testid="input-restore-backup"
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (!file) return;
+            toast({
+              title: "Restore upload started",
+              description: "Backup file process ho raha hai. Please wait.",
+            });
+            try {
+              const formData = new FormData();
+              formData.append("file", file);
+              const res = await fetch("/api/admin/backup/restore", {
+                method: "POST",
+                credentials: "include",
+                body: formData,
+              });
+              if (!res.ok) {
+                const text = await res.text().catch(() => "");
+                throw new Error(text || `HTTP ${res.status}`);
+              }
+              toast({
+                title: "Restore complete",
+                description: "Backup upload ho gaya aur data restore ho gaya.",
+              });
+            } catch (err: unknown) {
+              toast({
+                title: "Restore failed",
+                description: err instanceof Error ? err.message : "Restore nahi ho paya",
+                variant: "destructive",
+              });
+            }
+          }}
+        />
+
         {/* ── TABS (content only) ── */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
 
