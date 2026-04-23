@@ -120,7 +120,6 @@ export default function AdminDashboardPage() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const { theme, toggleTheme } = useTheme();
-  const restoreInputRef = useRef<HTMLInputElement | null>(null);
   const [newPromoCode, setNewPromoCode] = useState("");
   const [newPromoCredits, setNewPromoCredits] = useState("25");
   const [editPromoId, setEditPromoId] = useState<number | null>(null);
@@ -910,21 +909,6 @@ export default function AdminDashboardPage() {
                     <span className={`text-[10px] font-semibold leading-tight text-center ${isActive ? "text-white" : "text-muted-foreground"}`}>
                       {label}
                     </span>
-                    {value === "backup" && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        className="mt-1 h-7 rounded-lg text-[10px] font-semibold"
-                        data-testid="button-backup-restore"
-                        onClick={(ev) => {
-                          ev.stopPropagation();
-                          restoreInputRef.current?.click();
-                        }}
-                      >
-                        Restore / Upload
-                      </Button>
-                    )}
                   </button>
                 );
               })}
@@ -934,46 +918,6 @@ export default function AdminDashboardPage() {
 
         {/* ── Auto-backup status line ── */}
         <BackupStatusLine />
-
-        <input
-          ref={restoreInputRef}
-          type="file"
-          accept=".sql"
-          className="hidden"
-          data-testid="input-restore-backup"
-          onChange={async (e) => {
-            const file = e.target.files?.[0];
-            e.target.value = "";
-            if (!file) return;
-            toast({
-              title: "Restore upload started",
-              description: "Backup file process ho raha hai. Please wait.",
-            });
-            try {
-              const formData = new FormData();
-              formData.append("file", file);
-              const res = await fetch("/api/admin/backup/restore", {
-                method: "POST",
-                credentials: "include",
-                body: formData,
-              });
-              if (!res.ok) {
-                const text = await res.text().catch(() => "");
-                throw new Error(text || `HTTP ${res.status}`);
-              }
-              toast({
-                title: "Restore complete",
-                description: "Backup upload ho gaya aur data restore ho gaya.",
-              });
-            } catch (err: unknown) {
-              toast({
-                title: "Restore failed",
-                description: err instanceof Error ? err.message : "Restore nahi ho paya",
-                variant: "destructive",
-              });
-            }
-          }}
-        />
 
         {/* ── TABS (content only) ── */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -3247,7 +3191,7 @@ export default function AdminDashboardPage() {
             )}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button
               variant="outline"
               onClick={() => setBackupDialogOpen(false)}
@@ -3255,6 +3199,17 @@ export default function AdminDashboardPage() {
               data-testid="button-backup-close"
             >
               Close
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                const input = document.getElementById("restore-file") as HTMLInputElement | null;
+                input?.click();
+              }}
+              disabled={restoreInProgress}
+              data-testid="button-backup-restore"
+            >
+              Restore / Upload
             </Button>
           </DialogFooter>
         </DialogContent>
