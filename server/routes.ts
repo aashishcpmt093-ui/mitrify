@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { profiles, siteContent, jobs, pendingProviders } from "@shared/schema";
 import { api, buildUrl } from "@shared/routes";
 import { z } from "zod";
@@ -1766,6 +1766,183 @@ export async function registerRoutes(
       res.json({ approved, total: pending.length, errors });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Bulk approve failed" });
+    }
+  });
+
+  // ── FULL DATABASE BACKUP (admin only) ──
+  // GET /api/admin/backup?days=7|30|90|all
+  // Streams a .sql file with INSERT statements for every table.
+  // For tables with a date column, ?days=N filters to rows from the last N days.
+  // ?days=all (or omitted) dumps every row.
+  app.get("/api/admin/backup", adminCheck, async (req, res) => {
+    const daysParam = String(req.query.days || "all").toLowerCase();
+    const days = daysParam === "all" ? null : Math.max(1, parseInt(daysParam, 10) || 0);
+
+    // Map of table -> column to filter by date (null = always include all)
+    const dateColumnMap: Record<string, string | null> = {
+      profiles: "created_at",
+      providers: "created_at",
+      local_users: "created_at",
+      jobs: "created_at",
+      pending_providers: "created_at",
+      credit_payments: "created_at",
+      salary_payments: "created_at",
+      promo_codes: "created_at",
+      employees: "created_at",
+      co_admins: "created_at",
+      calls: "timestamp",
+      subscriptions: "start_date",
+      promo_usage_log: "used_at",
+      search_log: "last_searched",
+      // tables without time-based filtering — always include all rows:
+      credits: null,
+      site_content: null,
+      visitor_stats: null,
+      sessions: null,
+      users: null,
+    };
+
+    function sqlLiteral(val: any): string {
+      if (val === null || val === undefined) return "NULL";
+      if (typeof val === "boolean") return val ? "TRUE" : "FALSE";
+      if (typeof val === "number") return Number.isFinite(val) ? String(val) : "NULL";
+      if (typeof val === "bigint") return val.toString();
+      if (val instanceof Date) return `'${val.toISOString()}'`;
+      if (Array.isArray(val)) {
+        // Build a Postgres array literal as a quoted string
+        const inner = val.map((v) => {
+          if (v === null || v === undefined) return "NULL";
+          const s = String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+          return `"${s}"`;
+        }).join(",");
+        return `'{${inner.replace(/'/g, "''")}}'`;
+      }
+      if (typeof val === "object") {
+        return `'${JSON.stringify(val).replace(/'/g, "''")}'::jsonb`;
+      }
+      return `'${String(val).replace(/'/g, "''")}'`;
+    }
+
+    function pad(n: number) { return n.toString().padStart(2, "0"); }
+    const now = new Date();
+    const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+    const rangeLabel = days ? `last-${days}d` : "full";
+    const filename = `mitrify-backup-${stamp}-${rangeLabel}.sql`;
+
+    res.setHeader("Content-Type", "application/sql; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Cache-Control", "no-store");
+
+    const write = (s: string) => res.write(s);
+
+    try {
+      write(`-- Mitrify database backup\n`);
+      write(`-- Generated: ${now.toISOString()}\n`);
+      write(`-- Range: ${days ? `last ${days} days` : "ALL DATA (100% snapshot)"}\n`);
+      write(`-- Restore steps:\n`);
+      write(`--   1) Create empty Postgres database\n`);
+      write(`--   2) Run \`npm run db:push\` from the Mitrify codebase to create the schema\n`);
+      write(`--   3) Run \`psql <connection-url> < ${filename}\` to load this data\n`);
+      write(`\nBEGIN;\n\n`);
+
+      // Discover all public tables in the live DB
+      const tablesRes = await pool.query(
+        `SELECT table_name FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+         ORDER BY table_name`
+      );
+      const tableNames: string[] = tablesRes.rows.map((r: any) => r.table_name);
+
+      const BATCH = 500;
+
+      for (const table of tableNames) {
+        // Get column metadata, ordered by ordinal_position
+        const colsRes = await pool.query(
+          `SELECT column_name, data_type FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = $1
+           ORDER BY ordinal_position`,
+          [table]
+        );
+        const cols: string[] = colsRes.rows.map((r: any) => r.column_name);
+        const colTypes: Record<string, string> = Object.fromEntries(
+          colsRes.rows.map((r: any) => [r.column_name, r.data_type])
+        );
+        if (cols.length === 0) continue;
+
+        const dateCol = table in dateColumnMap ? dateColumnMap[table] : null;
+        const useFilter = days !== null && dateCol !== null;
+        const whereClause = useFilter
+          ? ` WHERE "${dateCol}" >= NOW() - INTERVAL '${days} days'`
+          : "";
+
+        const countRes = await pool.query(
+          `SELECT COUNT(*)::int AS c FROM "${table}"${whereClause}`
+        );
+        const total: number = countRes.rows[0]?.c ?? 0;
+
+        write(`-- ─────────────────────────────────────────\n`);
+        write(`-- Table: ${table}  |  rows in dump: ${total}${useFilter ? `  |  filter: ${dateCol} >= now() - ${days}d` : "  |  full"}\n`);
+        write(`-- ─────────────────────────────────────────\n`);
+
+        if (total === 0) {
+          write(`-- (no rows)\n\n`);
+          continue;
+        }
+
+        const colList = cols.map((c) => `"${c}"`).join(", ");
+
+        // Stream rows in batches. Use keyset pagination on numeric "id" when
+        // present (much faster than OFFSET on large tables like
+        // pending_providers ~40k rows). Otherwise fall back to OFFSET.
+        const idType = colTypes["id"];
+        const hasNumericId = cols.includes("id") && idType && /int|serial|numeric/i.test(idType);
+
+        if (hasNumericId) {
+          let lastId = 0;
+          while (true) {
+            const keysetWhere = whereClause
+              ? `${whereClause} AND "id" > ${lastId}`
+              : ` WHERE "id" > ${lastId}`;
+            const rowsRes = await pool.query(
+              `SELECT ${colList} FROM "${table}"${keysetWhere} ORDER BY "id" LIMIT ${BATCH}`
+            );
+            if (rowsRes.rows.length === 0) break;
+            for (const row of rowsRes.rows) {
+              const vals = cols.map((c) => sqlLiteral(row[c])).join(", ");
+              write(`INSERT INTO "${table}" (${colList}) VALUES (${vals});\n`);
+              lastId = Number(row.id) || lastId;
+            }
+          }
+        } else {
+          const orderCol = cols[0];
+          let offset = 0;
+          while (offset < total) {
+            const rowsRes = await pool.query(
+              `SELECT ${colList} FROM "${table}"${whereClause} ORDER BY "${orderCol}" LIMIT ${BATCH} OFFSET ${offset}`
+            );
+            if (rowsRes.rows.length === 0) break;
+            for (const row of rowsRes.rows) {
+              const vals = cols.map((c) => sqlLiteral(row[c])).join(", ");
+              write(`INSERT INTO "${table}" (${colList}) VALUES (${vals});\n`);
+            }
+            offset += rowsRes.rows.length;
+          }
+        }
+        write(`\n`);
+      }
+
+      write(`COMMIT;\n`);
+      write(`-- End of backup\n`);
+      res.end();
+    } catch (err: any) {
+      console.error("Backup failed:", err);
+      // If headers already sent, just end the response with a SQL comment
+      if (res.headersSent) {
+        try { res.write(`\n-- BACKUP FAILED: ${String(err?.message || err).replace(/\n/g, " ")}\n`); } catch {}
+        try { res.end(); } catch {}
+      } else {
+        res.status(500).json({ message: err?.message || "Backup failed" });
+      }
     }
   });
 
