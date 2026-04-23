@@ -1,5 +1,7 @@
 import type { Express } from "express";
 import type { Server } from "http";
+import fs from "fs";
+import path from "path";
 import { storage } from "./storage";
 import { db, pool } from "./db";
 import { profiles, siteContent, jobs, pendingProviders } from "@shared/schema";
@@ -13,7 +15,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured } from "./backupJob";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -1805,6 +1807,43 @@ export async function registerRoutes(
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Backup failed" });
     }
+  });
+
+  // POST /api/admin/backup/gcs-upload — generate a fresh backup and push to GCS
+  // Body: { mode: "overwrite" | "new" }
+  app.post("/api/admin/backup/gcs-upload", adminCheck, async (req, res) => {
+    if (!isGCSConfigured()) {
+      return res.status(503).json({ message: "Google Cloud Storage not configured. Add GCS_SERVICE_ACCOUNT_KEY and GCS_BUCKET_NAME secrets." });
+    }
+    const mode = req.body?.mode === "overwrite" ? "overwrite" : "new";
+    const now = new Date();
+    const filename = makeBackupFilename(now);
+    const backupsDir = path.resolve(process.cwd(), "backups");
+    if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true });
+    const filepath = path.join(backupsDir, filename);
+    try {
+      // Write backup to temp file
+      const stream = fs.createWriteStream(filepath, { encoding: "utf8" });
+      const writeP = (s: string) => {
+        if (!stream.write(s)) return new Promise<void>((r) => stream.once("drain", r));
+      };
+      await streamBackupSql((s) => { writeP(s); }, { filename });
+      await new Promise<void>((resolve, reject) => {
+        stream.end((err?: Error | null) => err ? reject(err) : resolve());
+      });
+      // Upload to GCS
+      const result = await uploadToGCS(filepath, filename, mode);
+      const size = fs.statSync(filepath).size;
+      res.json({ ok: true, gcsName: result.gcsName, url: result.url, size, filename });
+    } catch (err: any) {
+      try { fs.unlinkSync(filepath); } catch {}
+      res.status(500).json({ message: err?.message || "GCS upload failed" });
+    }
+  });
+
+  // GET /api/admin/backup/gcs-status — is GCS configured?
+  app.get("/api/admin/backup/gcs-status", adminCheck, (_req, res) => {
+    res.json({ configured: isGCSConfigured(), bucket: process.env.GCS_BUCKET_NAME || null });
   });
 
   app.get("/api/admin/backup", adminCheck, async (req, res) => {

@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { createWriteStream } from "fs";
 import nodemailer from "nodemailer";
+import { Storage } from "@google-cloud/storage";
 import { pool, db } from "./db";
 import { siteContent } from "@shared/schema";
 import { eq } from "drizzle-orm";
@@ -543,6 +544,9 @@ export interface BackupHistoryEntry {
   generatedAt: string; // ISO
   emailed: boolean;
   emailError?: string;
+  gcsUploaded?: boolean;
+  gcsName?: string;
+  gcsError?: string;
   durationMs: number;
 }
 
@@ -595,6 +599,58 @@ function makeMailer() {
       pass: process.env.GMAIL_APP_PASSWORD,
     },
   });
+}
+
+// ─────────────────────────────────────────────────────────────
+// Google Cloud Storage helpers
+// ─────────────────────────────────────────────────────────────
+
+export function isGCSConfigured(): boolean {
+  return !!(process.env.GCS_SERVICE_ACCOUNT_KEY && process.env.GCS_BUCKET_NAME);
+}
+
+function getGCSClient(): { storage: Storage; bucketName: string } | null {
+  const keyJson = process.env.GCS_SERVICE_ACCOUNT_KEY;
+  const bucketName = process.env.GCS_BUCKET_NAME;
+  if (!keyJson || !bucketName) return null;
+  try {
+    const credentials = JSON.parse(keyJson);
+    const storage = new Storage({ credentials });
+    return { storage, bucketName };
+  } catch (err) {
+    console.error("[gcs] failed to parse GCS credentials:", err);
+    return null;
+  }
+}
+
+/**
+ * Upload a local backup file to Google Cloud Storage.
+ * mode "overwrite" → always saved as mitrify-backup-latest.sql (replaces old)
+ * mode "new"       → saved with the timestamped filename (keeps history)
+ */
+export async function uploadToGCS(
+  filepath: string,
+  filename: string,
+  mode: "overwrite" | "new",
+): Promise<{ url: string; gcsName: string }> {
+  const gcs = getGCSClient();
+  if (!gcs) throw new Error("GCS not configured — GCS_SERVICE_ACCOUNT_KEY / GCS_BUCKET_NAME missing");
+
+  const { storage, bucketName } = gcs;
+  const gcsName = mode === "overwrite" ? "mitrify-backup-latest.sql" : filename;
+
+  const bucket = storage.bucket(bucketName);
+  await bucket.upload(filepath, {
+    destination: gcsName,
+    metadata: {
+      contentType: "application/sql",
+      cacheControl: "no-cache",
+    },
+  });
+
+  const url = `gs://${bucketName}/${gcsName}`;
+  console.log(`[gcs] uploaded ${filename} → ${url} (mode: ${mode})`);
+  return { url, gcsName };
 }
 
 function pruneOldBackups(): void {
@@ -682,12 +738,31 @@ export async function runDailyBackup(): Promise<BackupHistoryEntry> {
 
   pruneOldBackups();
 
+  // GCS upload (best-effort, automatic "new" mode for daily backups)
+  let gcsUploaded = false;
+  let gcsName: string | undefined;
+  let gcsError: string | undefined;
+  if (isGCSConfigured()) {
+    try {
+      const result = await uploadToGCS(filepath, filename, "new");
+      gcsUploaded = true;
+      gcsName = result.gcsName;
+      console.log(`[backup] GCS upload succeeded → ${result.url}`);
+    } catch (err: any) {
+      gcsError = String(err?.message || err);
+      console.error("[backup] GCS upload failed:", err);
+    }
+  }
+
   const entry: BackupHistoryEntry = {
     filename,
     size,
     generatedAt: now.toISOString(),
     emailed,
     emailError,
+    gcsUploaded,
+    gcsName,
+    gcsError,
     durationMs: Date.now() - startedAt,
   };
 

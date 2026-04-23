@@ -20,7 +20,7 @@ import {
   SortAsc, Filter, TrendingUp, Activity, Briefcase, Link, Eye, EyeOff,
   UserCog, ExternalLink, Key, CheckCircle, Loader2,
   Calendar, Award, Clock, XCircle, ChevronRight, Upload, FileSpreadsheet,
-  Copy, MapPin, Star, Database
+  Copy, MapPin, Star, Database, Cloud, CloudUpload
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useTheme } from "@/lib/theme";
@@ -49,9 +49,9 @@ function avatarColor(name: string) {
 
 interface BackupStatusResponse {
   lastSuccessAt: string | null;
-  lastSuccess: { filename: string; size: number; emailed: boolean; emailError?: string } | null;
+  lastSuccess: { filename: string; size: number; emailed: boolean; emailError?: string; gcsUploaded?: boolean; gcsName?: string } | null;
   lastError: { at: string; message: string } | null;
-  history: Array<{ filename: string; size: number; generatedAt: string; emailed: boolean }>;
+  history: Array<{ filename: string; size: number; generatedAt: string; emailed: boolean; gcsUploaded?: boolean }>;
 }
 
 function formatBytes(n: number) {
@@ -111,6 +111,7 @@ function BackupStatusLine() {
             <span data-testid="text-last-backup-time">
               {formatRelative(lastAt)} · {formatBytes(last.size)}
               {last.emailed ? " · emailed" : " · email pending"}
+              {last.gcsUploaded ? " · ☁ cloud" : ""}
             </span>
           ) : (
             <span data-testid="text-last-backup-time">never run yet — first run scheduled at 2 AM IST</span>
@@ -199,6 +200,8 @@ export default function AdminDashboardPage() {
   const [recruitmentLink, setRecruitmentLink] = useState("https://forms.gle/C54uAz7pkupe6g136");
   const [activeTab, setActiveTab] = useState("providers");
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
+  const [gcsMode, setGcsMode] = useState<"overwrite" | "new">("new");
+  const [gcsUploadResult, setGcsUploadResult] = useState<{ gcsName: string; url: string; size: number } | null>(null);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [restoreConfirmed, setRestoreConfirmed] = useState(false);
   const [restoreInProgress, setRestoreInProgress] = useState(false);
@@ -482,6 +485,28 @@ export default function AdminDashboardPage() {
     staleTime: 0,
   });
   const [searchSort, setSearchSort] = useState<"count" | "az" | "za" | "newest" | "oldest">("count");
+
+  const { data: gcsStatus } = useQuery<{ configured: boolean; bucket: string | null }>({
+    queryKey: ["/api/admin/backup/gcs-status"],
+    enabled: !!isAdmin,
+    staleTime: 60 * 1000,
+  });
+
+  const gcsUploadMutation = useMutation({
+    mutationFn: (mode: "overwrite" | "new") =>
+      apiRequest("POST", "/api/admin/backup/gcs-upload", { mode }),
+    onSuccess: (data: any) => {
+      setGcsUploadResult({ gcsName: data.gcsName, url: data.url, size: data.size });
+      toast({
+        title: "Google Cloud Upload Complete",
+        description: `Saved as ${data.gcsName} (${formatBytes(data.size)})`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/backup/status"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Cloud upload failed", description: err?.message || "Unknown error", variant: "destructive" });
+    },
+  });
 
   const { data: adminJobs = [] } = useQuery<any[]>({
     queryKey: ["/api/admin/jobs"],
@@ -3146,6 +3171,8 @@ export default function AdminDashboardPage() {
           setRestoreSummary(null);
           setParsedTables(null);
           setSelectedTables(new Set());
+          setGcsUploadResult(null);
+          setGcsMode("new");
         }
       }}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="dialog-backup">
@@ -3181,6 +3208,87 @@ export default function AdminDashboardPage() {
                 <><Download className="w-4 h-4 mr-2" />Download .sql</>
               )}
             </Button>
+          </div>
+
+          {/* Google Cloud Storage section */}
+          <div className="rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-900/20 p-4 space-y-3 mt-3">
+            <div className="flex items-center gap-2">
+              <CloudUpload className="w-4 h-4 text-blue-700 dark:text-blue-300" />
+              <h3 className="font-semibold text-sm">Google Cloud Backup</h3>
+              {gcsStatus?.bucket && (
+                <span className="ml-auto text-[10px] text-blue-600 dark:text-blue-400 font-mono truncate max-w-[140px]" title={gcsStatus.bucket}>
+                  {gcsStatus.bucket}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Backup database ko Google Cloud Storage mein save karo. Do options hain:
+            </p>
+            {gcsStatus?.configured === false ? (
+              <div className="rounded-lg bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 p-3 text-xs text-yellow-800 dark:text-yellow-200">
+                GCS configured nahi hai. Replit Secrets mein <strong>GCS_SERVICE_ACCOUNT_KEY</strong> aur <strong>GCS_BUCKET_NAME</strong> add karo.
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setGcsMode("overwrite"); setGcsUploadResult(null); }}
+                    data-testid="button-gcs-mode-overwrite"
+                    className={`rounded-lg border-2 p-3 text-left transition-colors ${gcsMode === "overwrite"
+                      ? "border-blue-500 bg-blue-100 dark:bg-blue-900/50"
+                      : "border-transparent bg-white dark:bg-zinc-800/50 hover:border-blue-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Cloud className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                      <span className="text-[11px] font-bold text-blue-700 dark:text-blue-300">Overwrite</span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground leading-snug">Purana backup replace karo — sirf ek file rahegi cloud mein</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setGcsMode("new"); setGcsUploadResult(null); }}
+                    data-testid="button-gcs-mode-new"
+                    className={`rounded-lg border-2 p-3 text-left transition-colors ${gcsMode === "new"
+                      ? "border-blue-500 bg-blue-100 dark:bg-blue-900/50"
+                      : "border-transparent bg-white dark:bg-zinc-800/50 hover:border-blue-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <CloudUpload className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                      <span className="text-[11px] font-bold text-blue-700 dark:text-blue-300">Nayi File</span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground leading-snug">Naya backup add karo — purani files bhi cloud mein rahegi</p>
+                  </button>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => gcsUploadMutation.mutate(gcsMode)}
+                  disabled={gcsUploadMutation.isPending}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                  data-testid="button-gcs-upload"
+                >
+                  {gcsUploadMutation.isPending ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Cloud mein upload ho raha hai…</>
+                  ) : (
+                    <><CloudUpload className="w-4 h-4 mr-2" />
+                    {gcsMode === "overwrite" ? "Overwrite karke upload karo" : "Nayi file ke roop mein upload karo"}
+                    </>
+                  )}
+                </Button>
+                {gcsUploadResult && (
+                  <div className="rounded-lg bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 p-3 text-xs text-green-800 dark:text-green-200 space-y-0.5">
+                    <div className="flex items-center gap-1.5 font-semibold">
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      Upload successful!
+                    </div>
+                    <p className="font-mono text-[10px] break-all">{gcsUploadResult.url}</p>
+                    <p className="text-[10px] text-muted-foreground">{formatBytes(gcsUploadResult.size)}</p>
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           {/* Restore section */}
