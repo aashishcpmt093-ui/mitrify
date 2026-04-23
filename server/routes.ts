@@ -15,7 +15,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR } from "./backupJob";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -2057,6 +2057,82 @@ export async function registerRoutes(
     } catch (err: any) {
       console.error("GCS restore failed:", err);
       res.status(500).json({ message: err?.message || "Restore failed — database has been rolled back" });
+    }
+  });
+
+  /**
+   * Shared validation for stored-backup routes:
+   * - validates filename (safe chars + .sql extension, no path traversal)
+   * - reads the SQL from BACKUPS_DIR
+   * - validates and parses the optional JSON-body tables allow-list
+   * Returns a validated { sql, allowList } or sends an error response and returns null.
+   */
+  async function resolveStoredBackup(
+    req: any,
+    res: any,
+  ): Promise<{ sql: string; allowList: string[] | undefined } | null> {
+    const { filename, tables: tablesField } = req.body || {};
+    if (!filename || typeof filename !== "string") {
+      res.status(400).json({ message: "filename is required" });
+      return null;
+    }
+    if (!/^[\w.\-]+\.sql$/i.test(filename) || filename.includes("..")) {
+      res.status(400).json({ message: "Invalid filename" });
+      return null;
+    }
+    const filepath = path.join(BACKUPS_DIR, filename);
+    if (!fs.existsSync(filepath)) {
+      res.status(404).json({ message: "Backup file not found on server" });
+      return null;
+    }
+    const sql = fs.readFileSync(filepath, "utf8");
+    if (!sql.trim()) {
+      res.status(400).json({ message: "Backup file is empty" });
+      return null;
+    }
+    let allowList: string[] | undefined;
+    if (tablesField !== undefined && tablesField !== null) {
+      if (!Array.isArray(tablesField) || !tablesField.every((t: any) => typeof t === "string")) {
+        res.status(400).json({ message: "Invalid tables field — expected a JSON array of strings" });
+        return null;
+      }
+      if (tablesField.length > 0) {
+        allowList = tablesField as string[];
+        const dumpTables = new Set(parseTablesFromDump(sql));
+        const unknown = allowList.filter((t) => !dumpTables.has(t));
+        if (unknown.length > 0) {
+          res.status(400).json({
+            message: `The following tables are not present in this backup: ${unknown.join(", ")}`,
+          });
+          return null;
+        }
+      }
+    }
+    return { sql, allowList };
+  }
+
+  // POST /api/admin/restore/stored/preview — dry-run a stored server-side
+  // backup file (by filename) without touching the database.
+  app.post("/api/admin/restore/stored/preview", adminCheck, async (req: any, res) => {
+    const resolved = await resolveStoredBackup(req, res);
+    if (!resolved) return;
+    const preview = previewSqlBackup(resolved.sql, resolved.allowList);
+    res.json(preview);
+  });
+
+  // POST /api/admin/restore/stored — replay a stored server-side backup file
+  // (by filename) inside a single transaction. Returns per-table row counts.
+  app.post("/api/admin/restore/stored", adminCheck, async (req: any, res) => {
+    const resolved = await resolveStoredBackup(req, res);
+    if (!resolved) return;
+    try {
+      const result = await restoreFromSql(resolved.sql, resolved.allowList);
+      res.json({ message: "Restore completed successfully", ...result });
+    } catch (err: any) {
+      console.error("Stored restore failed:", err);
+      res.status(500).json({
+        message: err?.message || "Restore failed — database has been rolled back",
+      });
     }
   });
 

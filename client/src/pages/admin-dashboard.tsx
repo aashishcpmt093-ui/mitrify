@@ -245,10 +245,12 @@ export default function AdminDashboardPage() {
   const [gcsMode, setGcsMode] = useState<"overwrite" | "new">("new");
   const [gcsUploadResult, setGcsUploadResult] = useState<{ gcsName: string; url: string; size: number } | null>(null);
   const [testAlertPending, setTestAlertPending] = useState(false);
-  const [restoreSource, setRestoreSource] = useState<"local" | "gcs">("local");
+  const [restoreMode, setRestoreMode] = useState<"upload" | "stored" | "gcs">("upload");
   const [selectedGcsName, setSelectedGcsName] = useState<string>("");
   const [gcsListLoading, setGcsListLoading] = useState(false);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [selectedStoredFilename, setSelectedStoredFilename] = useState<string | null>(null);
+  const [storedFileFetching, setStoredFileFetching] = useState(false);
   const [restoreConfirmed, setRestoreConfirmed] = useState(false);
   const [restoreInProgress, setRestoreInProgress] = useState(false);
   const [restoreSummary, setRestoreSummary] = useState<{
@@ -311,9 +313,9 @@ export default function AdminDashboardPage() {
   }
 
   const restoreReady =
-    restoreSource === "local" ? !!restoreFile : !!selectedGcsName;
+    restoreMode === "upload" ? !!restoreFile : restoreMode === "stored" ? !!selectedStoredFilename : !!selectedGcsName;
   const restoreLabel =
-    restoreSource === "local" ? restoreFile?.name || "the uploaded file" : selectedGcsName || "the selected GCS file";
+    restoreMode === "upload" ? (restoreFile?.name || "the uploaded file") : restoreMode === "stored" ? (selectedStoredFilename || "the selected file") : (selectedGcsName || "the selected GCS file");
 
   async function handleDryRun() {
     if (!restoreReady || dryRunInProgress || restoreInProgress) return;
@@ -325,7 +327,27 @@ export default function AdminDashboardPage() {
     setDryRunResult(null);
     try {
       let res: Response;
-      if (restoreSource === "local") {
+      if (restoreMode === "stored") {
+        res = await fetch("/api/admin/restore/stored/preview", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: selectedStoredFilename,
+            tables: parsedTables !== null && parsedTables.length > 0 ? Array.from(selectedTables) : undefined,
+          }),
+        });
+      } else if (restoreMode === "gcs") {
+        res = await fetch("/api/admin/restore/gcs-preview", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            gcsName: selectedGcsName,
+            ...(parsedTables !== null && parsedTables.length > 0 ? { tables: Array.from(selectedTables) } : {}),
+          }),
+        });
+      } else {
         const fd = new FormData();
         fd.append("file", restoreFile!);
         if (parsedTables !== null && parsedTables.length > 0) {
@@ -335,16 +357,6 @@ export default function AdminDashboardPage() {
           method: "POST",
           credentials: "include",
           body: fd,
-        });
-      } else {
-        res = await fetch("/api/admin/restore/gcs-preview", {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            gcsName: selectedGcsName,
-            ...(parsedTables !== null && parsedTables.length > 0 ? { tables: Array.from(selectedTables) } : {}),
-          }),
         });
       }
       const data = await res.json().catch(() => ({}));
@@ -358,7 +370,7 @@ export default function AdminDashboardPage() {
       });
       // For GCS: also use the preview response to populate the table checklist
       // on first preview (when we don't yet know what tables exist).
-      if (restoreSource === "gcs" && parsedTables === null && Array.isArray(data.tables)) {
+      if (restoreMode === "gcs" && parsedTables === null && Array.isArray(data.tables)) {
         const list = data.tables.map((t: any) => ({ name: String(t.name), rowCount: Number(t.rowsInDump || 0) }));
         setParsedTables(list);
         setSelectedTables(new Set(list.map((t: { name: string }) => t.name)));
@@ -381,7 +393,27 @@ export default function AdminDashboardPage() {
     setRestoreSummary(null);
     try {
       let res: Response;
-      if (restoreSource === "local") {
+      if (restoreMode === "stored") {
+        res = await fetch("/api/admin/restore/stored", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: selectedStoredFilename,
+            tables: parsedTables !== null && parsedTables.length > 0 ? Array.from(selectedTables) : undefined,
+          }),
+        });
+      } else if (restoreMode === "gcs") {
+        res = await fetch("/api/admin/restore/gcs", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            gcsName: selectedGcsName,
+            ...(parsedTables !== null && parsedTables.length > 0 ? { tables: Array.from(selectedTables) } : {}),
+          }),
+        });
+      } else {
         const fd = new FormData();
         fd.append("file", restoreFile!);
         if (parsedTables !== null && parsedTables.length > 0) {
@@ -391,16 +423,6 @@ export default function AdminDashboardPage() {
           method: "POST",
           credentials: "include",
           body: fd,
-        });
-      } else {
-        res = await fetch("/api/admin/restore/gcs", {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            gcsName: selectedGcsName,
-            ...(parsedTables !== null && parsedTables.length > 0 ? { tables: Array.from(selectedTables) } : {}),
-          }),
         });
       }
       const data = await res.json().catch(() => ({}));
@@ -423,6 +445,41 @@ export default function AdminDashboardPage() {
       toast({ title: "Restore failed", description: msg, variant: "destructive" });
     } finally {
       setRestoreInProgress(false);
+    }
+  }
+
+  async function handleStoredFileSelect(filename: string) {
+    setSelectedStoredFilename(filename);
+    setRestoreConfirmed(false);
+    setRestoreSummary(null);
+    setDryRunResult(null);
+    setParsedTables(null);
+    setSelectedTables(new Set());
+    if (!filename) return;
+    setStoredFileFetching(true);
+    try {
+      const res = await fetch("/api/admin/restore/stored/preview", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.message || `HTTP ${res.status}`);
+      }
+      const tables: Array<{ name: string; rowCount: number }> = (data.tables ?? []).map((t: any) => ({
+        name: t.name,
+        rowCount: t.rowsInDump ?? 0,
+      }));
+      setParsedTables(tables);
+      setSelectedTables(new Set(tables.map((t) => t.name)));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to read backup file";
+      toast({ title: "Could not read stored backup", description: msg, variant: "destructive" });
+      setParsedTables([]);
+    } finally {
+      setStoredFileFetching(false);
     }
   }
   const [newCoAdminUser, setNewCoAdminUser] = useState("");
@@ -580,7 +637,7 @@ export default function AdminDashboardPage() {
 
   const gcsListQuery = useQuery<{ files: Array<{ name: string; size: number; updated: string }> }>({
     queryKey: ["/api/admin/backup/gcs-list"],
-    enabled: !!isAdmin && backupDialogOpen && restoreSource === "gcs" && gcsStatus?.configured === true,
+    enabled: !!isAdmin && backupDialogOpen && restoreMode === "gcs" && gcsStatus?.configured === true,
     staleTime: 30 * 1000,
   });
 
@@ -1091,8 +1148,10 @@ export default function AdminDashboardPage() {
                 setRestoreSummary(null);
                 setParsedTables(null);
                 setSelectedTables(new Set());
+                setRestoreMode("upload");
                 setSelectedGcsName("");
-                setRestoreSource("local");
+                setSelectedStoredFilename(null);
+                setDryRunResult(null);
                 setBackupDialogOpen(true);
               } },
           ];
@@ -3269,6 +3328,9 @@ export default function AdminDashboardPage() {
           setRestoreSource("local");
           setGcsUploadResult(null);
           setGcsMode("new");
+          setRestoreMode("upload");
+          setSelectedStoredFilename(null);
+          setDryRunResult(null);
         }
       }}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="dialog-backup">
@@ -3499,18 +3561,19 @@ export default function AdminDashboardPage() {
                   <><strong>Warning:</strong> Only the <strong>{selectedTables.size} ticked table{selectedTables.size !== 1 ? "s" : ""}</strong> will be cleared and re-populated from the backup. All other tables are left untouched. This cannot be undone.</>
                 ) : (
                   <><strong>Warning:</strong> Restoring will <strong>overwrite all selected tables</strong> with the
-                  contents of the uploaded file. Each selected table is cleared first, then re-populated from the backup.
+                  contents of the backup file. Each selected table is cleared first, then re-populated from the backup.
                   This cannot be undone — download a fresh backup first if you might need to roll back.</>
                 )}
               </p>
             </div>
 
             <Tabs
-              value={restoreSource}
+              value={restoreMode}
               onValueChange={(v) => {
                 if (restoreInProgress || dryRunInProgress) return;
-                setRestoreSource(v as "local" | "gcs");
+                setRestoreMode(v as "upload" | "stored" | "gcs");
                 setRestoreFile(null);
+                setSelectedStoredFilename(null);
                 setSelectedGcsName("");
                 setRestoreConfirmed(false);
                 setRestoreSummary(null);
@@ -3519,15 +3582,18 @@ export default function AdminDashboardPage() {
                 setSelectedTables(new Set());
               }}
             >
-              <TabsList className="grid grid-cols-2 w-full h-9">
-                <TabsTrigger value="local" data-testid="tab-restore-local" className="text-xs">
+              <TabsList className="grid grid-cols-3 w-full h-9">
+                <TabsTrigger value="upload" data-testid="tab-restore-upload" className="text-xs">
                   <Upload className="w-3.5 h-3.5 mr-1.5" />Local file
+                </TabsTrigger>
+                <TabsTrigger value="stored" data-testid="tab-restore-stored" className="text-xs">
+                  <Database className="w-3.5 h-3.5 mr-1.5" />Stored backup
                 </TabsTrigger>
                 <TabsTrigger value="gcs" data-testid="tab-restore-gcs" className="text-xs">
                   <Cloud className="w-3.5 h-3.5 mr-1.5" />Google Cloud
                 </TabsTrigger>
               </TabsList>
-              <TabsContent value="local" className="mt-3">
+              <TabsContent value="upload" className="mt-3">
                 <Label htmlFor="restore-file" className="text-xs font-semibold mb-1 block">
                   Select .sql backup file
                 </Label>
@@ -3561,6 +3627,42 @@ export default function AdminDashboardPage() {
                 {restoreFile && (
                   <p className="text-[11px] text-muted-foreground mt-1" data-testid="text-restore-filename">
                     {restoreFile.name} · {formatBytes(restoreFile.size)}
+                  </p>
+                )}
+              </TabsContent>
+              <TabsContent value="stored" className="mt-3">
+                <Label className="text-xs font-semibold mb-1 block">
+                  Choose a stored backup
+                </Label>
+                {backupStatus?.history && backupStatus.history.length > 0 ? (
+                  <div className="max-h-44 overflow-y-auto rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 divide-y divide-slate-100 dark:divide-slate-800" data-testid="stored-backup-list">
+                    {backupStatus.history.map((entry) => (
+                      <button
+                        key={entry.filename}
+                        type="button"
+                        onClick={() => handleStoredFileSelect(entry.filename)}
+                        disabled={restoreInProgress || storedFileFetching}
+                        className={`w-full flex items-center gap-2 px-2 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors disabled:opacity-50 ${selectedStoredFilename === entry.filename ? "bg-slate-100 dark:bg-slate-800" : ""}`}
+                        data-testid={`button-stored-backup-${entry.filename}`}
+                      >
+                        <Database className={`w-3.5 h-3.5 flex-shrink-0 ${selectedStoredFilename === entry.filename ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`} />
+                        <span className="font-mono text-[11px] flex-1 truncate">{entry.filename}</span>
+                        <span className="text-[10px] text-muted-foreground flex-shrink-0 ml-1">{formatBytes(entry.size)}</span>
+                        {selectedStoredFilename === entry.filename && (
+                          <CheckCircle className="w-3.5 h-3.5 text-red-600 dark:text-red-400 flex-shrink-0" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground" data-testid="text-no-stored-backups">
+                    No stored backups found. Run a backup first to create one.
+                  </p>
+                )}
+                {storedFileFetching && (
+                  <p className="text-[11px] text-muted-foreground flex items-center gap-1 mt-1" data-testid="text-stored-file-fetching">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Reading backup file…
                   </p>
                 )}
               </TabsContent>
@@ -3702,22 +3804,32 @@ export default function AdminDashboardPage() {
               </div>
             )}
 
-            <label className="flex items-start gap-2 text-[11px] leading-snug cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={restoreConfirmed}
-                onChange={(e) => setRestoreConfirmed(e.target.checked)}
-                disabled={!restoreFile || restoreInProgress}
-                className="mt-0.5"
-                data-testid="checkbox-restore-confirm"
-              />
-              <span>
-                {parsedTables && selectedTables.size < (parsedTables?.length ?? 0) && selectedTables.size > 0
-                  ? <>I understand this will permanently overwrite the <strong>{selectedTables.size} selected table{selectedTables.size !== 1 ? "s" : ""}</strong> with data from <strong>{restoreFile?.name || "the uploaded file"}</strong>. Unselected tables are left unchanged.</>
-                  : <>I understand this will permanently overwrite all existing data with the contents of <strong>{restoreFile?.name || "the uploaded file"}</strong>.</>
-                }
-              </span>
-            </label>
+            {(() => {
+              const hasSource = restoreMode === "upload" ? !!restoreFile : restoreMode === "stored" ? !!selectedStoredFilename : !!selectedGcsName;
+              const sourceName = restoreMode === "upload"
+                ? (restoreFile?.name || "the uploaded file")
+                : restoreMode === "stored"
+                  ? (selectedStoredFilename || "the selected file")
+                  : (selectedGcsName || "the selected GCS file");
+              return (
+                <label className="flex items-start gap-2 text-[11px] leading-snug cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={restoreConfirmed}
+                    onChange={(e) => setRestoreConfirmed(e.target.checked)}
+                    disabled={!hasSource || restoreInProgress}
+                    className="mt-0.5"
+                    data-testid="checkbox-restore-confirm"
+                  />
+                  <span>
+                    {parsedTables && selectedTables.size < (parsedTables?.length ?? 0) && selectedTables.size > 0
+                      ? <>I understand this will permanently overwrite the <strong>{selectedTables.size} selected table{selectedTables.size !== 1 ? "s" : ""}</strong> with data from <strong>{sourceName}</strong>. Unselected tables are left unchanged.</>
+                      : <>I understand this will permanently overwrite all existing data with the contents of <strong>{sourceName}</strong>.</>
+                    }
+                  </span>
+                </label>
+              );
+            })()}
 
             <div className="flex gap-2">
               <Button
@@ -3725,9 +3837,10 @@ export default function AdminDashboardPage() {
                 variant="outline"
                 onClick={handleDryRun}
                 disabled={
-                  !restoreFile ||
+                  !restoreReady ||
                   dryRunInProgress ||
                   restoreInProgress ||
+                  storedFileFetching ||
                   (parsedTables !== null && parsedTables.length > 0 && selectedTables.size === 0)
                 }
                 className="flex-1"
@@ -3744,10 +3857,11 @@ export default function AdminDashboardPage() {
                 variant="destructive"
                 onClick={handleRestoreSubmit}
                 disabled={
-                  !restoreFile ||
+                  !restoreReady ||
                   !restoreConfirmed ||
                   restoreInProgress ||
                   dryRunInProgress ||
+                  storedFileFetching ||
                   !dryRunResult ||
                   (parsedTables !== null && parsedTables.length > 0 && selectedTables.size === 0)
                 }
@@ -3855,17 +3969,19 @@ export default function AdminDashboardPage() {
             >
               Close
             </Button>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                const input = document.getElementById("restore-file") as HTMLInputElement | null;
-                input?.click();
-              }}
-              disabled={restoreInProgress}
-              data-testid="button-backup-restore"
-            >
-              Restore / Upload
-            </Button>
+            {restoreMode === "upload" && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  const input = document.getElementById("restore-file") as HTMLInputElement | null;
+                  input?.click();
+                }}
+                disabled={restoreInProgress}
+                data-testid="button-backup-restore"
+              >
+                Upload backup file
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

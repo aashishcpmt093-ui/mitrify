@@ -7,7 +7,7 @@ import { pool, db } from "./db";
 import { siteContent } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
-const BACKUPS_DIR = path.resolve(process.cwd(), "backups");
+export const BACKUPS_DIR = path.resolve(process.cwd(), "backups");
 const RETENTION = 30;
 const STATUS_KEY = "backup_status";
 
