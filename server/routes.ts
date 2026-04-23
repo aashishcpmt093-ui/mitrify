@@ -13,9 +13,10 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreBackupSql } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql } from "./backupJob";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
 const ADMIN_ID = "aashishcpmt09";
 const ADMIN_PASSWORD = "7742039808";
@@ -1804,16 +1805,39 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/admin/backup/restore", adminCheck, upload.single("file"), async (req, res) => {
-    try {
-      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
-      const text = req.file.buffer.toString("utf8");
-      await restoreBackupSql(text);
-      res.json({ success: true });
-    } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Restore failed" });
-    }
-  });
+  // POST /api/admin/restore — admin uploads a .sql backup file and we
+  // replay it inside a single transaction. Returns per-table row counts.
+  app.post(
+    "/api/admin/restore",
+    adminCheck,
+    restoreUpload.single("file"),
+    async (req: any, res) => {
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file) {
+        return res.status(400).json({ message: "No file uploaded" });
+      }
+      const name = (file.originalname || "").toLowerCase();
+      if (!name.endsWith(".sql")) {
+        return res.status(400).json({ message: "Only .sql files are accepted" });
+      }
+      const sql = file.buffer.toString("utf8");
+      if (!sql.trim()) {
+        return res.status(400).json({ message: "Uploaded file is empty" });
+      }
+      try {
+        const result = await restoreFromSql(sql);
+        res.json({
+          message: "Restore completed successfully",
+          ...result,
+        });
+      } catch (err: any) {
+        console.error("Restore failed:", err);
+        res.status(500).json({
+          message: err?.message || "Restore failed — database has been rolled back",
+        });
+      }
+    },
+  );
 
   startBackupScheduler();
 

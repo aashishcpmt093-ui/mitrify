@@ -208,6 +208,121 @@ export async function streamBackupSql(
 }
 
 // ─────────────────────────────────────────────────────────────
+// Restore — replay an uploaded .sql backup into the database
+// ─────────────────────────────────────────────────────────────
+
+export interface RestoreTableSummary {
+  table: string;
+  rowsBefore: number;
+  rowsAfter: number;
+  delta: number;
+}
+
+export interface RestoreResult {
+  durationMs: number;
+  totalRowsBefore: number;
+  totalRowsAfter: number;
+  tables: RestoreTableSummary[];
+}
+
+async function listPublicTables(): Promise<string[]> {
+  const res = await pool.query(
+    `SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+      ORDER BY table_name`,
+  );
+  return res.rows.map((r: any) => r.table_name as string);
+}
+
+async function countRowsPerTable(tables: string[]): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  for (const t of tables) {
+    try {
+      const r = await pool.query(`SELECT COUNT(*)::int AS c FROM ${quoteIdent(t)}`);
+      out[t] = r.rows[0]?.c ?? 0;
+    } catch {
+      out[t] = 0;
+    }
+  }
+  return out;
+}
+
+/**
+ * Replay an uploaded .sql backup. The dump is run inside a single
+ * transaction with FK-trigger checks disabled (session_replication_role
+ * = 'replica') so cross-table inserts apply in any order. Existing tables
+ * are TRUNCATEd first so the restore is a clean overwrite — this matches
+ * the warning shown in the admin UI.
+ *
+ * The dump's own outer BEGIN/COMMIT are stripped because Postgres does
+ * not support nested transactions (a literal COMMIT inside our wrapper
+ * would prematurely end the transaction).
+ */
+export async function restoreFromSql(sql: string): Promise<RestoreResult> {
+  const startedAt = Date.now();
+
+  // Strip the outer BEGIN; / COMMIT; the dump emits — we run the whole
+  // thing inside our own transaction below.
+  const stripped = sql
+    .replace(/^[ \t]*BEGIN\s*;[ \t]*\r?\n?/im, "")
+    .replace(/COMMIT\s*;[ \t]*\r?\n?(?![\s\S]*COMMIT\s*;)/i, "");
+
+  const tablesBefore = await listPublicTables();
+  const beforeCounts = await countRowsPerTable(tablesBefore);
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // Best-effort: disable FK trigger checks so cross-table inserts apply
+    // in any order. Requires superuser on some managed Postgres providers;
+    // ignore the error if it isn't allowed.
+    let replicationRoleSet = false;
+    try {
+      await client.query("SET session_replication_role = 'replica'");
+      replicationRoleSet = true;
+    } catch {}
+    try { await client.query("SET CONSTRAINTS ALL DEFERRED"); } catch {}
+
+    if (tablesBefore.length > 0) {
+      const list = tablesBefore.map(quoteIdent).join(", ");
+      await client.query(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);
+    }
+
+    await client.query(stripped);
+
+    if (replicationRoleSet) {
+      try { await client.query("SET session_replication_role = 'origin'"); } catch {}
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    try { await client.query("ROLLBACK"); } catch {}
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  const tablesAfter = await listPublicTables();
+  const afterCounts = await countRowsPerTable(tablesAfter);
+
+  const allTables = Array.from(new Set([...tablesBefore, ...tablesAfter])).sort();
+  const tables: RestoreTableSummary[] = allTables.map((t) => {
+    const rowsBefore = beforeCounts[t] ?? 0;
+    const rowsAfter = afterCounts[t] ?? 0;
+    return { table: t, rowsBefore, rowsAfter, delta: rowsAfter - rowsBefore };
+  });
+
+  const totalRowsBefore = tables.reduce((s, t) => s + t.rowsBefore, 0);
+  const totalRowsAfter = tables.reduce((s, t) => s + t.rowsAfter, 0);
+
+  return {
+    durationMs: Date.now() - startedAt,
+    totalRowsBefore,
+    totalRowsAfter,
+    tables,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
 // Status persistence (key/value row in `site_content`)
 // ─────────────────────────────────────────────────────────────
 

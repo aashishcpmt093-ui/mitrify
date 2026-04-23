@@ -168,6 +168,85 @@ export default function AdminDashboardPage() {
 
   const [recruitmentLink, setRecruitmentLink] = useState("https://forms.gle/C54uAz7pkupe6g136");
   const [activeTab, setActiveTab] = useState("providers");
+  const [backupDialogOpen, setBackupDialogOpen] = useState(false);
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [restoreConfirmed, setRestoreConfirmed] = useState(false);
+  const [restoreInProgress, setRestoreInProgress] = useState(false);
+  const [restoreSummary, setRestoreSummary] = useState<{
+    totalRowsBefore: number;
+    totalRowsAfter: number;
+    durationMs: number;
+    tables: Array<{ table: string; rowsBefore: number; rowsAfter: number; delta: number }>;
+  } | null>(null);
+  const [downloadInProgress, setDownloadInProgress] = useState(false);
+
+  async function handleBackupDownload() {
+    setDownloadInProgress(true);
+    toast({
+      title: "Backup download started",
+      description: "Sab data download ho raha hai. Bada file hai, thoda time lag sakta hai.",
+    });
+    try {
+      const res = await fetch("/api/admin/backup", { credentials: "include" });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+      const disposition = res.headers.get("content-disposition") || "";
+      const match = /filename="?([^"]+)"?/.exec(disposition);
+      const filename = match?.[1] || "mitrify-backup.sql";
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Download shuru nahi ho saki";
+      toast({ title: "Backup failed", description: msg, variant: "destructive" });
+    } finally {
+      setDownloadInProgress(false);
+    }
+  }
+
+  async function handleRestoreSubmit() {
+    if (!restoreFile || !restoreConfirmed || restoreInProgress) return;
+    setRestoreInProgress(true);
+    setRestoreSummary(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", restoreFile);
+      const res = await fetch("/api/admin/restore", {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.message || `HTTP ${res.status}`);
+      }
+      setRestoreSummary({
+        totalRowsBefore: data.totalRowsBefore ?? 0,
+        totalRowsAfter: data.totalRowsAfter ?? 0,
+        durationMs: data.durationMs ?? 0,
+        tables: Array.isArray(data.tables) ? data.tables : [],
+      });
+      toast({
+        title: "Restore complete",
+        description: `${data.totalRowsAfter ?? 0} rows restored across ${data.tables?.length ?? 0} tables.`,
+      });
+      queryClient.invalidateQueries();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Restore failed";
+      toast({ title: "Restore failed", description: msg, variant: "destructive" });
+    } finally {
+      setRestoreInProgress(false);
+    }
+  }
   const [newCoAdminUser, setNewCoAdminUser] = useState("");
   const [newCoAdminPass, setNewCoAdminPass] = useState("");
   const [newCoAdminRole, setNewCoAdminRole] = useState("coadmin");
@@ -794,38 +873,11 @@ export default function AdminDashboardPage() {
             { value: "creditpurchase", icon: Coins, label: "Credit Buy", count: purchaseCount,         iconBg: "bg-purple-100 dark:bg-purple-900/60",  iconColor: "text-purple-600 dark:text-purple-400",  activeBg: "bg-purple-600",  border: "border-purple-200 dark:border-purple-800" },
             { value: "duplicateentry", icon: Copy,  label: "Duplicate",  count: duplicateData?.length, iconBg: "bg-red-100 dark:bg-red-900/60",         iconColor: "text-red-600 dark:text-red-400",        activeBg: "bg-red-600",     border: "border-red-200 dark:border-red-800" },
             { value: "backup",    icon: Database,   label: "Backup",     count: undefined,             iconBg: "bg-amber-100 dark:bg-amber-900/60",     iconColor: "text-amber-600 dark:text-amber-400",    activeBg: "bg-amber-600",   border: "border-amber-200 dark:border-amber-800",
-              onClick: async () => {
-                toast({
-                  title: "Backup download started",
-                  description: "Sab data download ho raha hai. Bada file hai, thoda time lag sakta hai.",
-                });
-                try {
-                  const res = await fetch("/api/admin/backup", { credentials: "include" });
-                  if (!res.ok) {
-                    const text = await res.text().catch(() => "");
-                    throw new Error(text || `HTTP ${res.status}`);
-                  }
-                  const disposition = res.headers.get("content-disposition") || "";
-                  const match = /filename="?([^"]+)"?/.exec(disposition);
-                  const filename = match?.[1] || "mitrify-backup.sql";
-                  const blob = await res.blob();
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = filename;
-                  a.rel = "noopener";
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                  URL.revokeObjectURL(url);
-                } catch (err: unknown) {
-                  const msg = err instanceof Error ? err.message : "Download shuru nahi ho saki";
-                  toast({
-                    title: "Backup failed",
-                    description: msg,
-                    variant: "destructive",
-                  });
-                }
+              onClick: () => {
+                setRestoreFile(null);
+                setRestoreConfirmed(false);
+                setRestoreSummary(null);
+                setBackupDialogOpen(true);
               } },
           ];
           return (
@@ -3041,6 +3093,172 @@ export default function AdminDashboardPage() {
           </div>
         </div>
       )}
+
+      {/* ── BACKUP / RESTORE DIALOG ── */}
+      <Dialog open={backupDialogOpen} onOpenChange={(open) => {
+        if (restoreInProgress) return;
+        setBackupDialogOpen(open);
+        if (!open) {
+          setRestoreFile(null);
+          setRestoreConfirmed(false);
+          setRestoreSummary(null);
+        }
+      }}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="dialog-backup">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Database className="w-5 h-5 text-amber-600" />
+              Database Backup
+            </DialogTitle>
+            <DialogDescription>
+              Download a full snapshot or restore the database from a previously-downloaded .sql file.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Download section */}
+          <div className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/20 p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <Download className="w-4 h-4 text-amber-700 dark:text-amber-300" />
+              <h3 className="font-semibold text-sm">Download backup</h3>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Saves a complete .sql snapshot of every table and row to your computer.
+            </p>
+            <Button
+              size="sm"
+              onClick={handleBackupDownload}
+              disabled={downloadInProgress}
+              className="w-full bg-amber-600 hover:bg-amber-700 text-white"
+              data-testid="button-backup-download"
+            >
+              {downloadInProgress ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Preparing…</>
+              ) : (
+                <><Download className="w-4 h-4 mr-2" />Download .sql</>
+              )}
+            </Button>
+          </div>
+
+          {/* Restore section */}
+          <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-900/20 p-4 space-y-3 mt-3">
+            <div className="flex items-center gap-2">
+              <Upload className="w-4 h-4 text-red-700 dark:text-red-300" />
+              <h3 className="font-semibold text-sm">Restore from backup</h3>
+            </div>
+            <div className="flex items-start gap-2 rounded-lg bg-red-100/70 dark:bg-red-900/40 p-2.5 border border-red-200 dark:border-red-800">
+              <AlertTriangle className="w-4 h-4 text-red-700 dark:text-red-300 flex-shrink-0 mt-0.5" />
+              <p className="text-[11px] leading-snug text-red-800 dark:text-red-200">
+                <strong>Warning:</strong> Restoring will <strong>overwrite all current data</strong> with the
+                contents of the uploaded file. Every table is wiped first, then re-populated from the backup.
+                This cannot be undone — download a fresh backup first if you might need to roll back.
+              </p>
+            </div>
+
+            <div>
+              <Label htmlFor="restore-file" className="text-xs font-semibold mb-1 block">
+                Select .sql backup file
+              </Label>
+              <Input
+                id="restore-file"
+                type="file"
+                accept=".sql,application/sql,text/plain"
+                onChange={(e) => {
+                  const f = e.target.files?.[0] || null;
+                  setRestoreFile(f);
+                  setRestoreConfirmed(false);
+                  setRestoreSummary(null);
+                }}
+                disabled={restoreInProgress}
+                data-testid="input-restore-file"
+                className="text-xs"
+              />
+              {restoreFile && (
+                <p className="text-[11px] text-muted-foreground mt-1" data-testid="text-restore-filename">
+                  {restoreFile.name} · {formatBytes(restoreFile.size)}
+                </p>
+              )}
+            </div>
+
+            <label className="flex items-start gap-2 text-[11px] leading-snug cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={restoreConfirmed}
+                onChange={(e) => setRestoreConfirmed(e.target.checked)}
+                disabled={!restoreFile || restoreInProgress}
+                className="mt-0.5"
+                data-testid="checkbox-restore-confirm"
+              />
+              <span>
+                I understand this will permanently overwrite all existing data with the contents of
+                <strong> {restoreFile?.name || "the uploaded file"}</strong>.
+              </span>
+            </label>
+
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={handleRestoreSubmit}
+              disabled={!restoreFile || !restoreConfirmed || restoreInProgress}
+              className="w-full"
+              data-testid="button-restore-submit"
+            >
+              {restoreInProgress ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Restoring…</>
+              ) : (
+                <><RotateCcw className="w-4 h-4 mr-2" />Restore database</>
+              )}
+            </Button>
+
+            {/* Per-table summary after restore */}
+            {restoreSummary && (
+              <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-3 space-y-2 mt-2" data-testid="restore-summary">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-emerald-700 dark:text-emerald-300" />
+                  <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-200">
+                    Restore complete — {restoreSummary.totalRowsAfter.toLocaleString("en-IN")} rows in{" "}
+                    {restoreSummary.tables.length} tables ({(restoreSummary.durationMs / 1000).toFixed(1)}s)
+                  </p>
+                </div>
+                <div className="max-h-48 overflow-y-auto rounded border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-slate-900">
+                  <table className="w-full text-[11px]">
+                    <thead className="bg-emerald-100/60 dark:bg-emerald-900/30 sticky top-0">
+                      <tr>
+                        <th className="text-left px-2 py-1 font-semibold">Table</th>
+                        <th className="text-right px-2 py-1 font-semibold">Before</th>
+                        <th className="text-right px-2 py-1 font-semibold">After</th>
+                        <th className="text-right px-2 py-1 font-semibold">Δ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {restoreSummary.tables.map((t) => (
+                        <tr key={t.table} className="border-t border-emerald-100 dark:border-emerald-900/40" data-testid={`row-restore-${t.table}`}>
+                          <td className="px-2 py-1 font-mono">{t.table}</td>
+                          <td className="px-2 py-1 text-right text-muted-foreground">{t.rowsBefore.toLocaleString("en-IN")}</td>
+                          <td className="px-2 py-1 text-right font-semibold">{t.rowsAfter.toLocaleString("en-IN")}</td>
+                          <td className={`px-2 py-1 text-right font-semibold ${t.delta > 0 ? "text-emerald-700 dark:text-emerald-300" : t.delta < 0 ? "text-red-700 dark:text-red-300" : "text-muted-foreground"}`}>
+                            {t.delta > 0 ? "+" : ""}{t.delta.toLocaleString("en-IN")}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setBackupDialogOpen(false)}
+              disabled={restoreInProgress}
+              data-testid="button-backup-close"
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </div>
   );
