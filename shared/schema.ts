@@ -116,6 +116,20 @@ export const siteContent = pgTable("site_content", {
 
 export type SiteContent = typeof siteContent.$inferSelect;
 
+export const appNotifications = pgTable("app_notifications", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id", { length: 255 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  message: text("message").notNull(),
+  type: varchar("type", { length: 50 }).notNull().default("info"),
+  isRead: boolean("is_read").default(false).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAppNotificationSchema = createInsertSchema(appNotifications).omit({ id: true, createdAt: true });
+export type AppNotification = typeof appNotifications.$inferSelect;
+export type InsertAppNotification = z.infer<typeof insertAppNotificationSchema>;
+
 export const coAdmins = pgTable("co_admins", {
   id: serial("id").primaryKey(),
   username: varchar("username", { length: 100 }).notNull().unique(),

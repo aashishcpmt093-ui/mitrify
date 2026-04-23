@@ -2,7 +2,7 @@ import { db } from "./db";
 import {
   profiles, providers, calls, promoCodes, localUsers, credits, subscriptions,
   coAdmins, pendingProviders, visitorStats, jobs, promoUsageLog, employees, searchLog,
-  salaryPayments, creditPayments,
+  salaryPayments, creditPayments, appNotifications,
   type Job,
   type Profile, type InsertProfile,
   type Provider, type InsertProvider,
@@ -48,6 +48,9 @@ export interface IStorage {
   getCallsByProvider(providerId: string): Promise<CallLog[]>;
   countDoubleChargeCallsToday(providerId: string): Promise<number>;
   getAllCallLogs(): Promise<CallLog[]>;
+  createAppNotification(data: { userId: string; title: string; message: string; type?: string }): Promise<void>;
+  listAppNotifications(userId: string): Promise<Array<{ id: number; userId: string; title: string; message: string; type: string; isRead: boolean; createdAt: Date | null }>>;
+  markAppNotificationRead(id: number, userId: string): Promise<void>;
 
   getOrCreateCredits(userId: string, role: string): Promise<Credit>;
   deductCredit(userId: string, role: string): Promise<boolean>;
@@ -918,6 +921,23 @@ export class DatabaseStorage implements IStorage {
       });
     }
     return logs;
+  }
+
+  async createAppNotification(data: { userId: string; title: string; message: string; type?: string }): Promise<void> {
+    await db.insert(appNotifications).values({
+      userId: data.userId,
+      title: data.title,
+      message: data.message,
+      type: data.type || "info",
+    });
+  }
+
+  async listAppNotifications(userId: string) {
+    return await db.select().from(appNotifications).where(eq(appNotifications.userId, userId)).orderBy(desc(appNotifications.createdAt));
+  }
+
+  async markAppNotificationRead(id: number, userId: string): Promise<void> {
+    await db.update(appNotifications).set({ isRead: true }).where(and(eq(appNotifications.id, id), eq(appNotifications.userId, userId)));
   }
 
 
