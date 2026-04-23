@@ -20,7 +20,7 @@ import {
   SortAsc, Filter, TrendingUp, Activity, Briefcase, Link, Eye, EyeOff,
   UserCog, ExternalLink, Key, CheckCircle, Loader2,
   Calendar, Award, Clock, XCircle, ChevronRight, Upload, FileSpreadsheet,
-  Copy, MapPin, Star, Database, Cloud, CloudUpload
+  Copy, MapPin, Star, Database, Cloud, CloudUpload, Bell
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useTheme } from "@/lib/theme";
@@ -202,6 +202,7 @@ export default function AdminDashboardPage() {
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [gcsMode, setGcsMode] = useState<"overwrite" | "new">("new");
   const [gcsUploadResult, setGcsUploadResult] = useState<{ gcsName: string; url: string; size: number } | null>(null);
+  const [testAlertPending, setTestAlertPending] = useState(false);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [restoreConfirmed, setRestoreConfirmed] = useState(false);
   const [restoreInProgress, setRestoreInProgress] = useState(false);
@@ -3295,6 +3296,46 @@ export default function AdminDashboardPage() {
                 )}
               </>
             )}
+          </div>
+
+          {/* Alert webhook test */}
+          <div className="rounded-xl border border-violet-200 dark:border-violet-800 bg-violet-50/60 dark:bg-violet-900/20 p-4 space-y-2 mt-3">
+            <div className="flex items-center gap-2">
+              <Bell className="w-4 h-4 text-violet-700 dark:text-violet-300" />
+              <h3 className="font-semibold text-sm">Alert webhook</h3>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Send a test notification to the configured <code className="font-mono">BACKUP_ALERT_WEBHOOK</code> to verify it works correctly.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={testAlertPending}
+              className="w-full border-violet-400 dark:border-violet-600 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/40"
+              data-testid="button-test-alert"
+              onClick={async () => {
+                setTestAlertPending(true);
+                try {
+                  const res = await apiRequest("POST", "/api/admin/backup/test-alert");
+                  const data = await res.json();
+                  if (data.ok) {
+                    toast({ title: "Test alert sent", description: data.message });
+                  } else {
+                    toast({ title: "Alert failed", description: data.message, variant: "destructive" });
+                  }
+                } catch (err: any) {
+                  toast({ title: "Alert failed", description: err?.message || "Unexpected error", variant: "destructive" });
+                } finally {
+                  setTestAlertPending(false);
+                }
+              }}
+            >
+              {testAlertPending ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Sending…</>
+              ) : (
+                <><Bell className="w-4 h-4 mr-2" />Send test alert</>
+              )}
+            </Button>
           </div>
 
           {/* Backup history */}

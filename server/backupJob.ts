@@ -18,7 +18,7 @@ const STATUS_KEY = "backup_status";
 //   https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT_ID>
 // ─────────────────────────────────────────────────────────────
 
-async function sendBackupAlert(opts: {
+export async function sendBackupAlert(opts: {
   filename?: string;
   errorMessage: string;
   dashboardUrl?: string;

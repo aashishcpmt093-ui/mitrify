@@ -15,7 +15,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert } from "./backupJob";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -1844,6 +1844,16 @@ export async function registerRoutes(
   // GET /api/admin/backup/gcs-status — is GCS configured?
   app.get("/api/admin/backup/gcs-status", adminCheck, (_req, res) => {
     res.json({ configured: isGCSConfigured(), bucket: process.env.GCS_BUCKET_NAME || null });
+  });
+
+  // POST /api/admin/backup/test-alert — send a test alert to the configured webhook
+  app.post("/api/admin/backup/test-alert", adminCheck, async (_req, res) => {
+    try {
+      const result = await sendBackupAlert({ errorMessage: "This is a test alert from the Mitrify admin dashboard." });
+      res.json({ ok: result.sent, message: result.sent ? "Test alert sent successfully." : (result.error ?? "Failed to send test alert.") });
+    } catch (err: any) {
+      res.json({ ok: false, message: err?.message || "Unexpected error." });
+    }
   });
 
   app.get("/api/admin/backup", adminCheck, async (req, res) => {
