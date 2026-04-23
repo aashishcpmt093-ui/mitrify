@@ -13,7 +13,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreBackupSql } from "./backupJob";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -1801,6 +1801,17 @@ export async function registerRoutes(
       } else {
         res.status(500).json({ message: err?.message || "Backup failed" });
       }
+    }
+  });
+
+  app.post("/api/admin/backup/restore", adminCheck, upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+      const text = req.file.buffer.toString("utf8");
+      await restoreBackupSql(text);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Restore failed" });
     }
   });
 

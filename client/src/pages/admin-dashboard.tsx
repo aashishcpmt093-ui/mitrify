@@ -11,7 +11,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
-import { useState, useEffect, useMemo } from "react";
+import { useRef, useState, useEffect, useMemo } from "react";
 import {
   Users, Wrench, Phone, IndianRupee, Shield, LogOut,
   Ban, Trash2, Download, TicketPlus, ToggleLeft, ToggleRight,
@@ -120,6 +120,7 @@ export default function AdminDashboardPage() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const { theme, toggleTheme } = useTheme();
+  const restoreInputRef = useRef<HTMLInputElement | null>(null);
   const [newPromoCode, setNewPromoCode] = useState("");
   const [newPromoCredits, setNewPromoCredits] = useState("25");
   const [editPromoId, setEditPromoId] = useState<number | null>(null);
@@ -857,6 +858,21 @@ export default function AdminDashboardPage() {
                     <span className={`text-[10px] font-semibold leading-tight text-center ${isActive ? "text-white" : "text-muted-foreground"}`}>
                       {label}
                     </span>
+                    {value === "backup" && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="mt-1 h-7 rounded-lg text-[10px] font-semibold"
+                        data-testid="button-backup-restore"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          restoreInputRef.current?.click();
+                        }}
+                      >
+                        Restore / Upload
+                      </Button>
+                    )}
                   </button>
                 );
               })}

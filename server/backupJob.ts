@@ -400,3 +400,30 @@ export function startBackupScheduler(): void {
   };
   schedule();
 }
+
+export async function restoreBackupSql(sqlText: string): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const cleaned = sqlText.replace(/\r\n/g, "\n");
+    const statements = cleaned
+      .split(";\n")
+      .map((s) => s.trim())
+      .filter((s) => s && !s.startsWith("--"));
+    for (const statement of statements) {
+      const body = statement
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("--"))
+        .join("\n")
+        .trim();
+      if (!body || body === "BEGIN" || body === "COMMIT") continue;
+      await client.query(body.endsWith(";") ? body : `${body};`);
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    try { await client.query("ROLLBACK"); } catch {}
+    throw err;
+  } finally {
+    client.release();
+  }
+}
