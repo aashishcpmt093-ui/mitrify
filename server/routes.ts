@@ -13,6 +13,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler } from "./backupJob";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -1774,215 +1775,26 @@ export async function registerRoutes(
   // Streams a .sql file containing a CREATE TABLE IF NOT EXISTS statement
   // and every row of every table in the live database. No filtering, no
   // sampling — 100% snapshot. Self-restorable via `psql < backup.sql`.
+  // Last successful nightly auto-backup info (used by admin dashboard).
+  app.get("/api/admin/backup/status", adminCheck, async (_req, res) => {
+    try {
+      const status = await getBackupStatus();
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to load backup status" });
+    }
+  });
+
   app.get("/api/admin/backup", adminCheck, async (req, res) => {
-    function sqlLiteral(val: any): string {
-      if (val === null || val === undefined) return "NULL";
-      if (typeof val === "boolean") return val ? "TRUE" : "FALSE";
-      if (typeof val === "number") return Number.isFinite(val) ? String(val) : "NULL";
-      if (typeof val === "bigint") return val.toString();
-      if (val instanceof Date) return `'${val.toISOString()}'`;
-      if (Array.isArray(val)) {
-        // Build a Postgres array literal as a quoted string
-        const inner = val.map((v) => {
-          if (v === null || v === undefined) return "NULL";
-          const s = String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-          return `"${s}"`;
-        }).join(",");
-        return `'{${inner.replace(/'/g, "''")}}'`;
-      }
-      if (typeof val === "object") {
-        return `'${JSON.stringify(val).replace(/'/g, "''")}'::jsonb`;
-      }
-      return `'${String(val).replace(/'/g, "''")}'`;
-    }
-
-    function quoteIdent(s: string) { return `"${s.replace(/"/g, '""')}"`; }
-
-    // Map information_schema column metadata back to a Postgres type literal.
-    function columnTypeSql(col: any): string {
-      const dt: string = col.data_type;
-      const udt: string = col.udt_name;
-      const len: number | null = col.character_maximum_length;
-      const prec: number | null = col.numeric_precision;
-      const scale: number | null = col.numeric_scale;
-      switch (dt) {
-        case "character varying": return len ? `varchar(${len})` : "varchar";
-        case "character":         return len ? `char(${len})` : "char";
-        case "text":              return "text";
-        case "integer":           return "integer";
-        case "bigint":            return "bigint";
-        case "smallint":          return "smallint";
-        case "boolean":           return "boolean";
-        case "real":              return "real";
-        case "double precision":  return "double precision";
-        case "numeric":           return prec ? `numeric(${prec}${scale != null ? `,${scale}` : ""})` : "numeric";
-        case "json":              return "json";
-        case "jsonb":             return "jsonb";
-        case "uuid":              return "uuid";
-        case "date":              return "date";
-        case "timestamp without time zone": return "timestamp";
-        case "timestamp with time zone":    return "timestamptz";
-        case "time without time zone":      return "time";
-        case "time with time zone":         return "timetz";
-        case "bytea":             return "bytea";
-        case "ARRAY": {
-          // udt_name like "_text" → "text[]"
-          const base = udt && udt.startsWith("_") ? udt.slice(1) : (udt || "text");
-          return `${base}[]`;
-        }
-        default:
-          return udt || dt;
-      }
-    }
-
-    function pad(n: number) { return n.toString().padStart(2, "0"); }
-    const now = new Date();
-    const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
-    const filename = `mitrify-backup-${stamp}.sql`;
-
+    const filename = makeBackupFilename();
     res.setHeader("Content-Type", "application/sql; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader("Cache-Control", "no-store");
-
-    const write = (s: string) => res.write(s);
-
     try {
-      write(`-- Mitrify database backup\n`);
-      write(`-- Generated: ${now.toISOString()}\n`);
-      write(`-- Contents: 100% full snapshot of every table, every row\n`);
-      write(`-- Restore: psql <connection-url> < ${filename}\n`);
-      write(`\nBEGIN;\n\n`);
-
-      // Discover all public tables in the live DB
-      const tablesRes = await pool.query(
-        `SELECT table_name FROM information_schema.tables
-         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-         ORDER BY table_name`
-      );
-      const tableNames: string[] = tablesRes.rows.map((r: any) => r.table_name);
-
-      const BATCH = 500;
-
-      for (const table of tableNames) {
-        // Get column metadata, ordered by ordinal_position
-        const colsRes = await pool.query(
-          `SELECT column_name, data_type, udt_name, character_maximum_length,
-                  numeric_precision, numeric_scale, is_nullable, column_default
-             FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = $1
-            ORDER BY ordinal_position`,
-          [table]
-        );
-        const colRows: any[] = colsRes.rows;
-        const cols: string[] = colRows.map((r) => r.column_name);
-        const colTypes: Record<string, string> = Object.fromEntries(
-          colRows.map((r) => [r.column_name, r.data_type])
-        );
-        if (cols.length === 0) continue;
-
-        // Primary key columns (used inside CREATE TABLE)
-        const pkRes = await pool.query(
-          `SELECT a.attname AS column_name
-             FROM pg_index i
-             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-            WHERE i.indrelid = ('public.' || $1)::regclass AND i.indisprimary
-            ORDER BY array_position(i.indkey, a.attnum)`,
-          [table]
-        );
-        const pkCols: string[] = pkRes.rows.map((r: any) => r.column_name);
-
-        const countRes = await pool.query(
-          `SELECT COUNT(*)::int AS c FROM ${quoteIdent(table)}`
-        );
-        const total: number = countRes.rows[0]?.c ?? 0;
-
-        write(`-- ─────────────────────────────────────────\n`);
-        write(`-- Table: ${table}  |  rows in dump: ${total}\n`);
-        write(`-- ─────────────────────────────────────────\n`);
-
-        // Emit CREATE TABLE IF NOT EXISTS so the file is self-restorable
-        // against an empty Postgres database. When a column default is a
-        // sequence (nextval('...')), use the matching SERIAL pseudo-type so
-        // Postgres auto-creates the backing sequence on restore.
-        const colDefs = colRows.map((c) => {
-          const isSerialDefault =
-            typeof c.column_default === "string" &&
-            c.column_default.startsWith("nextval(");
-          let typeSql: string;
-          let emitDefault = c.column_default !== null && c.column_default !== undefined;
-          if (isSerialDefault) {
-            const dt = c.data_type;
-            typeSql = dt === "bigint" ? "bigserial" : dt === "smallint" ? "smallserial" : "serial";
-            emitDefault = false;
-          } else {
-            typeSql = columnTypeSql(c);
-          }
-          const parts: string[] = [quoteIdent(c.column_name), typeSql];
-          if (emitDefault) parts.push(`DEFAULT ${c.column_default}`);
-          if (c.is_nullable === "NO" && !isSerialDefault) parts.push("NOT NULL");
-          return "  " + parts.join(" ");
-        });
-        if (pkCols.length > 0) {
-          colDefs.push(`  PRIMARY KEY (${pkCols.map(quoteIdent).join(", ")})`);
-        }
-        write(`CREATE TABLE IF NOT EXISTS ${quoteIdent(table)} (\n${colDefs.join(",\n")}\n);\n`);
-
-        if (total === 0) {
-          write(`-- (no rows)\n\n`);
-          continue;
-        }
-
-        const colList = cols.map(quoteIdent).join(", ");
-
-        // Stream rows in batches. Use keyset pagination on numeric "id" when
-        // present (much faster than OFFSET on large tables like
-        // pending_providers ~40k rows). Otherwise fall back to OFFSET.
-        const idType = colTypes["id"];
-        const hasNumericId = cols.includes("id") && idType && /int|serial|numeric/i.test(idType);
-
-        if (hasNumericId) {
-          let lastId = 0;
-          while (true) {
-            const rowsRes = await pool.query(
-              `SELECT ${colList} FROM ${quoteIdent(table)} WHERE "id" > ${lastId} ORDER BY "id" LIMIT ${BATCH}`
-            );
-            if (rowsRes.rows.length === 0) break;
-            for (const row of rowsRes.rows) {
-              const vals = cols.map((c) => sqlLiteral(row[c])).join(", ");
-              write(`INSERT INTO ${quoteIdent(table)} (${colList}) VALUES (${vals});\n`);
-              lastId = Number(row.id) || lastId;
-            }
-          }
-        } else {
-          const orderCol = cols[0];
-          let offset = 0;
-          while (offset < total) {
-            const rowsRes = await pool.query(
-              `SELECT ${colList} FROM ${quoteIdent(table)} ORDER BY ${quoteIdent(orderCol)} LIMIT ${BATCH} OFFSET ${offset}`
-            );
-            if (rowsRes.rows.length === 0) break;
-            for (const row of rowsRes.rows) {
-              const vals = cols.map((c) => sqlLiteral(row[c])).join(", ");
-              write(`INSERT INTO ${quoteIdent(table)} (${colList}) VALUES (${vals});\n`);
-            }
-            offset += rowsRes.rows.length;
-          }
-        }
-
-        // Sync the serial sequence on "id" (if any) so future inserts after
-        // restore don't collide with the dumped IDs.
-        if (hasNumericId) {
-          write(`SELECT setval(pg_get_serial_sequence('${table.replace(/'/g, "''")}', 'id'), COALESCE((SELECT MAX("id") FROM ${quoteIdent(table)}), 1), true);\n`);
-        }
-        write(`\n`);
-      }
-
-      write(`COMMIT;\n`);
-      write(`-- End of backup\n`);
+      await streamBackupSql((s) => res.write(s), { filename });
       res.end();
     } catch (err: any) {
       console.error("Backup failed:", err);
-      // If headers already sent, just end the response with a SQL comment
       if (res.headersSent) {
         try { res.write(`\n-- BACKUP FAILED: ${String(err?.message || err).replace(/\n/g, " ")}\n`); } catch {}
         try { res.end(); } catch {}
@@ -1991,6 +1803,8 @@ export async function registerRoutes(
       }
     }
   });
+
+  startBackupScheduler();
 
   return httpServer;
 }

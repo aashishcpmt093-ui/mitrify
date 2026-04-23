@@ -47,6 +47,75 @@ function avatarColor(name: string) {
   return AVATAR_COLORS[sum % AVATAR_COLORS.length];
 }
 
+interface BackupStatusResponse {
+  lastSuccessAt: string | null;
+  lastSuccess: { filename: string; size: number; emailed: boolean; emailError?: string } | null;
+  lastError: { at: string; message: string } | null;
+  history: Array<{ filename: string; size: number; generatedAt: string; emailed: boolean }>;
+}
+
+function formatBytes(n: number) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatRelative(iso: string) {
+  const then = new Date(iso).getTime();
+  const diffMs = Date.now() - then;
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 48) return `${hrs} hr ago`;
+  const days = Math.round(hrs / 24);
+  return `${days} d ago`;
+}
+
+function BackupStatusLine() {
+  const { data, isLoading } = useQuery<BackupStatusResponse>({
+    queryKey: ["/api/admin/backup/status"],
+    refetchInterval: 5 * 60 * 1000,
+  });
+
+  if (isLoading) return null;
+
+  const last = data?.lastSuccess ?? null;
+  const lastAt = data?.lastSuccessAt ?? null;
+  const err = data?.lastError ?? null;
+
+  return (
+    <div
+      className="flex items-center justify-between gap-2 mb-3 px-3 py-2 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/20"
+      data-testid="status-auto-backup"
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <Database className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+        <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 truncate">
+          Auto-backup:{" "}
+          {lastAt && last ? (
+            <span data-testid="text-last-backup-time">
+              {formatRelative(lastAt)} · {formatBytes(last.size)}
+              {last.emailed ? " · emailed" : " · email pending"}
+            </span>
+          ) : (
+            <span data-testid="text-last-backup-time">never run yet — first run scheduled at 2 AM IST</span>
+          )}
+        </span>
+      </div>
+      {err && (
+        <span
+          className="text-[10px] font-semibold text-red-700 dark:text-red-300 truncate"
+          data-testid="text-backup-error"
+          title={err.message}
+        >
+          last error: {err.message.slice(0, 40)}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function AdminDashboardPage() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -794,6 +863,9 @@ export default function AdminDashboardPage() {
             </div>
           );
         })()}
+
+        {/* ── Auto-backup status line ── */}
+        <BackupStatusLine />
 
         {/* ── TABS (content only) ── */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
