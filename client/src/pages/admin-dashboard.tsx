@@ -72,6 +72,15 @@ function formatRelative(iso: string) {
   return `${days} d ago`;
 }
 
+const BACKUP_COOLDOWN_MS = 5 * 60 * 1000;
+
+function formatCountdown(ms: number) {
+  const totalSecs = Math.ceil(ms / 1000);
+  const mins = Math.floor(totalSecs / 60);
+  const secs = totalSecs % 60;
+  return `${mins}:${String(secs).padStart(2, "0")}`;
+}
+
 function BackupStatusLine() {
   const { toast } = useToast();
   const { data, isLoading, refetch } = useQuery<BackupStatusResponse>({
@@ -79,12 +88,34 @@ function BackupStatusLine() {
     refetchInterval: 5 * 60 * 1000,
   });
 
+  const [lastRunAt, setLastRunAt] = useState<number | null>(null);
+  const [remainingMs, setRemainingMs] = useState<number>(0);
+
+  useEffect(() => {
+    if (lastRunAt === null) return;
+    let id: ReturnType<typeof setInterval>;
+    const tick = () => {
+      const elapsed = Date.now() - lastRunAt;
+      const left = BACKUP_COOLDOWN_MS - elapsed;
+      if (left <= 0) {
+        setRemainingMs(0);
+        clearInterval(id);
+        return;
+      }
+      setRemainingMs(left);
+    };
+    tick();
+    id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [lastRunAt]);
+
   const runNowMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/api/admin/backup/run-now"),
     onSuccess: () => {
       toast({ title: "Backup complete", description: "Backup ran successfully." });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/backup/status"] });
       refetch();
+      setLastRunAt(Date.now());
     },
     onError: (err: any) => {
       const msg = err?.message || "Backup failed";
@@ -97,6 +128,7 @@ function BackupStatusLine() {
   const last = data?.lastSuccess ?? null;
   const lastAt = data?.lastSuccessAt ?? null;
   const err = data?.lastError ?? null;
+  const isCoolingDown = remainingMs > 0;
 
   return (
     <div
@@ -133,15 +165,25 @@ function BackupStatusLine() {
           variant="outline"
           className="h-6 px-2 text-[11px] border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
           onClick={() => runNowMutation.mutate()}
-          disabled={runNowMutation.isPending}
+          disabled={runNowMutation.isPending || isCoolingDown}
           data-testid="button-run-backup-now"
         >
           {runNowMutation.isPending ? (
-            <Loader2 className="w-3 h-3 animate-spin mr-1" />
+            <>
+              <Loader2 className="w-3 h-3 animate-spin mr-1" />
+              Running…
+            </>
+          ) : isCoolingDown ? (
+            <>
+              <Clock className="w-3 h-3 mr-1" />
+              <span data-testid="text-backup-cooldown">available in {formatCountdown(remainingMs)}</span>
+            </>
           ) : (
-            <Database className="w-3 h-3 mr-1" />
+            <>
+              <Database className="w-3 h-3 mr-1" />
+              Run now
+            </>
           )}
-          Run now
         </Button>
       </div>
     </div>
