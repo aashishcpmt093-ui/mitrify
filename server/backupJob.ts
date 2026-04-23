@@ -10,6 +10,56 @@ const BACKUPS_DIR = path.resolve(process.cwd(), "backups");
 const RETENTION = 30;
 const STATUS_KEY = "backup_status";
 
+// ─────────────────────────────────────────────────────────────
+// Alert — send a push notification when a backup problem occurs
+// Set BACKUP_ALERT_WEBHOOK to a Slack/Discord/generic webhook URL
+// or to a Telegram Bot API URL:
+//   https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT_ID>
+// ─────────────────────────────────────────────────────────────
+
+async function sendBackupAlert(opts: {
+  filename?: string;
+  errorMessage: string;
+  dashboardUrl?: string;
+}): Promise<void> {
+  const webhookUrl = process.env.BACKUP_ALERT_WEBHOOK;
+  if (!webhookUrl) return;
+
+  const { filename, errorMessage, dashboardUrl } = opts;
+  const dash = dashboardUrl ?? (process.env.REPLIT_DEV_DOMAIN
+    ? `https://${process.env.REPLIT_DEV_DOMAIN}/admin`
+    : "/admin");
+
+  const lines: string[] = [
+    "⚠️ *Mitrify nightly backup alert*",
+    filename ? `📁 File: \`${filename}\`` : "📁 File: (not generated)",
+    `❌ Error: ${errorMessage}`,
+    `🔗 Dashboard: ${dash}`,
+  ];
+  const message = lines.join("\n");
+
+  try {
+    const isTelegram = webhookUrl.includes("api.telegram.org");
+    const body = isTelegram
+      ? JSON.stringify({ text: message, parse_mode: "Markdown" })
+      : JSON.stringify({ text: message });
+
+    const res = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+
+    if (!res.ok) {
+      console.error(`[backup] alert webhook returned ${res.status}: ${await res.text()}`);
+    } else {
+      console.log("[backup] alert sent to webhook");
+    }
+  } catch (err) {
+    console.error("[backup] failed to send alert webhook:", err);
+  }
+}
+
 function sqlLiteral(val: any): string {
   if (val === null || val === undefined) return "NULL";
   if (typeof val === "boolean") return val ? "TRUE" : "FALSE";
@@ -427,9 +477,11 @@ export async function runDailyBackup(): Promise<BackupHistoryEntry> {
     try { stream.destroy(); } catch {}
     try { fs.unlinkSync(filepath); } catch {}
     const status = await readStatus();
-    status.lastError = { at: new Date().toISOString(), message: String(err?.message || err) };
+    const errMsg = String(err?.message || err);
+    status.lastError = { at: new Date().toISOString(), message: errMsg };
     await writeStatus(status);
     console.error("[backup] generation failed:", err);
+    await sendBackupAlert({ filename, errorMessage: `Backup generation failed: ${errMsg}` });
     throw err;
   }
 
@@ -458,6 +510,13 @@ export async function runDailyBackup(): Promise<BackupHistoryEntry> {
   } else {
     emailError = "Gmail transporter not configured (GMAIL_USER / GMAIL_APP_PASSWORD missing)";
     console.warn(`[backup] ${emailError}`);
+  }
+
+  if (!emailed && emailError) {
+    await sendBackupAlert({
+      filename,
+      errorMessage: `Backup email delivery failed: ${emailError}`,
+    });
   }
 
   pruneOldBackups();
