@@ -441,27 +441,25 @@ export default function AdminDashboardPage() {
         throw new Error(data?.message || `HTTP ${res.status}`);
       }
       const resultMode: "merge" | "overwrite" = data.mode === "overwrite" ? "overwrite" : "merge";
-      const dumpRowMap: Record<string, number> = {};
-      if (parsedTables) parsedTables.forEach((t) => { dumpRowMap[t.name] = t.rowCount; });
       setRestoreSummary({
         totalRowsBefore: data.totalRowsBefore ?? 0,
         totalRowsAfter: data.totalRowsAfter ?? 0,
         durationMs: data.durationMs ?? 0,
         tables: Array.isArray(data.tables)
-          ? data.tables.map((t: any) => {
-              const rowsAdded = resultMode === "merge" ? Math.max(0, t.delta ?? 0) : undefined;
-              const dumpRows = dumpRowMap[t.table];
-              const rowsSkipped = resultMode === "merge" && dumpRows != null
-                ? Math.max(0, dumpRows - (rowsAdded ?? 0))
-                : undefined;
-              return { ...t, rowsAdded, rowsSkipped };
-            })
+          ? data.tables.map((t: any) => ({
+              table: t.table,
+              rowsBefore: t.rowsBefore ?? 0,
+              rowsAfter: t.rowsAfter ?? 0,
+              delta: t.delta ?? 0,
+              rowsAdded: t.rowsAdded,
+              rowsSkipped: t.rowsSkipped,
+            }))
           : [],
         allowList: Array.isArray(data.allowList) ? data.allowList : null,
         mode: resultMode,
       });
       const totalAdded = resultMode === "merge"
-        ? (data.tables ?? []).reduce((s: number, t: any) => s + Math.max(0, t.delta ?? 0), 0)
+        ? (data.tables ?? []).reduce((s: number, t: any) => s + (t.rowsAdded ?? Math.max(0, t.delta ?? 0)), 0)
         : data.totalRowsAfter ?? 0;
       toast({
         title: resultMode === "merge" ? "Merge restore complete" : "Restore complete",

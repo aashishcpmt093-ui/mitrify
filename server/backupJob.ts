@@ -273,6 +273,10 @@ export interface RestoreTableSummary {
   rowsBefore: number;
   rowsAfter: number;
   delta: number;
+  /** Merge mode only: rows actually inserted from the dump. */
+  rowsAdded?: number;
+  /** Merge mode only: rows from the dump that were skipped (already existed). */
+  rowsSkipped?: number;
 }
 
 export interface RestoreResult {
@@ -545,12 +549,32 @@ export async function restoreFromSql(
   const tablesAfter = await listPublicTables();
   const afterCounts = await countRowsPerTable(tablesAfter);
 
+  // For merge mode: parse dump row counts per table from header comments so we
+  // can compute authoritative rowsAdded / rowsSkipped without client-side guessing.
+  let dumpRowCounts: Map<string, number> | null = null;
+  if (mode === "merge") {
+    dumpRowCounts = new Map();
+    const headerRe = /-- Table: (\S+)\s+\|\s+rows in dump: (\d+)/g;
+    let hm: RegExpExecArray | null;
+    while ((hm = headerRe.exec(sql)) !== null) {
+      dumpRowCounts.set(hm[1], parseInt(hm[2], 10));
+    }
+  }
+
   // Summary covers all tables that existed before OR after.
   const allTables = Array.from(new Set([...tablesBefore, ...tablesAfter])).sort();
   const tables: RestoreTableSummary[] = allTables.map((t) => {
     const rowsBefore = beforeCounts[t] ?? 0;
     const rowsAfter = afterCounts[t] ?? 0;
-    return { table: t, rowsBefore, rowsAfter, delta: rowsAfter - rowsBefore };
+    const delta = rowsAfter - rowsBefore;
+    if (mode === "merge") {
+      // In merge mode no rows are deleted before insert, so delta = rows actually added.
+      const rowsAdded = Math.max(0, delta);
+      const dumpRows = dumpRowCounts?.get(t);
+      const rowsSkipped = dumpRows != null ? Math.max(0, dumpRows - rowsAdded) : undefined;
+      return { table: t, rowsBefore, rowsAfter, delta, rowsAdded, rowsSkipped };
+    }
+    return { table: t, rowsBefore, rowsAfter, delta };
   });
 
   const totalRowsBefore = tables.reduce((s, t) => s + t.rowsBefore, 0);
