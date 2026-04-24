@@ -3555,6 +3555,29 @@ export default function AdminDashboardPage() {
             <div className="flex items-center gap-2">
               <Upload className="w-4 h-4 text-red-700 dark:text-red-300" />
               <h3 className="font-semibold text-sm">Restore from backup</h3>
+              {backupStatus?.history && backupStatus.history.length > 0 && (
+                <button
+                  type="button"
+                  className="ml-auto flex items-center gap-1 text-[11px] font-medium text-red-700 dark:text-red-300 hover:underline disabled:opacity-40"
+                  disabled={restoreInProgress || dryRunInProgress || storedFileFetching}
+                  data-testid="button-use-latest-backup"
+                  onClick={async () => {
+                    const latest = backupStatus.history[0];
+                    setRestoreFile(null);
+                    setSelectedGcsName("");
+                    setRestoreConfirmed(false);
+                    setRestoreSummary(null);
+                    setDryRunResult(null);
+                    setParsedTables(null);
+                    setSelectedTables(new Set());
+                    setRestoreMode("stored");
+                    await handleStoredFileSelect(latest.filename);
+                  }}
+                >
+                  <Database className="w-3 h-3" />
+                  Use latest backup
+                </button>
+              )}
             </div>
             <div className="flex items-start gap-2 rounded-lg bg-red-100/70 dark:bg-red-900/40 p-2.5 border border-red-200 dark:border-red-800">
               <AlertTriangle className="w-4 h-4 text-red-700 dark:text-red-300 flex-shrink-0 mt-0.5" />
