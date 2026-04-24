@@ -1972,6 +1972,7 @@ export async function registerRoutes(
         const result = await restoreFromSql(sql, allowList);
         res.json({
           message: "Restore completed successfully",
+          allowList: allowList ?? null,
           ...result,
         });
       } catch (err: any) {
@@ -2053,7 +2054,7 @@ export async function registerRoutes(
         }
       }
       const result = await restoreFromSql(sql, allowList);
-      res.json({ message: "Restore completed successfully", source: gcsName, ...result });
+      res.json({ message: "Restore completed successfully", source: gcsName, allowList: allowList ?? null, ...result });
     } catch (err: any) {
       console.error("GCS restore failed:", err);
       res.status(500).json({ message: err?.message || "Restore failed — database has been rolled back" });
@@ -2127,7 +2128,7 @@ export async function registerRoutes(
     if (!resolved) return;
     try {
       const result = await restoreFromSql(resolved.sql, resolved.allowList);
-      res.json({ message: "Restore completed successfully", ...result });
+      res.json({ message: "Restore completed successfully", allowList: resolved.allowList ?? null, ...result });
     } catch (err: any) {
       console.error("Stored restore failed:", err);
       res.status(500).json({

@@ -258,6 +258,7 @@ export default function AdminDashboardPage() {
     totalRowsAfter: number;
     durationMs: number;
     tables: Array<{ table: string; rowsBefore: number; rowsAfter: number; delta: number }>;
+    allowList: string[] | null;
   } | null>(null);
   const [parsedTables, setParsedTables] = useState<Array<{ name: string; rowCount: number }> | null>(null);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
@@ -434,6 +435,7 @@ export default function AdminDashboardPage() {
         totalRowsAfter: data.totalRowsAfter ?? 0,
         durationMs: data.durationMs ?? 0,
         tables: Array.isArray(data.tables) ? data.tables : [],
+        allowList: Array.isArray(data.allowList) ? data.allowList : null,
       });
       toast({
         title: "Restore complete",
@@ -3923,41 +3925,62 @@ export default function AdminDashboardPage() {
             )}
 
             {/* Per-table summary after restore */}
-            {restoreSummary && (
-              <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-3 space-y-2 mt-2" data-testid="restore-summary">
-                <div className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-emerald-700 dark:text-emerald-300" />
-                  <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-200">
-                    Restore complete — {restoreSummary.totalRowsAfter.toLocaleString("en-IN")} rows in{" "}
-                    {restoreSummary.tables.length} tables ({(restoreSummary.durationMs / 1000).toFixed(1)}s)
-                  </p>
-                </div>
-                <div className="max-h-48 overflow-y-auto rounded border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-slate-900">
-                  <table className="w-full text-[11px]">
-                    <thead className="bg-emerald-100/60 dark:bg-emerald-900/30 sticky top-0">
-                      <tr>
-                        <th className="text-left px-2 py-1 font-semibold">Table</th>
-                        <th className="text-right px-2 py-1 font-semibold">Before</th>
-                        <th className="text-right px-2 py-1 font-semibold">After</th>
-                        <th className="text-right px-2 py-1 font-semibold">Δ</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {restoreSummary.tables.map((t) => (
-                        <tr key={t.table} className="border-t border-emerald-100 dark:border-emerald-900/40" data-testid={`row-restore-${t.table}`}>
-                          <td className="px-2 py-1 font-mono">{t.table}</td>
-                          <td className="px-2 py-1 text-right text-muted-foreground">{t.rowsBefore.toLocaleString("en-IN")}</td>
-                          <td className="px-2 py-1 text-right font-semibold">{t.rowsAfter.toLocaleString("en-IN")}</td>
-                          <td className={`px-2 py-1 text-right font-semibold ${t.delta > 0 ? "text-emerald-700 dark:text-emerald-300" : t.delta < 0 ? "text-red-700 dark:text-red-300" : "text-muted-foreground"}`}>
-                            {t.delta > 0 ? "+" : ""}{t.delta.toLocaleString("en-IN")}
-                          </td>
+            {restoreSummary && (() => {
+              const isSelective = Array.isArray(restoreSummary.allowList) && restoreSummary.allowList.length > 0;
+              const allowSet = isSelective ? new Set(restoreSummary.allowList!) : null;
+              const restoredCount = isSelective ? allowSet!.size : restoreSummary.tables.length;
+              const totalCount = restoreSummary.tables.length;
+              return (
+                <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-3 space-y-2 mt-2" data-testid="restore-summary">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-700 dark:text-emerald-300" />
+                    <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-200">
+                      Restore complete —{" "}
+                      {restoreSummary.totalRowsAfter.toLocaleString("en-IN")} rows in{" "}
+                      {isSelective
+                        ? <>{restoredCount} of {totalCount} tables restored</>
+                        : <>{totalCount} tables</>
+                      }{" "}
+                      ({(restoreSummary.durationMs / 1000).toFixed(1)}s)
+                    </p>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto rounded border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-slate-900">
+                    <table className="w-full text-[11px]">
+                      <thead className="bg-emerald-100/60 dark:bg-emerald-900/30 sticky top-0">
+                        <tr>
+                          <th className="text-left px-2 py-1 font-semibold">Table</th>
+                          <th className="text-right px-2 py-1 font-semibold">Before</th>
+                          <th className="text-right px-2 py-1 font-semibold">After</th>
+                          <th className="text-right px-2 py-1 font-semibold">Δ</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {restoreSummary.tables.map((t) => {
+                          const skipped = isSelective && !allowSet!.has(t.table);
+                          return (
+                            <tr
+                              key={t.table}
+                              className={`border-t border-emerald-100 dark:border-emerald-900/40${skipped ? " opacity-40" : ""}`}
+                              data-testid={skipped ? `row-restore-skipped-${t.table}` : `row-restore-${t.table}`}
+                            >
+                              <td className={`px-2 py-1 font-mono${skipped ? " italic text-muted-foreground" : ""}`}>{t.table}</td>
+                              <td className="px-2 py-1 text-right text-muted-foreground">{t.rowsBefore.toLocaleString("en-IN")}</td>
+                              <td className="px-2 py-1 text-right font-semibold">{t.rowsAfter.toLocaleString("en-IN")}</td>
+                              <td className={`px-2 py-1 text-right font-semibold ${skipped ? "" : t.delta > 0 ? "text-emerald-700 dark:text-emerald-300" : t.delta < 0 ? "text-red-700 dark:text-red-300" : "text-muted-foreground"}`}>
+                                {skipped
+                                  ? <span className="text-[10px] font-medium text-muted-foreground bg-slate-100 dark:bg-slate-800 rounded px-1 py-0.5">skipped</span>
+                                  : <>{t.delta > 0 ? "+" : ""}{t.delta.toLocaleString("en-IN")}</>
+                                }
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
 
           <DialogFooter className="flex-col sm:flex-row gap-2">
