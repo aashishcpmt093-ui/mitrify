@@ -280,17 +280,32 @@ export interface RestoreResult {
   totalRowsBefore: number;
   totalRowsAfter: number;
   tables: RestoreTableSummary[];
+  mode: "overwrite" | "merge";
+}
+
+/**
+ * Transform INSERT statements in a dump so they become
+ * INSERT ... ON CONFLICT DO NOTHING — enabling merge (idempotent) restores.
+ * Only single-line INSERT statements are affected (which is all our dumps produce).
+ */
+function applyMergeConflictResolution(sql: string): string {
+  return sql.replace(
+    /^(INSERT\s+INTO\s+\S[^;]*?)\s*;([ \t]*)$/gim,
+    "$1 ON CONFLICT DO NOTHING;$2",
+  );
 }
 
 export interface PreviewTableEntry {
   name: string;
   rowsInDump: number;
+  existingRowCount?: number;
 }
 
 export interface PreviewResult {
   tableCount: number;
   tables: PreviewTableEntry[];
   unknownStatements: string[];
+  mode?: "overwrite" | "merge";
 }
 
 /**
@@ -363,7 +378,7 @@ async function listPublicTables(): Promise<string[]> {
   return res.rows.map((r: any) => r.table_name as string);
 }
 
-async function countRowsPerTable(tables: string[]): Promise<Record<string, number>> {
+export async function countRowsPerTable(tables: string[]): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
   for (const t of tables) {
     try {
@@ -440,6 +455,7 @@ export function parseTablesFromDump(sql: string): string[] {
 export async function restoreFromSql(
   sql: string,
   allowList?: string[],
+  mode: "overwrite" | "merge" = "overwrite",
 ): Promise<RestoreResult> {
   const startedAt = Date.now();
 
@@ -455,7 +471,7 @@ export async function restoreFromSql(
   // Selective mode: filter the SQL down to only the allowed table sections.
   const selective = allowList && allowList.length > 0;
   let sqlToRun = stripped;
-  let tablesToTruncate = tablesBefore;
+  let tablesToClear = tablesBefore;
 
   if (selective) {
     const allowed = new Set(allowList!);
@@ -465,7 +481,13 @@ export async function restoreFromSql(
       if (table && allowed.has(table)) parts.push(block);
     });
     sqlToRun = parts.join("");
-    tablesToTruncate = tablesBefore.filter((t) => allowed.has(t));
+    tablesToClear = tablesBefore.filter((t) => allowed.has(t));
+  }
+
+  // In merge mode: skip clearing (no TRUNCATE/DELETE) and rewrite
+  // INSERTs to be idempotent (ON CONFLICT DO NOTHING).
+  if (mode === "merge") {
+    sqlToRun = applyMergeConflictResolution(sqlToRun);
   }
 
   const client = await pool.connect();
@@ -481,7 +503,9 @@ export async function restoreFromSql(
     } catch {}
     try { await client.query("SET CONSTRAINTS ALL DEFERRED"); } catch {}
 
-    if (tablesToTruncate.length > 0) {
+    // In overwrite mode, clear the target tables first.
+    // In merge mode we skip this entirely — existing rows are kept.
+    if (mode === "overwrite" && tablesToClear.length > 0) {
       if (selective) {
         // In selective mode we use DELETE rather than TRUNCATE so that we
         // never accidentally clear tables outside the allow-list.
@@ -494,13 +518,13 @@ export async function restoreFromSql(
         // can be cleared independently without touching anything else.
         // Sequence reset is handled by the setval statements already present
         // in the dump SQL that runs immediately after.
-        for (const t of tablesToTruncate) {
+        for (const t of tablesToClear) {
           await client.query(`DELETE FROM ${quoteIdent(t)}`);
         }
       } else {
         // Full restore: TRUNCATE all tables at once with CASCADE — safe because
         // we are about to repopulate every table from the dump.
-        const list = tablesToTruncate.map(quoteIdent).join(", ");
+        const list = tablesToClear.map(quoteIdent).join(", ");
         await client.query(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);
       }
     }
@@ -537,6 +561,7 @@ export async function restoreFromSql(
     totalRowsBefore,
     totalRowsAfter,
     tables,
+    mode,
   };
 }
 

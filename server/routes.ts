@@ -15,7 +15,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable } from "./backupJob";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -1874,6 +1874,11 @@ export async function registerRoutes(
     }
   });
 
+  /** Parse the optional mode field from a request body. Default = "merge". */
+  function parseRestoreMode(raw: any): "overwrite" | "merge" {
+    return raw === "overwrite" ? "overwrite" : "merge";
+  }
+
   // POST /api/admin/restore/preview — parse a .sql dump and return a
   // dry-run summary (table list + row counts from the file) without
   // touching the database.
@@ -1917,8 +1922,13 @@ export async function registerRoutes(
           }
         }
       }
+      const mode = parseRestoreMode(req.body?.mode);
       const preview = previewSqlBackup(sql, allowList);
-      res.json(preview);
+      if (mode === "merge") {
+        const counts = await countRowsPerTable(preview.tables.map((t) => t.name));
+        preview.tables = preview.tables.map((t) => ({ ...t, existingRowCount: counts[t.name] ?? 0 }));
+      }
+      res.json({ ...preview, mode });
     },
   );
 
@@ -1968,8 +1978,9 @@ export async function registerRoutes(
           }
         }
       }
+      const mode = parseRestoreMode(req.body?.mode);
       try {
-        const result = await restoreFromSql(sql, allowList);
+        const result = await restoreFromSql(sql, allowList, mode);
         res.json({
           message: "Restore completed successfully",
           allowList: allowList ?? null,
@@ -2022,7 +2033,13 @@ export async function registerRoutes(
           }
         }
       }
-      res.json(previewSqlBackup(sql, allowList));
+      const mode = parseRestoreMode(req.body?.mode);
+      const preview = previewSqlBackup(sql, allowList);
+      if (mode === "merge") {
+        const counts = await countRowsPerTable(preview.tables.map((t) => t.name));
+        preview.tables = preview.tables.map((t) => ({ ...t, existingRowCount: counts[t.name] ?? 0 }));
+      }
+      res.json({ ...preview, mode });
     } catch (err: any) {
       console.error("GCS restore preview failed:", err);
       res.status(500).json({ message: err?.message || "Preview failed" });
@@ -2053,7 +2070,8 @@ export async function registerRoutes(
           }
         }
       }
-      const result = await restoreFromSql(sql, allowList);
+      const mode = parseRestoreMode(req.body?.mode);
+      const result = await restoreFromSql(sql, allowList, mode);
       res.json({ message: "Restore completed successfully", source: gcsName, allowList: allowList ?? null, ...result });
     } catch (err: any) {
       console.error("GCS restore failed:", err);
@@ -2117,8 +2135,13 @@ export async function registerRoutes(
   app.post("/api/admin/restore/stored/preview", adminCheck, async (req: any, res) => {
     const resolved = await resolveStoredBackup(req, res);
     if (!resolved) return;
+    const mode = parseRestoreMode(req.body?.mode);
     const preview = previewSqlBackup(resolved.sql, resolved.allowList);
-    res.json(preview);
+    if (mode === "merge") {
+      const counts = await countRowsPerTable(preview.tables.map((t) => t.name));
+      preview.tables = preview.tables.map((t) => ({ ...t, existingRowCount: counts[t.name] ?? 0 }));
+    }
+    res.json({ ...preview, mode });
   });
 
   // POST /api/admin/restore/stored — replay a stored server-side backup file
@@ -2126,8 +2149,9 @@ export async function registerRoutes(
   app.post("/api/admin/restore/stored", adminCheck, async (req: any, res) => {
     const resolved = await resolveStoredBackup(req, res);
     if (!resolved) return;
+    const mode = parseRestoreMode(req.body?.mode);
     try {
-      const result = await restoreFromSql(resolved.sql, resolved.allowList);
+      const result = await restoreFromSql(resolved.sql, resolved.allowList, mode);
       res.json({ message: "Restore completed successfully", allowList: resolved.allowList ?? null, ...result });
     } catch (err: any) {
       console.error("Stored restore failed:", err);

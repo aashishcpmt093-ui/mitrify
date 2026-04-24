@@ -246,6 +246,7 @@ export default function AdminDashboardPage() {
   const [gcsUploadResult, setGcsUploadResult] = useState<{ gcsName: string; url: string; size: number } | null>(null);
   const [testAlertPending, setTestAlertPending] = useState(false);
   const [restoreMode, setRestoreMode] = useState<"upload" | "stored" | "gcs">("upload");
+  const [restoreStrategy, setRestoreStrategy] = useState<"merge" | "overwrite">("merge");
   const [selectedGcsName, setSelectedGcsName] = useState<string>("");
   const [gcsListLoading, setGcsListLoading] = useState(false);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
@@ -257,8 +258,9 @@ export default function AdminDashboardPage() {
     totalRowsBefore: number;
     totalRowsAfter: number;
     durationMs: number;
-    tables: Array<{ table: string; rowsBefore: number; rowsAfter: number; delta: number }>;
+    tables: Array<{ table: string; rowsBefore: number; rowsAfter: number; delta: number; rowsAdded?: number; rowsSkipped?: number }>;
     allowList: string[] | null;
+    mode: "merge" | "overwrite";
   } | null>(null);
   const [parsedTables, setParsedTables] = useState<Array<{ name: string; rowCount: number }> | null>(null);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
@@ -266,8 +268,9 @@ export default function AdminDashboardPage() {
   const [dryRunInProgress, setDryRunInProgress] = useState(false);
   const [dryRunResult, setDryRunResult] = useState<{
     tableCount: number;
-    tables: Array<{ name: string; rowsInDump: number }>;
+    tables: Array<{ name: string; rowsInDump: number; existingRowCount?: number }>;
     unknownStatements: string[];
+    mode?: "merge" | "overwrite";
   } | null>(null);
 
   async function handleBackupDownload() {
@@ -336,6 +339,7 @@ export default function AdminDashboardPage() {
           body: JSON.stringify({
             filename: selectedStoredFilename,
             tables: parsedTables !== null && parsedTables.length > 0 ? Array.from(selectedTables) : undefined,
+            mode: restoreStrategy,
           }),
         });
       } else if (restoreMode === "gcs") {
@@ -346,6 +350,7 @@ export default function AdminDashboardPage() {
           body: JSON.stringify({
             gcsName: selectedGcsName,
             ...(parsedTables !== null && parsedTables.length > 0 ? { tables: Array.from(selectedTables) } : {}),
+            mode: restoreStrategy,
           }),
         });
       } else {
@@ -354,6 +359,7 @@ export default function AdminDashboardPage() {
         if (parsedTables !== null && parsedTables.length > 0) {
           fd.append("tables", JSON.stringify(Array.from(selectedTables)));
         }
+        fd.append("mode", restoreStrategy);
         res = await fetch("/api/admin/restore/preview", {
           method: "POST",
           credentials: "include",
@@ -368,6 +374,7 @@ export default function AdminDashboardPage() {
         tableCount: data.tableCount ?? 0,
         tables: Array.isArray(data.tables) ? data.tables : [],
         unknownStatements: Array.isArray(data.unknownStatements) ? data.unknownStatements : [],
+        mode: data.mode ?? restoreStrategy,
       });
       // For GCS: also use the preview response to populate the table checklist
       // on first preview (when we don't yet know what tables exist).
@@ -402,6 +409,7 @@ export default function AdminDashboardPage() {
           body: JSON.stringify({
             filename: selectedStoredFilename,
             tables: parsedTables !== null && parsedTables.length > 0 ? Array.from(selectedTables) : undefined,
+            mode: restoreStrategy,
           }),
         });
       } else if (restoreMode === "gcs") {
@@ -412,6 +420,7 @@ export default function AdminDashboardPage() {
           body: JSON.stringify({
             gcsName: selectedGcsName,
             ...(parsedTables !== null && parsedTables.length > 0 ? { tables: Array.from(selectedTables) } : {}),
+            mode: restoreStrategy,
           }),
         });
       } else {
@@ -420,6 +429,7 @@ export default function AdminDashboardPage() {
         if (parsedTables !== null && parsedTables.length > 0) {
           fd.append("tables", JSON.stringify(Array.from(selectedTables)));
         }
+        fd.append("mode", restoreStrategy);
         res = await fetch("/api/admin/restore", {
           method: "POST",
           credentials: "include",
@@ -430,16 +440,34 @@ export default function AdminDashboardPage() {
       if (!res.ok) {
         throw new Error(data?.message || `HTTP ${res.status}`);
       }
+      const resultMode: "merge" | "overwrite" = data.mode === "overwrite" ? "overwrite" : "merge";
+      const dumpRowMap: Record<string, number> = {};
+      if (parsedTables) parsedTables.forEach((t) => { dumpRowMap[t.name] = t.rowCount; });
       setRestoreSummary({
         totalRowsBefore: data.totalRowsBefore ?? 0,
         totalRowsAfter: data.totalRowsAfter ?? 0,
         durationMs: data.durationMs ?? 0,
-        tables: Array.isArray(data.tables) ? data.tables : [],
+        tables: Array.isArray(data.tables)
+          ? data.tables.map((t: any) => {
+              const rowsAdded = resultMode === "merge" ? Math.max(0, t.delta ?? 0) : undefined;
+              const dumpRows = dumpRowMap[t.table];
+              const rowsSkipped = resultMode === "merge" && dumpRows != null
+                ? Math.max(0, dumpRows - (rowsAdded ?? 0))
+                : undefined;
+              return { ...t, rowsAdded, rowsSkipped };
+            })
+          : [],
         allowList: Array.isArray(data.allowList) ? data.allowList : null,
+        mode: resultMode,
       });
+      const totalAdded = resultMode === "merge"
+        ? (data.tables ?? []).reduce((s: number, t: any) => s + Math.max(0, t.delta ?? 0), 0)
+        : data.totalRowsAfter ?? 0;
       toast({
-        title: "Restore complete",
-        description: `${data.totalRowsAfter ?? 0} rows restored across ${data.tables?.length ?? 0} tables.`,
+        title: resultMode === "merge" ? "Merge restore complete" : "Restore complete",
+        description: resultMode === "merge"
+          ? `${totalAdded} new rows added across ${data.tables?.length ?? 0} tables.`
+          : `${data.totalRowsAfter ?? 0} rows restored across ${data.tables?.length ?? 0} tables.`,
       });
       queryClient.invalidateQueries();
     } catch (err: unknown) {
@@ -3327,10 +3355,10 @@ export default function AdminDashboardPage() {
           setParsedTables(null);
           setSelectedTables(new Set());
           setSelectedGcsName("");
-          setRestoreSource("local");
           setGcsUploadResult(null);
           setGcsMode("new");
           setRestoreMode("upload");
+          setRestoreStrategy("merge");
           setSelectedStoredFilename(null);
           setDryRunResult(null);
         }
@@ -3579,18 +3607,58 @@ export default function AdminDashboardPage() {
                 </button>
               )}
             </div>
-            <div className="flex items-start gap-2 rounded-lg bg-red-100/70 dark:bg-red-900/40 p-2.5 border border-red-200 dark:border-red-800">
-              <AlertTriangle className="w-4 h-4 text-red-700 dark:text-red-300 flex-shrink-0 mt-0.5" />
-              <p className="text-[11px] leading-snug text-red-800 dark:text-red-200">
-                {parsedTables !== null && parsedTables.length > 0 && selectedTables.size < parsedTables.length && selectedTables.size > 0 ? (
-                  <><strong>Warning:</strong> Only the <strong>{selectedTables.size} ticked table{selectedTables.size !== 1 ? "s" : ""}</strong> will be cleared and re-populated from the backup. All other tables are left untouched. This cannot be undone.</>
-                ) : (
-                  <><strong>Warning:</strong> Restoring will <strong>overwrite all selected tables</strong> with the
-                  contents of the backup file. Each selected table is cleared first, then re-populated from the backup.
-                  This cannot be undone — download a fresh backup first if you might need to roll back.</>
-                )}
-              </p>
+            {/* Restore strategy toggle */}
+            <div className="grid grid-cols-2 gap-2" data-testid="restore-strategy-toggle">
+              <button
+                type="button"
+                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("merge"); setRestoreConfirmed(false); setDryRunResult(null); } }}
+                disabled={restoreInProgress || dryRunInProgress}
+                data-testid="button-strategy-merge"
+                className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-colors disabled:opacity-50 ${restoreStrategy === "merge" ? "border-emerald-400 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 ring-1 ring-emerald-400 dark:ring-emerald-600" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-emerald-300 dark:hover:border-emerald-700"}`}
+              >
+                <span className="flex items-center gap-1.5">
+                  <span className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${restoreStrategy === "merge" ? "border-emerald-500 bg-emerald-500" : "border-slate-300 dark:border-slate-600"}`} />
+                  <span className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-200">Merge (default)</span>
+                </span>
+                <span className="text-[10px] text-muted-foreground leading-snug pl-4.5">Existing data safe — sirf naye rows add honge, duplicates skip</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("overwrite"); setRestoreConfirmed(false); setDryRunResult(null); } }}
+                disabled={restoreInProgress || dryRunInProgress}
+                data-testid="button-strategy-overwrite"
+                className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-colors disabled:opacity-50 ${restoreStrategy === "overwrite" ? "border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-900/30 ring-1 ring-red-400 dark:ring-red-600" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-red-300 dark:hover:border-red-700"}`}
+              >
+                <span className="flex items-center gap-1.5">
+                  <span className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${restoreStrategy === "overwrite" ? "border-red-500 bg-red-500" : "border-slate-300 dark:border-slate-600"}`} />
+                  <span className="text-[11px] font-semibold text-red-800 dark:text-red-200">Overwrite</span>
+                </span>
+                <span className="text-[10px] text-muted-foreground leading-snug pl-4.5">Existing data delete ho jaayega — full replacement (dangerous)</span>
+              </button>
             </div>
+
+            {/* Mode-aware warning */}
+            {restoreStrategy === "merge" ? (
+              <div className="flex items-start gap-2 rounded-lg bg-emerald-50/80 dark:bg-emerald-900/30 p-2.5 border border-emerald-200 dark:border-emerald-800">
+                <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5" />
+                <p className="text-[11px] leading-snug text-emerald-800 dark:text-emerald-200">
+                  <strong>Safe restore:</strong> Existing data untouched rahega. Backup ki sirf woh rows DB mein add hongi jinke IDs abhi exist nahi karte. Duplicate rows skip ho jaayengi.
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 rounded-lg bg-red-100/70 dark:bg-red-900/40 p-2.5 border border-red-200 dark:border-red-800">
+                <AlertTriangle className="w-4 h-4 text-red-700 dark:text-red-300 flex-shrink-0 mt-0.5" />
+                <p className="text-[11px] leading-snug text-red-800 dark:text-red-200">
+                  {parsedTables !== null && parsedTables.length > 0 && selectedTables.size < parsedTables.length && selectedTables.size > 0 ? (
+                    <><strong>Warning:</strong> Only the <strong>{selectedTables.size} ticked table{selectedTables.size !== 1 ? "s" : ""}</strong> will be cleared and re-populated from the backup. All other tables are left untouched. This cannot be undone.</>
+                  ) : (
+                    <><strong>Warning:</strong> Restoring will <strong>overwrite all selected tables</strong> with the
+                    contents of the backup file. Each selected table is cleared first, then re-populated from the backup.
+                    This cannot be undone — download a fresh backup first if you might need to roll back.</>
+                  )}
+                </p>
+              </div>
+            )}
 
             <Tabs
               value={restoreMode}
@@ -3605,6 +3673,7 @@ export default function AdminDashboardPage() {
                 setDryRunResult(null);
                 setParsedTables(null);
                 setSelectedTables(new Set());
+                setRestoreStrategy("merge");
               }}
             >
               <TabsList className="grid grid-cols-3 w-full h-9">
@@ -3847,9 +3916,11 @@ export default function AdminDashboardPage() {
                     data-testid="checkbox-restore-confirm"
                   />
                   <span>
-                    {parsedTables && selectedTables.size < (parsedTables?.length ?? 0) && selectedTables.size > 0
-                      ? <>I understand this will permanently overwrite the <strong>{selectedTables.size} selected table{selectedTables.size !== 1 ? "s" : ""}</strong> with data from <strong>{sourceName}</strong>. Unselected tables are left unchanged.</>
-                      : <>I understand this will permanently overwrite all existing data with the contents of <strong>{sourceName}</strong>.</>
+                    {restoreStrategy === "merge"
+                      ? <>I understand this will add new rows from <strong>{sourceName}</strong>, keeping all existing rows untouched.</>
+                      : parsedTables && selectedTables.size < (parsedTables?.length ?? 0) && selectedTables.size > 0
+                        ? <>I understand this will permanently overwrite the <strong>{selectedTables.size} selected table{selectedTables.size !== 1 ? "s" : ""}</strong> with data from <strong>{sourceName}</strong>. Unselected tables are left unchanged.</>
+                        : <>I understand this will permanently overwrite all existing data with the contents of <strong>{sourceName}</strong>.</>
                     }
                   </span>
                 </label>
@@ -3915,7 +3986,10 @@ export default function AdminDashboardPage() {
                     <thead className="bg-blue-100/60 dark:bg-blue-900/30 sticky top-0">
                       <tr>
                         <th className="text-left px-2 py-1 font-semibold">Table</th>
-                        <th className="text-right px-2 py-1 font-semibold">Rows in dump</th>
+                        <th className="text-right px-2 py-1 font-semibold">In dump</th>
+                        {dryRunResult.mode === "merge" && (
+                          <th className="text-right px-2 py-1 font-semibold">In DB now</th>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
@@ -3923,6 +3997,9 @@ export default function AdminDashboardPage() {
                         <tr key={t.name} className="border-t border-blue-100 dark:border-blue-900/40" data-testid={`row-preview-${t.name}`}>
                           <td className="px-2 py-1 font-mono">{t.name}</td>
                           <td className="px-2 py-1 text-right">{t.rowsInDump.toLocaleString("en-IN")}</td>
+                          {dryRunResult.mode === "merge" && (
+                            <td className="px-2 py-1 text-right text-muted-foreground">{(t.existingRowCount ?? 0).toLocaleString("en-IN")}</td>
+                          )}
                         </tr>
                       ))}
                     </tbody>
@@ -3942,7 +4019,8 @@ export default function AdminDashboardPage() {
                   </div>
                 )}
                 <p className="text-[11px] text-blue-700 dark:text-blue-300">
-                  No data was written. Click <strong>Restore database</strong> to apply these changes.
+                  No data was written. Click <strong>Restore database</strong> to apply these changes
+                  {dryRunResult.mode === "merge" ? " (merge — existing rows will be kept)" : " (overwrite — existing rows will be replaced)"}.
                 </p>
               </div>
             )}
@@ -3953,18 +4031,28 @@ export default function AdminDashboardPage() {
               const allowSet = isSelective ? new Set(restoreSummary.allowList!) : null;
               const restoredCount = isSelective ? allowSet!.size : restoreSummary.tables.length;
               const totalCount = restoreSummary.tables.length;
+              const isMerge = restoreSummary.mode === "merge";
+              const totalAdded = isMerge
+                ? restoreSummary.tables.reduce((s, t) => s + (t.rowsAdded ?? Math.max(0, t.delta)), 0)
+                : restoreSummary.totalRowsAfter;
               return (
                 <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-3 space-y-2 mt-2" data-testid="restore-summary">
                   <div className="flex items-center gap-2">
                     <CheckCircle className="w-4 h-4 text-emerald-700 dark:text-emerald-300" />
                     <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-200">
-                      Restore complete —{" "}
-                      {restoreSummary.totalRowsAfter.toLocaleString("en-IN")} rows in{" "}
-                      {isSelective
-                        ? <>{restoredCount} of {totalCount} tables restored</>
-                        : <>{totalCount} tables</>
-                      }{" "}
-                      ({(restoreSummary.durationMs / 1000).toFixed(1)}s)
+                      {isMerge ? (
+                        <>Merge complete — {totalAdded.toLocaleString("en-IN")} new rows added in{" "}
+                        {isSelective ? <>{restoredCount} of {totalCount} tables</> : <>{totalCount} tables</>}
+                        {" "}({(restoreSummary.durationMs / 1000).toFixed(1)}s)</>
+                      ) : (
+                        <>Restore complete —{" "}
+                        {restoreSummary.totalRowsAfter.toLocaleString("en-IN")} rows in{" "}
+                        {isSelective
+                          ? <>{restoredCount} of {totalCount} tables restored</>
+                          : <>{totalCount} tables</>
+                        }{" "}
+                        ({(restoreSummary.durationMs / 1000).toFixed(1)}s)</>
+                      )}
                     </p>
                   </div>
                   <div className="max-h-48 overflow-y-auto rounded border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-slate-900">
@@ -3972,29 +4060,56 @@ export default function AdminDashboardPage() {
                       <thead className="bg-emerald-100/60 dark:bg-emerald-900/30 sticky top-0">
                         <tr>
                           <th className="text-left px-2 py-1 font-semibold">Table</th>
-                          <th className="text-right px-2 py-1 font-semibold">Before</th>
-                          <th className="text-right px-2 py-1 font-semibold">After</th>
-                          <th className="text-right px-2 py-1 font-semibold">Δ</th>
+                          {isMerge ? (
+                            <>
+                              <th className="text-right px-2 py-1 font-semibold">Added</th>
+                              <th className="text-right px-2 py-1 font-semibold">Skipped</th>
+                            </>
+                          ) : (
+                            <>
+                              <th className="text-right px-2 py-1 font-semibold">Before</th>
+                              <th className="text-right px-2 py-1 font-semibold">After</th>
+                              <th className="text-right px-2 py-1 font-semibold">Δ</th>
+                            </>
+                          )}
                         </tr>
                       </thead>
                       <tbody>
                         {restoreSummary.tables.map((t) => {
-                          const skipped = isSelective && !allowSet!.has(t.table);
+                          const tableSkipped = isSelective && !allowSet!.has(t.table);
+                          const rowsAdded = t.rowsAdded ?? Math.max(0, t.delta);
+                          const rowsSkipped = t.rowsSkipped;
                           return (
                             <tr
                               key={t.table}
-                              className={`border-t border-emerald-100 dark:border-emerald-900/40${skipped ? " opacity-40" : ""}`}
-                              data-testid={skipped ? `row-restore-skipped-${t.table}` : `row-restore-${t.table}`}
+                              className={`border-t border-emerald-100 dark:border-emerald-900/40${tableSkipped ? " opacity-40" : ""}`}
+                              data-testid={tableSkipped ? `row-restore-skipped-${t.table}` : `row-restore-${t.table}`}
                             >
-                              <td className={`px-2 py-1 font-mono${skipped ? " italic text-muted-foreground" : ""}`}>{t.table}</td>
-                              <td className="px-2 py-1 text-right text-muted-foreground">{t.rowsBefore.toLocaleString("en-IN")}</td>
-                              <td className="px-2 py-1 text-right font-semibold">{t.rowsAfter.toLocaleString("en-IN")}</td>
-                              <td className={`px-2 py-1 text-right font-semibold ${skipped ? "" : t.delta > 0 ? "text-emerald-700 dark:text-emerald-300" : t.delta < 0 ? "text-red-700 dark:text-red-300" : "text-muted-foreground"}`}>
-                                {skipped
-                                  ? <span className="text-[10px] font-medium text-muted-foreground bg-slate-100 dark:bg-slate-800 rounded px-1 py-0.5">skipped</span>
-                                  : <>{t.delta > 0 ? "+" : ""}{t.delta.toLocaleString("en-IN")}</>
-                                }
-                              </td>
+                              <td className={`px-2 py-1 font-mono${tableSkipped ? " italic text-muted-foreground" : ""}`}>{t.table}</td>
+                              {isMerge ? (
+                                <>
+                                  <td className="px-2 py-1 text-right font-semibold text-emerald-700 dark:text-emerald-300">
+                                    {tableSkipped
+                                      ? <span className="text-[10px] font-medium text-muted-foreground bg-slate-100 dark:bg-slate-800 rounded px-1 py-0.5">skipped</span>
+                                      : <>{rowsAdded > 0 ? `+${rowsAdded.toLocaleString("en-IN")}` : "0"}</>
+                                    }
+                                  </td>
+                                  <td className="px-2 py-1 text-right text-muted-foreground">
+                                    {!tableSkipped && rowsSkipped != null ? rowsSkipped.toLocaleString("en-IN") : "—"}
+                                  </td>
+                                </>
+                              ) : (
+                                <>
+                                  <td className="px-2 py-1 text-right text-muted-foreground">{t.rowsBefore.toLocaleString("en-IN")}</td>
+                                  <td className="px-2 py-1 text-right font-semibold">{t.rowsAfter.toLocaleString("en-IN")}</td>
+                                  <td className={`px-2 py-1 text-right font-semibold ${tableSkipped ? "" : t.delta > 0 ? "text-emerald-700 dark:text-emerald-300" : t.delta < 0 ? "text-red-700 dark:text-red-300" : "text-muted-foreground"}`}>
+                                    {tableSkipped
+                                      ? <span className="text-[10px] font-medium text-muted-foreground bg-slate-100 dark:bg-slate-800 rounded px-1 py-0.5">skipped</span>
+                                      : <>{t.delta > 0 ? "+" : ""}{t.delta.toLocaleString("en-IN")}</>
+                                    }
+                                  </td>
+                                </>
+                              )}
                             </tr>
                           );
                         })}
