@@ -8,10 +8,7 @@ import { LanguageProvider } from "@/lib/language";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { useEffect, useState, useCallback } from "react";
-import { MapPin, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { useToast } from "@/hooks/use-toast";
+import { useEffect, useState } from "react";
 
 import WelcomePage from "@/pages/welcome";
 import LoginPage from "@/pages/login";
@@ -44,138 +41,6 @@ import JobDetailPage from "@/pages/job-detail";
 import InvestmentPage from "@/pages/investment";
 import NotFound from "@/pages/not-found";
 import VisitorCounter from "@/components/VisitorCounter";
-
-// ── Location Gate ─────────────────────────────────────────────────────────────
-const LOC_OK_KEY = "mitrify_loc_ok";
-
-// These paths skip the location gate (admin/coadmin/static pages)
-const EXEMPT_PREFIXES = [
-  "/admin",
-  "/coadmin",
-  "/verify",
-  "/payment",
-  "/about",
-  "/terms",
-  "/our-team",
-  "/investment",
-  "/employee",
-  "/job/",
-];
-
-type LocStatus = "checking" | "requesting" | "granted" | "denied";
-
-function LocationGate({ children }: { children: React.ReactNode }) {
-  const [currentPath] = useLocation();
-  const isExempt = EXEMPT_PREFIXES.some((p) => currentPath.startsWith(p));
-  const { toast } = useToast();
-
-  const [status, setStatus] = useState<LocStatus>(() =>
-    localStorage.getItem(LOC_OK_KEY) ? "granted" : "checking"
-  );
-
-  // Show toast when user denies
-  useEffect(() => {
-    if (status === "denied") {
-      toast({
-        title: "📍 आपके नज़दीकी ग्राहक आपके लोकेशन के बिना ढूंढना मुश्किल है!",
-        description: "नीचे दिए गए steps से location enable करें और दोबारा try करें।",
-        variant: "destructive",
-        duration: 6000,
-      });
-    }
-  }, [status]);
-
-  const requestLocation = useCallback(() => {
-    if (!navigator.geolocation) {
-      localStorage.setItem(LOC_OK_KEY, "1");
-      setStatus("granted");
-      return;
-    }
-    setStatus("requesting");
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        localStorage.setItem(LOC_OK_KEY, "1");
-        localStorage.setItem("mitrify_gps_lat", String(pos.coords.latitude));
-        localStorage.setItem("mitrify_gps_lng", String(pos.coords.longitude));
-        setStatus("granted");
-      },
-      () => {
-        setStatus("denied");
-      },
-      { timeout: 15000, maximumAge: 300000, enableHighAccuracy: false }
-    );
-  }, []);
-
-  useEffect(() => {
-    if (isExempt || status === "granted") return;
-    if (status === "checking") requestLocation();
-  }, [isExempt, status, requestLocation]);
-
-  if (isExempt || status === "granted") return <>{children}</>;
-
-  // Loading / requesting
-  if (status === "checking" || status === "requesting") {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-6 px-6">
-        <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center">
-          <MapPin className="w-10 h-10 text-primary animate-bounce" />
-        </div>
-        <div className="text-center space-y-1">
-          <h2 className="text-lg font-bold hindi-text">आपकी location ढूंढ रहे हैं...</h2>
-          <p className="text-sm text-muted-foreground hindi-text">
-            कृपया browser का location popup आने पर <strong>"Allow"</strong> दबाएं
-          </p>
-        </div>
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  // Denied — hard block
-  return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-background px-6 text-center gap-5">
-      <div className="w-24 h-24 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-        <MapPin className="w-12 h-12 text-red-500" />
-      </div>
-
-      <div>
-        <h2 className="text-xl font-bold hindi-text mb-2">
-          📍 Location Permission ज़रूरी है!
-        </h2>
-        <p className="text-muted-foreground text-sm hindi-text leading-relaxed">
-          Mitrify use करने के लिए आपको location की permission देनी होगी।<br />
-          बिना location के आप नज़दीकी service providers नहीं ढूंढ सकते।
-        </p>
-      </div>
-
-      <div className="bg-muted rounded-2xl p-4 text-left text-sm space-y-2 w-full max-w-sm">
-        <p className="font-semibold hindi-text">📱 Location enable करने का तरीका:</p>
-        <p className="text-muted-foreground hindi-text">
-          1. Browser के address bar में <strong>🔒</strong> या <strong>ℹ️</strong> icon दबाएं
-        </p>
-        <p className="text-muted-foreground hindi-text">
-          2. <strong>"Location"</strong> permission को <strong>"Allow"</strong> करें
-        </p>
-        <p className="text-muted-foreground hindi-text">
-          3. नीचे <strong>"दोबारा Try करें"</strong> दबाएं
-        </p>
-      </div>
-
-      <Button
-        className="w-full max-w-sm h-12 text-base gap-2"
-        onClick={requestLocation}
-      >
-        <MapPin className="w-5 h-5" />
-        दोबारा Try करें
-      </Button>
-
-      <p className="text-xs text-muted-foreground hindi-text max-w-xs">
-        आपकी location सिर्फ नज़दीकी service providers दिखाने के लिए use होती है।
-        किसी और के साथ share नहीं की जाती।
-      </p>
-    </div>
-  );
-}
 
 // ── Auth-guarded route wrappers ───────────────────────────────────────────────
 
@@ -347,9 +212,7 @@ function App() {
         <ThemeProvider>
           <TooltipProvider>
             <Toaster />
-            <LocationGate>
-              <Router />
-            </LocationGate>
+            <Router />
             <VisitorCounter />
           </TooltipProvider>
         </ThemeProvider>
