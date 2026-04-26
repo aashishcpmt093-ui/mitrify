@@ -266,6 +266,8 @@ export default function AdminDashboardPage() {
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
   const [downloadInProgress, setDownloadInProgress] = useState(false);
   const [dryRunInProgress, setDryRunInProgress] = useState(false);
+  const [restoreCancelled, setRestoreCancelled] = useState(false);
+  const [restoreCancelling, setRestoreCancelling] = useState(false);
   const [dryRunResult, setDryRunResult] = useState<{
     tableCount: number;
     tables: Array<{ name: string; rowsInDump: number; existingRowCount?: number }>;
@@ -391,6 +393,18 @@ export default function AdminDashboardPage() {
     }
   }
 
+  async function handleRestoreCancel() {
+    setRestoreCancelling(true);
+    try {
+      await fetch("/api/admin/restore/cancel", {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {} finally {
+      setRestoreCancelling(false);
+    }
+  }
+
   async function handleRestoreSubmit() {
     if (!restoreReady || !restoreConfirmed || restoreInProgress) return;
     if (parsedTables && parsedTables.length > 0 && selectedTables.size === 0) {
@@ -399,6 +413,8 @@ export default function AdminDashboardPage() {
     }
     setRestoreInProgress(true);
     setRestoreSummary(null);
+    setRestoreCancelled(false);
+    setRestoreCancelling(false);
     try {
       let res: Response;
       if (restoreMode === "stored") {
@@ -437,6 +453,10 @@ export default function AdminDashboardPage() {
         });
       }
       const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && data?.cancelled) {
+        setRestoreCancelled(true);
+        return;
+      }
       if (!res.ok) {
         throw new Error(data?.message || `HTTP ${res.status}`);
       }
@@ -3968,7 +3988,32 @@ export default function AdminDashboardPage() {
                   <><RotateCcw className="w-4 h-4 mr-2" />Restore database</>
                 )}
               </Button>
+              {restoreInProgress && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleRestoreCancel}
+                  disabled={restoreCancelling}
+                  className="border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
+                  data-testid="button-restore-cancel"
+                >
+                  {restoreCancelling ? (
+                    <><Loader2 className="w-4 h-4 mr-1 animate-spin" />Cancelling…</>
+                  ) : (
+                    <><XCircle className="w-4 h-4 mr-1" />Cancel</>
+                  )}
+                </Button>
+              )}
             </div>
+
+            {restoreCancelled && (
+              <div className="rounded-lg border border-amber-200 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-900/20 p-3 flex items-center gap-2 mt-1" data-testid="restore-cancelled-banner">
+                <XCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">
+                  Restore cancelled — database unchanged
+                </p>
+              </div>
+            )}
 
             {/* Dry-run preview result */}
             {dryRunResult && (

@@ -442,6 +442,35 @@ export function parseTablesFromDump(sql: string): string[] {
   return tables;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Cancel support — track the active restore's Postgres backend PID
+// so that a cancel request can issue pg_cancel_backend() against it.
+// ─────────────────────────────────────────────────────────────
+
+export class RestoreCancelledError extends Error {
+  constructor() {
+    super("RESTORE_CANCELLED");
+    this.name = "RestoreCancelledError";
+  }
+}
+
+interface ActiveRestoreState {
+  pid: number | null;
+  cancelled: boolean;
+}
+
+let _activeRestore: ActiveRestoreState | null = null;
+
+export function getActiveRestoreState(): ActiveRestoreState | null {
+  return _activeRestore;
+}
+
+export function markRestoreCancelled(): boolean {
+  if (!_activeRestore) return false;
+  _activeRestore.cancelled = true;
+  return true;
+}
+
 /**
  * Replay an uploaded .sql backup. The dump is run inside a single
  * transaction with FK-trigger checks disabled (session_replication_role
@@ -495,8 +524,14 @@ export async function restoreFromSql(
   }
 
   const client = await pool.connect();
+  _activeRestore = { pid: null, cancelled: false };
   try {
     await client.query("BEGIN");
+    // Record the Postgres backend PID so a cancel request can call pg_cancel_backend().
+    try {
+      const pidRes = await client.query("SELECT pg_backend_pid() AS pid");
+      if (_activeRestore) _activeRestore.pid = Number(pidRes.rows[0].pid);
+    } catch {}
     // Best-effort: disable FK trigger checks so cross-table inserts apply
     // in any order. Requires superuser on some managed Postgres providers;
     // ignore the error if it isn't allowed.
@@ -535,14 +570,26 @@ export async function restoreFromSql(
 
     await client.query(sqlToRun);
 
+    // Hard cancellation gate: if cancel was requested while the bulk SQL
+    // was executing (but pg_cancel_backend did not interrupt it), roll back
+    // here before COMMIT so the database is never mutated.
+    if (_activeRestore?.cancelled) {
+      throw new RestoreCancelledError();
+    }
+
     if (replicationRoleSet) {
       try { await client.query("SET session_replication_role = 'origin'"); } catch {}
     }
     await client.query("COMMIT");
   } catch (err) {
+    const wasCancelled = _activeRestore?.cancelled || err instanceof RestoreCancelledError;
     try { await client.query("ROLLBACK"); } catch {}
+    if (wasCancelled) {
+      throw new RestoreCancelledError();
+    }
     throw err;
   } finally {
+    _activeRestore = null;
     client.release();
   }
 

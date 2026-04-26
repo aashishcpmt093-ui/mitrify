@@ -15,7 +15,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError } from "./backupJob";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -1986,14 +1986,39 @@ export async function registerRoutes(
           allowList: allowList ?? null,
           ...result,
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
+        if (err instanceof RestoreCancelledError) {
+          return res.status(409).json({ message: "RESTORE_CANCELLED", cancelled: true });
+        }
         console.error("Restore failed:", err);
-        res.status(500).json({
-          message: err?.message || "Restore failed — database has been rolled back",
-        });
+        const msg = err instanceof Error ? err.message : "Restore failed — database has been rolled back";
+        res.status(500).json({ message: msg });
       }
     },
   );
+
+  // POST /api/admin/restore/cancel — signal the active restore to stop
+  app.post("/api/admin/restore/cancel", adminCheck, async (_req, res) => {
+    const state = getActiveRestoreState();
+    if (!state) {
+      return res.status(404).json({ message: "No restore is currently in progress" });
+    }
+    markRestoreCancelled();
+    let backendCancelSent = false;
+    if (state.pid !== null) {
+      try {
+        await pool.query("SELECT pg_cancel_backend($1)", [state.pid]);
+        backendCancelSent = true;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn("[restore] pg_cancel_backend failed:", msg);
+      }
+    }
+    // Return cancelled:true either way — the flag is set and the hard gate
+    // before COMMIT in restoreFromSql guarantees rollback even if
+    // pg_cancel_backend did not interrupt the active query.
+    res.json({ cancelled: true, backendCancelSent });
+  });
 
   // GET /api/admin/backup/gcs-list — list backup files in the GCS bucket
   app.get("/api/admin/backup/gcs-list", adminCheck, async (_req, res) => {
@@ -2073,9 +2098,13 @@ export async function registerRoutes(
       const mode = parseRestoreMode(req.body?.mode);
       const result = await restoreFromSql(sql, allowList, mode);
       res.json({ message: "Restore completed successfully", source: gcsName, allowList: allowList ?? null, ...result });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      if (err instanceof RestoreCancelledError) {
+        return res.status(409).json({ message: "RESTORE_CANCELLED", cancelled: true });
+      }
       console.error("GCS restore failed:", err);
-      res.status(500).json({ message: err?.message || "Restore failed — database has been rolled back" });
+      const msg = err instanceof Error ? err.message : "Restore failed — database has been rolled back";
+      res.status(500).json({ message: msg });
     }
   });
 
@@ -2153,11 +2182,13 @@ export async function registerRoutes(
     try {
       const result = await restoreFromSql(resolved.sql, resolved.allowList, mode);
       res.json({ message: "Restore completed successfully", allowList: resolved.allowList ?? null, ...result });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      if (err instanceof RestoreCancelledError) {
+        return res.status(409).json({ message: "RESTORE_CANCELLED", cancelled: true });
+      }
       console.error("Stored restore failed:", err);
-      res.status(500).json({
-        message: err?.message || "Restore failed — database has been rolled back",
-      });
+      const msg = err instanceof Error ? err.message : "Restore failed — database has been rolled back";
+      res.status(500).json({ message: msg });
     }
   });
 
