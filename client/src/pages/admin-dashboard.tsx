@@ -144,6 +144,17 @@ function BackupStatusLine() {
               {formatRelative(lastAt)} · {formatBytes(last.size)}
               {last.emailed ? " · emailed" : " · email pending"}
               {last.gcsUploaded ? " · ☁ cloud" : ""}
+              {last.alertSent ? (
+                <span data-testid="text-backup-alert-status"> · alert ✓</span>
+              ) : last.alertError ? (
+                <span
+                  className="text-red-700 dark:text-red-300"
+                  title={last.alertError}
+                  data-testid="text-backup-alert-status"
+                >
+                  {" "}· alert ✗
+                </span>
+              ) : null}
             </span>
           ) : (
             <span data-testid="text-last-backup-time">never run yet — first run scheduled at 2 AM IST</span>
