@@ -703,6 +703,12 @@ export default function AdminDashboardPage() {
     staleTime: 60 * 1000,
   });
 
+  const { data: alertStatus } = useQuery<{ configured: boolean }>({
+    queryKey: ["/api/admin/backup/alert-status"],
+    enabled: !!isAdmin,
+    staleTime: 60 * 1000,
+  });
+
   const gcsListQuery = useQuery<{ files: Array<{ name: string; size: number; updated: string }> }>({
     queryKey: ["/api/admin/backup/gcs-list"],
     enabled: !!isAdmin && backupDialogOpen && restoreMode === "gcs" && gcsStatus?.configured === true,
@@ -3522,14 +3528,39 @@ export default function AdminDashboardPage() {
             <div className="flex items-center gap-2">
               <Bell className="w-4 h-4 text-violet-700 dark:text-violet-300" />
               <h3 className="font-semibold text-sm">Alert webhook</h3>
+              {alertStatus && (
+                alertStatus.configured ? (
+                  <Badge
+                    className="ml-auto text-[10px] px-1.5 py-0 h-5 rounded-md bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700"
+                    data-testid="badge-alert-webhook-status"
+                  >
+                    <CheckCircle className="w-2.5 h-2.5 mr-0.5" />Configured
+                  </Badge>
+                ) : (
+                  <Badge
+                    className="ml-auto text-[10px] px-1.5 py-0 h-5 rounded-md bg-yellow-100 text-yellow-800 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300 dark:border-yellow-700"
+                    data-testid="badge-alert-webhook-status"
+                  >
+                    <AlertTriangle className="w-2.5 h-2.5 mr-0.5" />Not configured
+                  </Badge>
+                )
+              )}
             </div>
             <p className="text-xs text-muted-foreground">
               Send a test notification to the configured <code className="font-mono">BACKUP_ALERT_WEBHOOK</code> to verify it works correctly.
             </p>
+            {alertStatus?.configured === false && (
+              <div
+                className="rounded-lg bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 p-3 text-xs text-yellow-800 dark:text-yellow-200"
+                data-testid="text-alert-webhook-warning"
+              >
+                <strong>BACKUP_ALERT_WEBHOOK</strong> set nahi hai. Replit Secrets mein webhook URL (Slack/Discord/generic) add karo, phir test alert bhej sakte ho.
+              </div>
+            )}
             <Button
               size="sm"
               variant="outline"
-              disabled={testAlertPending}
+              disabled={testAlertPending || alertStatus?.configured === false}
               className="w-full border-violet-400 dark:border-violet-600 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/40"
               data-testid="button-test-alert"
               onClick={async () => {

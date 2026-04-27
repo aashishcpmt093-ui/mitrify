@@ -1845,6 +1845,11 @@ export async function registerRoutes(
     res.json({ configured: isGCSConfigured(), bucket: process.env.GCS_BUCKET_NAME || null });
   });
 
+  // GET /api/admin/backup/alert-status — is BACKUP_ALERT_WEBHOOK configured?
+  app.get("/api/admin/backup/alert-status", adminCheck, (_req, res) => {
+    res.json({ configured: !!process.env.BACKUP_ALERT_WEBHOOK });
+  });
+
   // POST /api/admin/backup/test-alert — send a test alert to the configured webhook
   app.post("/api/admin/backup/test-alert", adminCheck, async (_req, res) => {
     try {
