@@ -346,3 +346,5 @@ export const searchLog = pgTable("search_log", {
 export type SearchLog = typeof searchLog.$inferSelect;
 export const insertSearchLogSchema = createInsertSchema(searchLog).omit({ id: true, lastSearched: true });
 export type InsertSearchLog = z.infer<typeof insertSearchLogSchema>;
+
+export const NO_ALERT_NEEDED_MESSAGE = "No alert needed (backup succeeded)";

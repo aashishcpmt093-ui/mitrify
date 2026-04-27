@@ -4,7 +4,7 @@ import { createWriteStream } from "fs";
 import nodemailer from "nodemailer";
 import { Storage } from "@google-cloud/storage";
 import { pool, db } from "./db";
-import { siteContent } from "@shared/schema";
+import { siteContent, NO_ALERT_NEEDED_MESSAGE } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
 export const BACKUPS_DIR = path.resolve(process.cwd(), "backups");
@@ -20,23 +20,32 @@ const STATUS_KEY = "backup_status";
 
 export async function sendBackupAlert(opts: {
   filename?: string;
-  errorMessage: string;
+  errorMessage?: string;
+  successMessage?: string;
   dashboardUrl?: string;
 }): Promise<{ sent: boolean; error?: string }> {
   const webhookUrl = process.env.BACKUP_ALERT_WEBHOOK;
   if (!webhookUrl) return { sent: false, error: "BACKUP_ALERT_WEBHOOK not configured" };
 
-  const { filename, errorMessage, dashboardUrl } = opts;
+  const { filename, errorMessage, successMessage, dashboardUrl } = opts;
   const dash = dashboardUrl ?? (process.env.REPLIT_DEV_DOMAIN
     ? `https://${process.env.REPLIT_DEV_DOMAIN}/admin`
     : "/admin");
 
-  const lines: string[] = [
-    "⚠️ *Mitrify nightly backup alert*",
-    filename ? `📁 File: \`${filename}\`` : "📁 File: (not generated)",
-    `❌ Error: ${errorMessage}`,
-    `🔗 Dashboard: ${dash}`,
-  ];
+  const isSuccess = !!successMessage && !errorMessage;
+  const lines: string[] = isSuccess
+    ? [
+        "✅ *Mitrify nightly backup heartbeat*",
+        filename ? `📁 File: \`${filename}\`` : "📁 File: (unknown)",
+        `🟢 ${successMessage}`,
+        `🔗 Dashboard: ${dash}`,
+      ]
+    : [
+        "⚠️ *Mitrify nightly backup alert*",
+        filename ? `📁 File: \`${filename}\`` : "📁 File: (not generated)",
+        `❌ Error: ${errorMessage ?? "(no detail)"}`,
+        `🔗 Dashboard: ${dash}`,
+      ];
   const message = lines.join("\n");
 
   try {
@@ -932,6 +941,21 @@ export async function runDailyBackup(): Promise<BackupHistoryEntry> {
     });
     alertSent = alertResult.sent;
     alertError = alertResult.error;
+  } else if (emailed) {
+    // Backup + email both succeeded. Either fire a heartbeat (if explicitly
+    // opted in via BACKUP_ALERT_ON_SUCCESS=true) or record an explicit
+    // "no alert needed" status so the history table shows a clear label
+    // instead of a bare "—" placeholder.
+    if (process.env.BACKUP_ALERT_ON_SUCCESS === "true") {
+      const alertResult = await sendBackupAlert({
+        filename,
+        successMessage: `Backup completed successfully (${(size / 1024).toFixed(1)} KB)`,
+      });
+      alertSent = alertResult.sent;
+      alertError = alertResult.error;
+    } else {
+      alertError = NO_ALERT_NEEDED_MESSAGE;
+    }
   }
 
   pruneOldBackups();

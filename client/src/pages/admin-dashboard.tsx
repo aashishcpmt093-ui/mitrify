@@ -25,6 +25,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useTheme } from "@/lib/theme";
 import type { AdminStats, Profile, CallLog, PromoCode } from "@shared/schema";
+import { NO_ALERT_NEEDED_MESSAGE } from "@shared/schema";
 
 interface EditProviderState { open: boolean; profile: any | null; providerData: any | null; }
 
@@ -146,6 +147,14 @@ function BackupStatusLine() {
               {last.gcsUploaded ? " · ☁ cloud" : ""}
               {last.alertSent ? (
                 <span data-testid="text-backup-alert-status"> · alert ✓</span>
+              ) : last.alertError === NO_ALERT_NEEDED_MESSAGE ? (
+                <span
+                  className="text-amber-700/80 dark:text-amber-300/80"
+                  title={last.alertError}
+                  data-testid="text-backup-alert-status"
+                >
+                  {" "}· alert n/a
+                </span>
               ) : last.alertError ? (
                 <span
                   className="text-red-700 dark:text-red-300"
@@ -3590,6 +3599,10 @@ export default function AdminDashboardPage() {
                           {entry.alertSent ? (
                             <span className="inline-flex items-center gap-0.5 text-emerald-700 dark:text-emerald-400 font-semibold" title="Alert webhook delivered">
                               <CheckCircle className="w-3 h-3" /> sent
+                            </span>
+                          ) : entry.alertError === NO_ALERT_NEEDED_MESSAGE ? (
+                            <span className="text-muted-foreground" title={entry.alertError}>
+                              not needed
                             </span>
                           ) : entry.alertError ? (
                             <span className="inline-flex items-center gap-0.5 text-red-600 dark:text-red-400 font-semibold" title={entry.alertError}>
