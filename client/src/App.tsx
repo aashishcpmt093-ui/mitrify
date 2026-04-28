@@ -133,9 +133,7 @@ function Router() {
   useEffect(() => {
     if (isLoading) return;
     if (!user) {
-      if (window.location.pathname === "/") {
-        setLocation("/customer/home");
-      }
+      if (window.location.pathname === "/") setLocation("/customer/home");
       return;
     }
     const role = (user as any).role || (user as any).authType;
