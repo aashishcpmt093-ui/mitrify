@@ -131,7 +131,13 @@ function Router() {
   const [, setLocation] = useLocation();
 
   useEffect(() => {
-    if (isLoading || !user) return;
+    if (isLoading) return;
+    if (!user) {
+      if (window.location.pathname === "/") {
+        setLocation("/customer/home");
+      }
+      return;
+    }
     const role = (user as any).role || (user as any).authType;
     const current = window.location.pathname;
     if (current === "/" || current === "/login" || current === "/select-role") {
