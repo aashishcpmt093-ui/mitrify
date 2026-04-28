@@ -150,6 +150,10 @@ export default function CustomerHomePage() {
   const [selectedProvider, setSelectedProvider] = useState<any | null>(null);
   const [showScrollToTop, setShowScrollToTop] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
+  const handleGoToLogin = async () => {
+    try { await fetch("/api/guest-mode", { method: "POST", credentials: "include" }); } catch {}
+    setLocation("/login");
+  };
 
   const resetToHome = () => {
     setSearching(false);
@@ -518,6 +522,17 @@ export default function CustomerHomePage() {
   return (
     <div className="min-h-screen bg-background" ref={contentRef} onScroll={handleScroll}>
       <WelcomePopup />
+      <div className="sticky top-0 z-50 border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <img src={logoImg} alt="Mitrify" className="h-6 w-6 shrink-0" />
+            <span className="truncate text-sm font-semibold">Mitrify</span>
+          </div>
+          <Button size="sm" onClick={handleGoToLogin} data-testid="button-top-login-signup">
+            Login / Sign Up
+          </Button>
+        </div>
+      </div>
       {phoneSheet.open && (
         <div className="fixed inset-0 z-50 flex items-end justify-center" data-testid="phone-sheet">
           <div className="absolute inset-0 bg-black/40" onClick={() => setPhoneSheet({ open: false, providerId: "", providerName: "", numbers: [] })} />
