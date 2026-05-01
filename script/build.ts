@@ -1,6 +1,6 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile, writeFile } from "fs/promises";
+import { rm, readFile } from "fs/promises";
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
@@ -51,7 +51,7 @@ async function buildAll() {
     platform: "node",
     bundle: true,
     format: "cjs",
-    outfile: "dist/index.js",
+    outfile: "dist/index.cjs",
     define: {
       "process.env.NODE_ENV": '"production"',
     },
@@ -59,9 +59,6 @@ async function buildAll() {
     external: externals,
     logLevel: "info",
   });
-
-  await writeFile("dist/package.json", JSON.stringify({ type: "commonjs" }));
-  console.log("build complete.");
 }
 
 buildAll().catch((err) => {
