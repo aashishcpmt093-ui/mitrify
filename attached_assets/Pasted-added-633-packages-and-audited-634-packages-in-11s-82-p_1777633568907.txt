@@ -1,0 +1,49 @@
+added 633 packages, and audited 634 packages in 11s
+
+82 packages are looking for funding
+  run `npm fund` for details
+
+14 vulnerabilities (1 low, 4 moderate, 8 high, 1 critical)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues possible (including breaking changes), run:
+  npm audit fix --force
+
+Some issues need review, and may require choosing
+a different dependency.
+
+Run `npm audit` for details.
+
+> rest-express@1.0.0 build
+> tsx script/build.ts
+
+building client...
+vite v7.3.0 building client environment for production...
+transforming...
+Browserslist: browsers data (caniuse-lite) is 7 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+
+A PostCSS plugin did not pass the `from` option to `postcss.parse`. This may cause imported assets to be incorrectly transformed. If you've recently added a PostCSS plugin that raised this warning, please contact the package author to fix the issue.
+✓ 1775 modules transformed.
+rendering chunks...
+computing gzip size...
+../dist/public/index.html                                                                3.45 kB │ gzip:   1.20 kB
+../dist/public/assets/772B17C5-7738-43B8-B5C0-04A7F2A6561B_1773842365564-CrbqPBnb.png  227.83 kB
+../dist/public/assets/IMG_8630_1771950896722-DkNsGclJ.jpeg                             259.43 kB
+../dist/public/assets/index-CMFnPkQT.css                                               120.77 kB │ gzip:  18.86 kB
+../dist/public/assets/xlsx-DKld7fkO.js                                                 332.75 kB │ gzip: 112.56 kB
+../dist/public/assets/index-Bw-GcQOc.js                                                876.07 kB │ gzip: 239.70 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 5.56s
+building server...
+
+  dist/index.cjs  2.9mb ⚠️
+
+⚡ Done in 161ms
