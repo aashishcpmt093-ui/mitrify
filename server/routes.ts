@@ -21,7 +21,7 @@ import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverSta
 // `{ adminKey -> [timestampMs] }`. Resets on process restart (acceptable —
 // the safety cap is to prevent accidental cost spikes from rapid clicks).
 const GP_ADMIN_RUNS = new Map<string, number[]>();
-const GP_RUNS_PER_DAY = 3;
+const GP_RUNS_PER_DAY = 100;
 const GP_DAY_MS = 24 * 60 * 60 * 1000;
 
 function checkGpBulkRateLimit(adminKey: string): { ok: boolean; runsToday: number; max: number } {
@@ -2265,9 +2265,6 @@ export async function registerRoutes(
       const rateNow = checkGpBulkRateLimit(adminKey);
 
       const textQuery = `${serviceStr} in ${cityStr}`;
-      const body: any = { textQuery, regionCode: "IN", maxResultCount: 20 };
-      if (pageToken) body.pageToken = String(pageToken);
-
       const fieldMask = [
         "places.id",
         "places.displayName",
@@ -2283,24 +2280,50 @@ export async function registerRoutes(
         "nextPageToken",
       ].join(",");
 
-      const gRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Goog-Api-Key": apiKey,
-          "X-Goog-FieldMask": fieldMask,
-        },
-        body: JSON.stringify(body),
-      });
-      const data: any = await gRes.json();
-      if (!gRes.ok) {
-        return res.status(gRes.status).json({
-          message: data?.error?.message || "Google Places API call failed",
-          details: data?.error,
+      // Google's `searchText` caps `maxResultCount` at 20 per call, so to
+      // return ~40 results per click we fetch up to 2 pages here and merge
+      // them, returning the last page's nextPageToken for further pagination.
+      const callGoogle = async (tok?: string) => {
+        const body: any = { textQuery, regionCode: "IN", maxResultCount: 20 };
+        if (tok) body.pageToken = String(tok);
+        const r = await fetch("https://places.googleapis.com/v1/places:searchText", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": apiKey,
+            "X-Goog-FieldMask": fieldMask,
+          },
+          body: JSON.stringify(body),
         });
+        const j: any = await r.json();
+        return { ok: r.ok, status: r.status, json: j };
+      };
+
+      const merged: any[] = [];
+      let curToken: string | undefined = pageToken ? String(pageToken) : undefined;
+      let lastNextToken: string | null = null;
+      for (let i = 0; i < 2; i++) {
+        const { ok, status, json } = await callGoogle(curToken);
+        if (!ok) {
+          // First page failure is fatal; second page failure is non-fatal —
+          // return whatever we have plus no continuation token.
+          if (i === 0) {
+            return res.status(status).json({
+              message: json?.error?.message || "Google Places API call failed",
+              details: json?.error,
+            });
+          }
+          break;
+        }
+        if (Array.isArray(json.places)) merged.push(...json.places);
+        lastNextToken = json.nextPageToken || null;
+        if (!lastNextToken) break;
+        curToken = lastNextToken;
+        // Google's nextPageToken needs ~2s warm-up before becoming valid.
+        if (i === 0) await new Promise(r => setTimeout(r, 2000));
       }
 
-      const places = (data.places || []).map((p: any) => ({
+      const places = merged.map((p: any) => ({
         placeId: p.id,
         name: p.displayName?.text || "",
         address: p.formattedAddress || p.shortFormattedAddress || "",
@@ -2315,7 +2338,7 @@ export async function registerRoutes(
       res.json({
         ok: true,
         places,
-        nextPageToken: data.nextPageToken || null,
+        nextPageToken: lastNextToken,
         query: textQuery,
         runsToday: rateNow.runsToday,
         max: rateNow.max,

@@ -970,11 +970,10 @@ export default function AdminDashboardPage() {
   const [gpResults, setGpResults] = useState<Array<{ placeId: string; name: string; address: string; latitude: number | null; longitude: number | null; phone: string; website: string; rating: number | null; ratingCount: number | null }>>([]);
   const [gpSelected, setGpSelected] = useState<Set<string>>(new Set());
   const [gpImportResult, setGpImportResult] = useState<{ imported: number; skipped: number; total: number; skippedNoMobile: number; approved?: number } | null>(null);
-  // Paginated fetch (Task #67): client-side loop calling the simple
-  // single-search endpoint with `pageToken`, 20 results per page, up to
-  // `gpTarget` (max 1000). Replaces the earlier grid-scan job system,
-  // which produced 0 results when the first few cells were empty.
-  const [gpTarget, setGpTarget] = useState<number>(200);
+  // Initial fetch returns ~40 businesses (server merges 2 Google pages per
+  // call). The admin can then click "Add More" repeatedly to append another
+  // ~40 each time, up to the daily run quota.
+  const GP_PAGE_SIZE = 40;
   const [gpProgress, setGpProgress] = useState<{
     target: number; fetched: number; unique: number; duplicates: number;
     apiCalls: number; done: boolean; cancelled: boolean; error?: string;
@@ -1450,7 +1449,7 @@ export default function AdminDashboardPage() {
   };
 
   // Paginated fetch (Task #67). Loops over Google Places `searchText` with
-  // `pageToken` 20-at-a-time up to `gpTarget` (max 1000). Auto-selects each
+  // server endpoint once (which itself merges ~40 results). Auto-selects each
   // newly-seen place that has a phone (additive only — won't re-tick a
   // place the admin manually unticked). Cancellation via `gpCancelRef`.
   const handleGooglePlacesSearch = async () => {
@@ -1473,7 +1472,7 @@ export default function AdminDashboardPage() {
     setGpNextPageToken(null);
     gpSeenIdsRef.current = new Set();
 
-    const target = gpTarget;
+    const target = GP_PAGE_SIZE;
     const startedAt = Date.now();
     setGpProgress({ target, fetched: 0, unique: 0, duplicates: 0, apiCalls: 0, done: false, cancelled: false, startedAt });
 
@@ -1616,7 +1615,7 @@ export default function AdminDashboardPage() {
         title: fresh.length > 0
           ? `+${fresh.length} aur businesses add ho gaye`
           : "Koi naya business nahi mila (sab duplicate the)",
-        description: data.nextPageToken ? "Aur fetch ke liye dobara dabayein" : "Google ke paas aur results nahi hain",
+        description: data.nextPageToken ? "Aur ke liye dobara dabayein" : "Google ke paas aur results nahi hain",
       });
     } catch (err: any) {
       toast({ title: err?.message || "Add More failed", variant: "destructive" });
@@ -3231,30 +3230,10 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
 
-              {/* Step 4: Target dropdown */}
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">Step 4: Target — kitne businesses chahiye?</Label>
-                <Select
-                  value={String(gpTarget)}
-                  onValueChange={v => setGpTarget(parseInt(v, 10) || 200)}
-                  disabled={gpSearching}
-                >
-                  <SelectTrigger className="h-9 text-sm" data-testid="select-gp-target">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="20">20 (1 page, ~3 sec)</SelectItem>
-                    <SelectItem value="60">60 (~10 sec)</SelectItem>
-                    <SelectItem value="200">200 (~30 sec)</SelectItem>
-                    <SelectItem value="500">500 (~1 min)</SelectItem>
-                    <SelectItem value="1000">1,000 (~2 min, MAX)</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-[11px] text-muted-foreground">
-                  Hard cap: 1,000 unique businesses per run • Daily limit: 3 runs/admin
-                  {gpRateInfo && ` • Aaj: ${gpRateInfo.runsToday}/${gpRateInfo.max} use ho chuke`}
-                </p>
-              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Har click pe ~40 businesses milte hain • Daily limit: 100 runs/admin
+                {gpRateInfo && ` • Aaj: ${gpRateInfo.runsToday}/${gpRateInfo.max} use ho chuke`}
+              </p>
 
               {/* Search / Stop Buttons */}
               {!gpSearching ? (
@@ -3264,7 +3243,7 @@ export default function AdminDashboardPage() {
                   disabled={!gpCity.trim() || !gpService.trim()}
                   data-testid="button-gp-search"
                 >
-                  <Search className="w-4 h-4" />Fetch up to {gpTarget.toLocaleString("en-IN")} from Google
+                  <Search className="w-4 h-4" />Google se 40 businesses fetch karein
                 </Button>
               ) : (
                 <Button
@@ -3402,9 +3381,9 @@ export default function AdminDashboardPage() {
                       data-testid="button-gp-add-more"
                     >
                       {gpFetchingMore ? (
-                        <><Loader2 className="w-4 h-4 animate-spin" />Aur 20 fetch ho rahe hain…</>
+                        <><Loader2 className="w-4 h-4 animate-spin" />Aur 40 fetch ho rahe hain…</>
                       ) : gpNextPageToken ? (
-                        <>+ Google se aur 20 add karein</>
+                        <>+ Google se aur 40 add karein</>
                       ) : (
                         <>Google ke paas aur results nahi hain</>
                       )}
