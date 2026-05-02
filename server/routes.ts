@@ -2417,14 +2417,23 @@ export async function registerRoutes(
       if (autoApprove === true && result.insertedIds.length > 0) {
         // Approve EXACTLY the rows we just inserted (deterministic — uses
         // returned IDs so concurrent imports/approvals can't collide).
-        for (const id of result.insertedIds) {
-          try {
-            await storage.approvePendingProvider(id, "admin");
-            await storage.updatePendingProviderStatus(id, "approved", undefined, "admin");
-            approved++;
-          } catch (e: any) {
-            approveErrors.push(`ID ${id}: ${e.message}`);
-          }
+        // Run with limited concurrency to amortize the per-row DB round-trips
+        // (was sequential — 40 rows took 40× the latency). Skip the inline
+        // Gemini call (`skipAiTags`) since it's the dominant cost; tags can
+        // be backfilled by the existing background auto-tag job afterwards.
+        // We also drop the redundant `updatePendingProviderStatus` call that
+        // followed each approve — `approvePendingProvider` already marks the
+        // row "approved" internally, so the second write was wasted IO.
+        const CONCURRENCY = 8;
+        for (let i = 0; i < result.insertedIds.length; i += CONCURRENCY) {
+          const slice = result.insertedIds.slice(i, i + CONCURRENCY);
+          const results = await Promise.allSettled(
+            slice.map(id => storage.approvePendingProvider(id, "admin", { skipAiTags: true })),
+          );
+          results.forEach((r, idx) => {
+            if (r.status === "fulfilled") approved++;
+            else approveErrors.push(`ID ${slice[idx]}: ${r.reason?.message || r.reason}`);
+          });
         }
       }
 

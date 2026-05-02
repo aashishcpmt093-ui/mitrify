@@ -104,7 +104,7 @@ export interface IStorage {
   deleteNoMobilePendingProviders(): Promise<number>;
   getPendingProvider(id: number): Promise<PendingProvider | undefined>;
   updatePendingProviderStatus(id: number, status: string, notes?: string, verifiedBy?: string): Promise<PendingProvider>;
-  approvePendingProvider(id: number, approvedBy?: string): Promise<void>;
+  approvePendingProvider(id: number, approvedBy?: string, opts?: { skipAiTags?: boolean }): Promise<void>;
 
   trackVisit(date: string): Promise<void>;
   getVisitorStats(): Promise<{ total: number; today: number; last7Days: { date: string; count: number }[] }>;
@@ -1514,7 +1514,7 @@ export class DatabaseStorage implements IStorage {
     return pp;
   }
 
-  async approvePendingProvider(id: number, approvedBy?: string): Promise<void> {
+  async approvePendingProvider(id: number, approvedBy?: string, opts?: { skipAiTags?: boolean }): Promise<void> {
     const pp = await this.getPendingProvider(id);
     if (!pp) throw new Error("Pending provider not found");
 
@@ -1578,7 +1578,10 @@ export class DatabaseStorage implements IStorage {
       // Dynamic import avoids the circular dep between storage.ts and
       // server/lib/auto-tags.ts (which already imports `storage`).
       let hashtags: string[] = (pp.hashtags as string[]) || [];
-      if (hashtags.length < 5) {
+      // Skip the (slow) AI enrichment when bulk-importing — the caller can
+      // run the existing background "auto-generate tags" job afterwards to
+      // backfill in parallel without blocking each row's HTTP response.
+      if (hashtags.length < 5 && !opts?.skipAiTags) {
         try {
           const { generateTagsForProvider } = await import("./lib/auto-tags");
           const result = await generateTagsForProvider(
