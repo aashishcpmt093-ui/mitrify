@@ -20,7 +20,7 @@ import {
   SortAsc, Filter, TrendingUp, Activity, Briefcase, Link, Eye, EyeOff,
   UserCog, ExternalLink, Key, CheckCircle, Loader2,
   Calendar, Award, Clock, XCircle, ChevronRight, Upload, FileSpreadsheet,
-  Copy, MapPin, Star, Database, Cloud, CloudUpload, Bell
+  Copy, MapPin, Star, Database, Cloud, CloudUpload, Bell, Sparkles, Tag
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useTheme } from "@/lib/theme";
@@ -206,6 +206,232 @@ function BackupStatusLine() {
           )}
         </Button>
       </div>
+    </div>
+  );
+}
+
+interface TagJobStatus {
+  jobId: string;
+  total: number;
+  processed: number;
+  fromDict: number;
+  fromAi: number;
+  fromHybrid: number;
+  skipped: number;
+  failed: number;
+  done: boolean;
+  geminiAvailable: boolean;
+  dryRun: boolean;
+  errorSample: string[];
+}
+
+function AutoGenerateTagsCard() {
+  const { toast } = useToast();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [dryRun, setDryRun] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [status, setStatus] = useState<TagJobStatus | null>(null);
+  const [starting, setStarting] = useState(false);
+  const finalToastFired = useRef(false);
+
+  useEffect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    const tick = async () => {
+      try {
+        const res = await fetch(`/api/admin/auto-generate-tags/status/${jobId}`, { credentials: "include" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data: TagJobStatus = await res.json();
+        if (cancelled) return;
+        setStatus(data);
+        if (data.done) {
+          if (intervalId) {
+            clearInterval(intervalId);
+            intervalId = null;
+          }
+          if (!finalToastFired.current) {
+            finalToastFired.current = true;
+            const updated = data.fromDict + data.fromAi + data.fromHybrid;
+            toast({
+              title: data.dryRun ? "Dry run complete" : "Tags update ho gaye",
+              description: `${updated} providers ko nayi tags mili (${data.fromDict} dictionary + ${data.fromAi} AI + ${data.fromHybrid} hybrid). ${data.skipped} skipped, ${data.failed} failed.`,
+            });
+            queryClient.invalidateQueries({ queryKey: ["/api/admin/providers"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/providers"] });
+          }
+        }
+      } catch (err) {
+        // ignore transient errors during polling
+      }
+    };
+    tick();
+    intervalId = setInterval(tick, 2000);
+    return () => {
+      cancelled = true;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [jobId]);
+
+  const startJob = async () => {
+    setStarting(true);
+    finalToastFired.current = false;
+    setStatus(null);
+    try {
+      const res = await fetch("/api/admin/auto-generate-tags", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+      if (!data.geminiAvailable) {
+        toast({
+          title: "Gemini key nahi mili",
+          description: "Sirf dictionary se tags fill hongi. AI fallback ke liye GEMINI_API_KEY secret add karein.",
+        });
+      }
+      setJobId(data.jobId);
+      setConfirmOpen(false);
+    } catch (err: any) {
+      toast({ title: "Start failed", description: err?.message || "Could not start tag generation", variant: "destructive" });
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const running = !!jobId && !status?.done;
+  const pct = status && status.total > 0 ? Math.round((status.processed / status.total) * 100) : 0;
+
+  return (
+    <div className="bg-white dark:bg-slate-900 border border-fuchsia-200 dark:border-fuchsia-800/40 rounded-2xl p-5 space-y-4 shadow-sm" data-testid="card-auto-generate-tags">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-fuchsia-100 dark:bg-fuchsia-900/40 flex items-center justify-center shrink-0">
+          <Sparkles className="w-5 h-5 text-fuchsia-600 dark:text-fuchsia-300" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h3 className="font-semibold text-base text-slate-900 dark:text-white">Auto-Generate Provider Tags</h3>
+          <p className="text-xs text-muted-foreground">Saare providers ke liye 5–10 Hinglish + English hashtags auto-fill karein. Existing tags safe rahengi (sirf naye merge honge).</p>
+        </div>
+      </div>
+
+      <div className="bg-fuchsia-50 dark:bg-fuchsia-950/20 rounded-xl p-3 border border-fuchsia-100 dark:border-fuchsia-900/40 text-xs text-fuchsia-800 dark:text-fuchsia-300 space-y-1">
+        <p><strong>Kaise kaam karta hai:</strong></p>
+        <ul className="list-disc list-inside space-y-0.5">
+          <li>Pehle local dictionary check (~30 common professions, instant + free)</li>
+          <li>Agar dictionary se &lt; 5 tags milein → Gemini AI fallback (smart guess)</li>
+          <li>Existing tags merge honge (case-insensitive dedupe), max 10 per provider</li>
+        </ul>
+      </div>
+
+      <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700/40">
+        <div className="flex items-center gap-2 min-w-0">
+          <Tag className="w-4 h-4 text-slate-500 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-xs font-semibold">Dry Run (preview only)</p>
+            <p className="text-[11px] text-muted-foreground truncate">DB ko touch nahi karega — sirf count batayega</p>
+          </div>
+        </div>
+        <Switch checked={dryRun} onCheckedChange={setDryRun} disabled={running} data-testid="switch-tag-dry-run" />
+      </div>
+
+      <Button
+        className="w-full h-11 text-sm font-semibold gap-2 bg-fuchsia-600 hover:bg-fuchsia-700 text-white"
+        onClick={() => setConfirmOpen(true)}
+        disabled={running || starting}
+        data-testid="button-auto-generate-tags"
+      >
+        {running ? (
+          <><Loader2 className="w-4 h-4 animate-spin" />Tags generate ho rahi hain… ({status?.processed ?? 0}/{status?.total ?? 0})</>
+        ) : (
+          <><Sparkles className="w-4 h-4" />{dryRun ? "Dry Run Karein" : "Auto-Generate Tags for All Providers"}</>
+        )}
+      </Button>
+
+      {status && (
+        <div className="bg-slate-50 dark:bg-slate-800/40 rounded-xl p-4 space-y-3 border border-slate-200 dark:border-slate-700/40" data-testid="status-tag-job">
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold">{status.done ? (status.dryRun ? "Dry run complete" : "Done") : "Processing…"}</span>
+              <span className="text-muted-foreground" data-testid="text-tag-progress">{status.processed} / {status.total} ({pct}%)</span>
+            </div>
+            <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+              <div
+                className={`h-full transition-all ${status.done ? "bg-emerald-500" : "bg-fuchsia-500"}`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
+            <div className="bg-white dark:bg-slate-900 rounded-lg p-2">
+              <p className="text-[10px] text-muted-foreground">Dictionary</p>
+              <p className="text-base font-bold text-blue-600 dark:text-blue-400" data-testid="text-tag-dict">{status.fromDict}</p>
+            </div>
+            <div className="bg-white dark:bg-slate-900 rounded-lg p-2">
+              <p className="text-[10px] text-muted-foreground">AI</p>
+              <p className="text-base font-bold text-fuchsia-600 dark:text-fuchsia-400" data-testid="text-tag-ai">{status.fromAi}</p>
+            </div>
+            <div className="bg-white dark:bg-slate-900 rounded-lg p-2">
+              <p className="text-[10px] text-muted-foreground">Hybrid</p>
+              <p className="text-base font-bold text-violet-600 dark:text-violet-400" data-testid="text-tag-hybrid">{status.fromHybrid}</p>
+            </div>
+            <div className="bg-white dark:bg-slate-900 rounded-lg p-2">
+              <p className="text-[10px] text-muted-foreground">Skipped</p>
+              <p className="text-base font-bold text-slate-600 dark:text-slate-400" data-testid="text-tag-skipped">{status.skipped}</p>
+            </div>
+            <div className="bg-white dark:bg-slate-900 rounded-lg p-2">
+              <p className="text-[10px] text-muted-foreground">Failed</p>
+              <p className="text-base font-bold text-red-600 dark:text-red-400" data-testid="text-tag-failed">{status.failed}</p>
+            </div>
+          </div>
+          {!status.geminiAvailable && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-400">
+              ⚠ GEMINI_API_KEY missing — sirf dictionary use ho rahi hai. AI fallback ke liye secret add karein.
+            </p>
+          )}
+          {status.errorSample.length > 0 && (
+            <details className="text-[11px] text-red-700 dark:text-red-400">
+              <summary className="cursor-pointer">{status.failed} failed — details</summary>
+              <ul className="list-disc list-inside mt-1 space-y-0.5">
+                {status.errorSample.map((e, i) => <li key={i}>{e}</li>)}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent data-testid="dialog-confirm-tags">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-fuchsia-600" />
+              Confirm Tag Generation
+            </DialogTitle>
+            <DialogDescription>
+              {dryRun
+                ? "Yeh dry run hai — koi DB change nahi hoga, sirf preview."
+                : "Yeh action saare providers ke hashtags update karega. Existing tags safe rahengi (sirf naye merge honge), lekin yeh action undo nahi ho sakta."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="bg-fuchsia-50 dark:bg-fuchsia-950/20 rounded-lg p-3 text-xs text-fuchsia-800 dark:text-fuchsia-300 space-y-1">
+            <p>• Dictionary first (instant, free)</p>
+            <p>• Gemini AI fallback when dictionary &lt; 5 tags</p>
+            <p>• Maximum 10 tags per provider, dedupe case-insensitive</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={starting} data-testid="button-cancel-tag-gen">Cancel</Button>
+            <Button
+              className="bg-fuchsia-600 hover:bg-fuchsia-700 text-white"
+              onClick={startJob}
+              disabled={starting}
+              data-testid="button-confirm-tag-gen"
+            >
+              {starting ? (<><Loader2 className="w-4 h-4 animate-spin mr-2" />Starting…</>) : (dryRun ? "Run Dry Preview" : "Yes, Generate Tags")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -2904,6 +3130,9 @@ export default function AdminDashboardPage() {
                 </div>
               )}
             </div>
+
+            {/* ── AUTO-GENERATE PROVIDER TAGS (Dictionary + Gemini AI) ── */}
+            <AutoGenerateTagsCard />
 
             {/* ── BULK APPROVE META + GOOGLE LEADS (COMBINED) ── */}
             <div className="bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/40 rounded-2xl p-5 space-y-4 shadow-sm">
