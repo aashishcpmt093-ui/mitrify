@@ -771,18 +771,26 @@ export class DatabaseStorage implements IStorage {
   }): Promise<Call & { chargeReason: string; creditsCharged: number }> {
     const { customerId, providerId, providerAcceptsDouble, confirmDoubleCharge, duration } = opts;
 
-    // Resolve subscription plans BEFORE opening the tx (cheap cached read).
-    // Caller side becomes 0 when the customer is Premium; provider side
-    // becomes 0 when the provider is Pro or Premium. Customer also goes 0
-    // when the provider is Premium ("Free Call").
-    const ds = await getSearchDataset();
-    const callerPlan: SubscriptionPlan = ds.planMap.get(customerId) || "none";
-    const providerPlan: SubscriptionPlan = ds.planMap.get(providerId) || "none";
-
-    const customerFree = callerPlan === "premium" || providerPlan === "premium";
-    const providerFree = providerPlan === "pro" || providerPlan === "premium";
-
     return await db.transaction(async (tx) => {
+      // Resolve subscription plans INSIDE the tx (no cache TTL stale window):
+      // a sub that just expired or just got purchased takes effect on the
+      // very next call. Caller side becomes 0 when the customer is Premium;
+      // provider side becomes 0 when the provider is Pro or Premium. Customer
+      // also goes 0 when the provider is Premium ("Free Call").
+      const now = new Date();
+      const planFor = async (userId: string): Promise<SubscriptionPlan> => {
+        const [row] = await tx.select().from(subscriptions).where(and(
+          eq(subscriptions.userId, userId),
+          eq(subscriptions.status, "active"),
+          gte(subscriptions.endDate, now),
+        )).orderBy(desc(subscriptions.endDate)).limit(1);
+        return (row?.plan as SubscriptionPlan) || "none";
+      };
+      const callerPlan = await planFor(customerId);
+      const providerPlan = await planFor(providerId);
+      const customerFree = callerPlan === "premium" || providerPlan === "premium";
+      const providerFree = providerPlan === "pro" || providerPlan === "premium";
+
       const decrement = async (userId: string, amount: number) => {
         const [row] = await tx.select().from(credits)
           .where(and(eq(credits.userId, userId), eq(credits.role, "user")))

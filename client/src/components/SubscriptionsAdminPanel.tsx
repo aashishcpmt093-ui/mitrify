@@ -227,6 +227,7 @@ export function SubscriptionsAdminPanel() {
               <SelectItem value="active">Active</SelectItem>
               <SelectItem value="expired">Expired</SelectItem>
               <SelectItem value="cancelled">Cancelled</SelectItem>
+              <SelectItem value="superseded">Superseded</SelectItem>
             </SelectContent>
           </Select>
         </CardContent>
