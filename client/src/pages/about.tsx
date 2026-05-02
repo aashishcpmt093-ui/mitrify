@@ -4,6 +4,7 @@ import { ArrowLeft, MapPin, GraduationCap, Heart, Users, Phone, Globe, Info, Loa
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useHomeRoute } from "@/hooks/use-auth";
+import { useLanguage } from "@/lib/language";
 import founderImage from "@assets/IMG_8630_1771950896722.jpeg";
 
 const defaultAbout = {
@@ -23,6 +24,7 @@ const defaultAbout = {
 export default function AboutPage() {
   const [, setLocation] = useLocation();
   const homeRoute = useHomeRoute();
+  const { t } = useLanguage();
 
   const { data: aboutData } = useQuery<typeof defaultAbout | null>({
     queryKey: ["/api/content", "about"],
@@ -47,8 +49,8 @@ export default function AboutPage() {
             <div className="flex items-center gap-2">
               <Info className="w-5 h-5 text-white" />
               <div>
-                <h1 className="text-lg font-bold text-white leading-tight" data-testid="text-about-title">About Mitrify</h1>
-                <p className="text-white/70 text-xs">Fast Service, Instant Connect</p>
+                <h1 className="text-lg font-bold text-white leading-tight" data-testid="text-about-title">{t("aboutPageTitle")}</h1>
+                <p className="text-white/70 text-xs">{t("aboutPageTagline")}</p>
               </div>
             </div>
           </div>
@@ -125,18 +127,18 @@ export default function AboutPage() {
               data-testid="button-our-team"
             >
               <Users className="w-5 h-5" />
-              Our Team
+              {t("aboutOurTeamBtn")}
             </Button>
           </CardContent>
         </Card>
 
         <div className="text-center pt-2">
           <Button variant="link" className="text-sm" onClick={() => setLocation("/terms")} data-testid="link-terms">
-            Terms & Conditions
+            {t("terms")}
           </Button>
           <span className="text-muted-foreground mx-2">|</span>
           <Button variant="link" className="text-sm" onClick={() => setLocation(homeRoute)} data-testid="link-back">
-            Back
+            {t("back")}
           </Button>
         </div>
       </div>

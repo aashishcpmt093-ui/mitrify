@@ -4,6 +4,7 @@ import { ArrowLeft, ScrollText } from "lucide-react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useHomeRoute } from "@/hooks/use-auth";
+import { useLanguage } from "@/lib/language";
 
 const defaultTerms = {
   intro: "Mitrify.com का उपयोग करने से पहले कृपया निम्नलिखित नियमों और शर्तों को ध्यान से पढ़ें। इस वेबसाइट का उपयोग करके, आप इन शर्तों से सहमत होते हैं:",
@@ -43,6 +44,7 @@ const defaultTerms = {
 export default function TermsPage() {
   const [, setLocation] = useLocation();
   const homeRoute = useHomeRoute();
+  const { t } = useLanguage();
 
   const { data: termsData } = useQuery<typeof defaultTerms | null>({
     queryKey: ["/api/content", "terms"],
@@ -67,8 +69,8 @@ export default function TermsPage() {
             <div className="flex items-center gap-2">
               <ScrollText className="w-5 h-5 text-white" />
               <div>
-                <h1 className="text-lg font-bold text-white leading-tight" data-testid="text-terms-title">नियम एवं शर्तें</h1>
-                <p className="text-white/70 text-xs">Terms & Conditions & Disclaimer</p>
+                <h1 className="text-lg font-bold text-white leading-tight" data-testid="text-terms-title">{t("termsPageTitle")}</h1>
+                <p className="text-white/70 text-xs">{t("termsPageSubtitle")}</p>
               </div>
             </div>
           </div>
@@ -103,11 +105,11 @@ export default function TermsPage() {
 
         <div className="text-center pt-2 pb-6">
           <Button variant="link" className="text-sm" onClick={() => setLocation("/about")} data-testid="link-about">
-            About Us
+            {t("termsAboutLink")}
           </Button>
           <span className="text-muted-foreground mx-2">|</span>
           <Button variant="link" className="text-sm" onClick={() => setLocation(homeRoute)} data-testid="link-back">
-            Back
+            {t("back")}
           </Button>
         </div>
       </div>

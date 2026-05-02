@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ArrowLeft, Users, GraduationCap, Briefcase, Edit2, Plus } from "lucide-react";
 import { useLocation } from "wouter";
 import { useAuth, useHomeRoute } from "@/hooks/use-auth";
+import { useLanguage } from "@/lib/language";
 
 interface Employee {
   id: number;
@@ -20,6 +21,7 @@ export default function OurTeamPage() {
   const [, setLocation] = useLocation();
   const { user, isAuthenticated } = useAuth();
   const homeRoute = useHomeRoute();
+  const { t } = useLanguage();
 
   const { data: employees = [], isLoading } = useQuery<Employee[]>({
     queryKey: ["/api/employees"],
@@ -40,8 +42,8 @@ export default function OurTeamPage() {
             <div className="flex items-center gap-2">
               <Users className="w-5 h-5 text-white" />
               <div>
-                <h1 className="text-lg font-bold text-white leading-tight" data-testid="text-team-title">Our Team</h1>
-                <p className="text-white/70 text-xs">Mitrify ke talented members</p>
+                <h1 className="text-lg font-bold text-white leading-tight" data-testid="text-team-title">{t("ourTeamTitle")}</h1>
+                <p className="text-white/70 text-xs">{t("ourTeamSubtitle")}</p>
               </div>
             </div>
           </div>
@@ -56,19 +58,19 @@ export default function OurTeamPage() {
             data-testid="button-add-employee"
           >
             <Plus className="w-4 h-4" />
-            Add Team Member
+            {t("ourTeamAdd")}
           </Button>
         )}
 
         {isLoading ? (
           <div className="flex justify-center py-8">
-            <div className="animate-pulse text-muted-foreground">Loading...</div>
+            <div className="animate-pulse text-muted-foreground">{t("loading")}</div>
           </div>
         ) : employees.length === 0 ? (
           <Card className="border-dashed">
             <CardContent className="pt-8 pb-8 text-center">
               <Users className="w-12 h-12 mx-auto mb-2 text-muted-foreground/50" />
-              <p className="text-sm text-muted-foreground">Team members coming soon...</p>
+              <p className="text-sm text-muted-foreground">{t("ourTeamComing")}</p>
             </CardContent>
           </Card>
         ) : (
@@ -132,7 +134,7 @@ export default function OurTeamPage() {
 
         <div className="text-center pt-2">
           <Button variant="link" className="text-sm" onClick={() => setLocation(homeRoute)} data-testid="link-back">
-            Back
+            {t("back")}
           </Button>
         </div>
       </div>

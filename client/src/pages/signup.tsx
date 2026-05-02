@@ -9,6 +9,7 @@ import { useState, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { sendFirebaseOtp, verifyFirebaseOtp } from "@/lib/firebase";
+import { useLanguage } from "@/lib/language";
 import { markShowWelcomePopup } from "@/components/welcome-popup";
 import logoImg from "@assets/772B17C5-7738-43B8-B5C0-04A7F2A6561B_1773842365564.png";
 
@@ -28,6 +29,7 @@ function generateUsernameSuggestions(phone: string): string[] {
 export default function SignupPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { t } = useLanguage();
 
   const [step, setStep] = useState<Step>("contact");
   const [phone, setPhone] = useState("");
@@ -53,17 +55,17 @@ export default function SignupPage() {
       });
       if (!res.ok) {
         const data = await res.json();
-        toast({ title: data.message || "Failed to send OTP", variant: "destructive" });
+        toast({ title: data.message || t("signupOtpFailToast"), variant: "destructive" });
         setStep("contact");
         return;
       }
-      toast({ title: "OTP sent to your mobile" });
+      toast({ title: t("signupOtpSentToast") });
     } catch (err: any) {
       const msg = err?.code === "auth/too-many-requests"
-        ? "Too many attempts. Please try again later."
+        ? t("signupTooMany")
         : err?.code === "auth/invalid-phone-number"
-          ? "Invalid number. Use format: +91XXXXXXXXXX"
-          : "Failed to send OTP";
+          ? t("signupInvalidNumber")
+          : t("signupOtpFailToast");
       toast({ title: msg, variant: "destructive" });
       setStep("contact");
     } finally {
@@ -73,7 +75,7 @@ export default function SignupPage() {
 
   const handleSendOtp = () => {
     if (!phone.trim()) {
-      toast({ title: "Mobile number required", variant: "destructive" });
+      toast({ title: t("signupMobileRequired"), variant: "destructive" });
       return;
     }
     setStep("otp");
@@ -82,7 +84,7 @@ export default function SignupPage() {
 
   const handleVerifyOtp = async () => {
     if (!otp.trim() || otp.trim().length < 5) {
-      toast({ title: "Enter 6-digit OTP", variant: "destructive" });
+      toast({ title: t("signupEnter6Otp"), variant: "destructive" });
       return;
     }
     setLoading(true);
@@ -95,17 +97,17 @@ export default function SignupPage() {
         body: JSON.stringify({ phone: phone.trim(), loginOnly: true }),
       });
       if (!res.ok) {
-        toast({ title: "Server verification failed", variant: "destructive" });
+        toast({ title: t("signupServerVerifyFail"), variant: "destructive" });
         return;
       }
-      toast({ title: "Mobile verified!" });
+      toast({ title: t("signupMobileVerified") });
       setStep("credentials");
     } catch (err: any) {
       const msg = err?.code === "auth/invalid-verification-code"
-        ? "Invalid OTP. Please check and try again."
+        ? t("signupInvalidOtp")
         : err?.code === "auth/code-expired"
-          ? "OTP expired. Please request a new one."
-          : "Verification failed";
+          ? t("signupOtpExpired")
+          : t("signupVerifyFail");
       toast({ title: msg, variant: "destructive" });
     } finally {
       setLoading(false);
@@ -114,15 +116,15 @@ export default function SignupPage() {
 
   const handleSignup = async () => {
     if (!username.trim() || !password.trim()) {
-      toast({ title: "Username and password required", variant: "destructive" });
+      toast({ title: t("signupUserPwRequired"), variant: "destructive" });
       return;
     }
     if (password !== confirmPassword) {
-      toast({ title: "Passwords don't match", variant: "destructive" });
+      toast({ title: t("signupPwMismatch"), variant: "destructive" });
       return;
     }
     if (password.length < 4) {
-      toast({ title: "Password must be at least 4 characters", variant: "destructive" });
+      toast({ title: t("signupPwLen"), variant: "destructive" });
       return;
     }
     setLoading(true);
@@ -135,17 +137,17 @@ export default function SignupPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        toast({ title: data.message || "Registration failed", variant: "destructive" });
+        toast({ title: data.message || t("signupRegFail"), variant: "destructive" });
         return;
       }
       // Save username so login page can autofill it
       localStorage.setItem("mitrify_saved_username", username.trim());
       markShowWelcomePopup();
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
-      toast({ title: "Account created successfully!" });
+      toast({ title: t("signupAccountCreated") });
       setLocation("/select-role");
     } catch {
-      toast({ title: "Registration failed", variant: "destructive" });
+      toast({ title: t("signupRegFail"), variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -172,8 +174,8 @@ export default function SignupPage() {
         <div className="w-14 h-14 mb-4">
           <img src={logoImg} alt="Mitrify" className="w-14 h-14 object-contain" />
         </div>
-        <h2 className="text-2xl font-bold mb-1" data-testid="text-signup-title">Create Account</h2>
-        <p className="text-muted-foreground mb-6 text-center text-sm">Join Mitrify to find or offer services</p>
+        <h2 className="text-2xl font-bold mb-1" data-testid="text-signup-title">{t("signupCreateBtn")}</h2>
+        <p className="text-muted-foreground mb-6 text-center text-sm">{t("signupSubtitle")}</p>
 
         {/* Progress steps */}
         <div className="flex gap-2 mb-6">
@@ -196,7 +198,7 @@ export default function SignupPage() {
                 <a href="/api/auth/google" className="block">
                   <Button className="w-full h-12" variant="outline" data-testid="button-signup-google">
                     <SiGoogle className="w-5 h-5 mr-2" />
-                    Continue with Google
+                    {t("signupContinueGoogle")}
                   </Button>
                 </a>
               </div>
@@ -206,7 +208,7 @@ export default function SignupPage() {
                   <span className="w-full border-t" />
                 </div>
                 <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-background px-2 text-muted-foreground">or sign up with mobile OTP</span>
+                  <span className="bg-background px-2 text-muted-foreground">{t("signupOrMobile")}</span>
                 </div>
               </div>
 
@@ -214,13 +216,13 @@ export default function SignupPage() {
                 <CardContent className="pt-6 space-y-4">
                   <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
                     <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
-                    <p className="text-xs text-blue-700 dark:text-blue-300">Mobile number verification is required for account security</p>
+                    <p className="text-xs text-blue-700 dark:text-blue-300">{t("signupSecurityNote")}</p>
                   </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="phone">
                       <Phone className="w-3.5 h-3.5 inline mr-1" />
-                      Mobile Number
+                      {t("signupMobileLabel")}
                     </Label>
                     <Input
                       id="phone"
@@ -232,7 +234,7 @@ export default function SignupPage() {
                       placeholder="+91 XXXXXXXXXX"
                       data-testid="input-signup-contact"
                     />
-                    <p className="text-xs text-muted-foreground">Include country code, e.g. +91 for India</p>
+                    <p className="text-xs text-muted-foreground">{t("signupMobileHint")}</p>
                   </div>
 
                   {/* Hidden reCAPTCHA container for Firebase */}
@@ -243,7 +245,7 @@ export default function SignupPage() {
                     onClick={handleSendOtp}
                     data-testid="button-send-otp"
                   >
-                    <Phone className="w-4 h-4 mr-2" />Send OTP
+                    <Phone className="w-4 h-4 mr-2" />{t("signupSendOtp")}
                   </Button>
                 </CardContent>
               </Card>
@@ -258,17 +260,17 @@ export default function SignupPage() {
                   <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-3">
                     <Phone className="w-6 h-6 text-primary" />
                   </div>
-                  <p className="text-sm font-medium">OTP Sent</p>
+                  <p className="text-sm font-medium">{t("signupOtpSentTitle")}</p>
                   <p className="text-sm text-muted-foreground mt-1">
                     {otpSending ? (
-                      <>Sending OTP to <span className="font-medium text-foreground">{phone}</span>...</>
+                      <>{t("signupSendingTo")} <span className="font-medium text-foreground">{phone}</span>...</>
                     ) : (
-                      <>Verification code sent to <span className="font-medium text-foreground">{phone}</span></>
+                      <>{t("signupSentTo")} <span className="font-medium text-foreground">{phone}</span></>
                     )}
                   </p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="otp">Enter 6-digit OTP</Label>
+                  <Label htmlFor="otp">{t("signupEnterOtp")}</Label>
                   <Input
                     id="otp"
                     type="text"
@@ -282,10 +284,10 @@ export default function SignupPage() {
                   />
                 </div>
                 <Button className="w-full" onClick={handleVerifyOtp} disabled={loading} data-testid="button-verify-otp">
-                  {loading ? "Verifying..." : "Verify OTP"}
+                  {loading ? t("signupVerifying") : t("signupVerifyOtp")}
                 </Button>
                 <Button variant="ghost" className="w-full text-sm" onClick={() => { setStep("contact"); setOtp(""); }} disabled={loading} data-testid="button-resend-otp">
-                  Change Number / Resend OTP
+                  {t("signupChangeResend")}
                 </Button>
               </CardContent>
             </Card>
@@ -297,7 +299,7 @@ export default function SignupPage() {
               <CardContent className="pt-6 space-y-4">
                 <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400 mb-2">
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>{phone} verified successfully</span>
+                  <span>{phone} {t("signupVerifiedOk")}</span>
                 </div>
 
                 {/* Browser password manager form — autocomplete triggers save prompt */}
@@ -307,14 +309,14 @@ export default function SignupPage() {
                   className="space-y-4"
                 >
                   <div className="space-y-2">
-                    <Label htmlFor="username">Username</Label>
+                    <Label htmlFor="username">{t("signupUsernameLabel")}</Label>
                     <Input
                       id="username"
                       name="username"
                       autoComplete="username"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
-                      placeholder="Choose a username"
+                      placeholder={t("signupUsernamePh")}
                       data-testid="input-signup-username"
                     />
 
@@ -323,7 +325,7 @@ export default function SignupPage() {
                       <div className="space-y-1.5">
                         <p className="text-xs text-muted-foreground flex items-center gap-1">
                           <Sparkles className="w-3 h-3" />
-                          Suggested usernames:
+                          {t("signupSuggested")}
                         </p>
                         <div className="flex flex-wrap gap-1.5">
                           {suggestions.map((s) => (
@@ -343,7 +345,7 @@ export default function SignupPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="password">Password</Label>
+                    <Label htmlFor="password">{t("signupPwLabel")}</Label>
                     <div className="relative">
                       <Input
                         id="password"
@@ -352,7 +354,7 @@ export default function SignupPage() {
                         autoComplete="new-password"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        placeholder="Create a password"
+                        placeholder={t("signupPwPh")}
                         data-testid="input-signup-password"
                       />
                       <Button
@@ -369,7 +371,7 @@ export default function SignupPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="confirm-password">Confirm Password</Label>
+                    <Label htmlFor="confirm-password">{t("signupConfirmPwLabel")}</Label>
                     <Input
                       id="confirm-password"
                       name="confirm-password"
@@ -377,7 +379,7 @@ export default function SignupPage() {
                       autoComplete="new-password"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="Confirm your password"
+                      placeholder={t("signupConfirmPwPh")}
                       data-testid="input-signup-confirm-password"
                     />
                   </div>
@@ -388,7 +390,7 @@ export default function SignupPage() {
                     disabled={loading}
                     data-testid="button-signup-submit"
                   >
-                    {loading ? "Creating Account..." : "Create Account"}
+                    {loading ? t("signupCreating") : t("signupCreateBtn")}
                   </Button>
                 </form>
               </CardContent>
@@ -397,7 +399,7 @@ export default function SignupPage() {
 
           <div className="text-center">
             <Button variant="link" className="text-sm" onClick={() => setLocation("/login")} data-testid="button-goto-login">
-              Already have an account? Login
+              {t("signupAlreadyHave")}
             </Button>
           </div>
         </div>

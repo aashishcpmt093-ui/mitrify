@@ -9,28 +9,23 @@ import { ArrowLeft, Check, Loader2, Sparkles } from "lucide-react";
 import { PlanTick } from "@/components/PlanTick";
 import type { SubscriptionPlanConfig, SubscriptionResponse, SubscriptionPlan } from "@shared/schema";
 import { useHomeRoute } from "@/hooks/use-auth";
+import { useLanguage } from "@/lib/language";
 
 type Plan = "boost" | "pro" | "premium";
 type Cycle = "monthly" | "yearly";
 
 const PLAN_ORDER: Plan[] = ["boost", "pro", "premium"];
 
-const PLAN_META: Record<Plan, { title: string; tagline: string; accent: string; tickColor: string }> = {
+const PLAN_STYLE: Record<Plan, { accent: string; tickColor: string }> = {
   boost: {
-    title: "Boost",
-    tagline: "Get noticed in search",
     accent: "border-slate-300 dark:border-slate-600",
     tickColor: "text-slate-500",
   },
   pro: {
-    title: "Pro",
-    tagline: "Receive calls for free",
     accent: "border-yellow-300 dark:border-yellow-600",
     tickColor: "text-yellow-500",
   },
   premium: {
-    title: "Premium",
-    tagline: "Free Call — incoming and outgoing",
     accent: "border-emerald-400 dark:border-emerald-600 ring-2 ring-emerald-100 dark:ring-emerald-900/40",
     tickColor: "text-emerald-500",
   },
@@ -39,8 +34,12 @@ const PLAN_META: Record<Plan, { title: string; tagline: string; accent: string; 
 export default function SubscriptionsPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { t } = useLanguage();
   const [cycle, setCycle] = useState<Cycle>("monthly");
   const homeRoute = useHomeRoute();
+
+  const planTitle = (p: Plan): string => p === "boost" ? t("subBoost") : p === "pro" ? t("subPro") : t("subPremium");
+  const planTagline = (p: Plan): string => p === "boost" ? t("subBoostTagline") : p === "pro" ? t("subProTagline") : t("subPremiumTagline");
 
   const { data: cfg } = useQuery<SubscriptionPlanConfig>({
     queryKey: ["/api/subscriptions/config"],
@@ -77,7 +76,7 @@ export default function SubscriptionsPage() {
       window.location.href = `/payment/checkout?${q.toString()}`;
     },
     onError: () => {
-      toast({ title: "Could not start payment", description: "Please try again.", variant: "destructive" });
+      toast({ title: t("subPaymentError"), description: t("subPaymentErrorDesc"), variant: "destructive" });
     },
   });
 
@@ -86,10 +85,10 @@ export default function SubscriptionsPage() {
   const daysRemaining = activeEnd ? Math.max(0, Math.ceil((activeEnd.getTime() - Date.now()) / 86400000)) : 0;
 
   const buttonLabel = (plan: Plan) => {
-    if (activePlan === "none") return "Subscribe";
-    if (activePlan === plan) return "Renew / Extend";
+    if (activePlan === "none") return t("subSubscribe");
+    if (activePlan === plan) return t("subRenew");
     const rank: Record<SubscriptionPlan, number> = { none: 0, boost: 1, pro: 2, premium: 3 };
-    return rank[plan] > rank[activePlan] ? "Upgrade" : "Switch";
+    return rank[plan] > rank[activePlan] ? t("subUpgrade") : t("subSwitch");
   };
 
   return (
@@ -99,7 +98,7 @@ export default function SubscriptionsPage() {
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <h1 className="font-semibold text-lg flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-amber-500" /> Subscriptions
+          <Sparkles className="w-4 h-4 text-amber-500" /> {t("subTitle")}
         </h1>
       </header>
 
@@ -111,11 +110,11 @@ export default function SubscriptionsPage() {
               <PlanTick plan={activePlan} size={22} />
               <div className="flex-1">
                 <p className="font-semibold text-sm" data-testid="text-active-plan">
-                  {PLAN_META[activePlan as Plan].title} active
+                  {planTitle(activePlan as Plan)} {t("subActiveLabel")}
                 </p>
                 <p className="text-xs text-muted-foreground" data-testid="text-active-days">
-                  {daysRemaining} day{daysRemaining === 1 ? "" : "s"} remaining
-                  {activeEnd ? ` · ends ${activeEnd.toLocaleDateString()}` : ""}
+                  {daysRemaining} {daysRemaining === 1 ? t("subDayRemaining") : t("subDaysRemaining")}
+                  {activeEnd ? ` · ${t("subEnds")} ${activeEnd.toLocaleDateString()}` : ""}
                 </p>
               </div>
             </CardContent>
@@ -131,8 +130,8 @@ export default function SubscriptionsPage() {
               className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${cycle === c ? "bg-background shadow-sm" : "text-muted-foreground"}`}
               data-testid={`button-cycle-${c}`}
             >
-              {c === "monthly" ? "Monthly" : "Yearly"}
-              {c === "yearly" && <span className="ml-1 text-[10px] text-emerald-600 font-bold">Save</span>}
+              {c === "monthly" ? t("subMonthly") : t("subYearly")}
+              {c === "yearly" && <span className="ml-1 text-[10px] text-emerald-600 font-bold">{t("subSave")}</span>}
             </button>
           ))}
         </div>
@@ -140,28 +139,28 @@ export default function SubscriptionsPage() {
         {/* Plan cards */}
         {!cfg && <div className="text-center text-muted-foreground py-12"><Loader2 className="w-6 h-6 mx-auto animate-spin" /></div>}
         {cfg && PLAN_ORDER.map((p) => {
-          const meta = PLAN_META[p];
+          const style = PLAN_STYLE[p];
           const price = cfg[p][cycle];
           const monthlyEquiv = cycle === "yearly" ? Math.round(price / 12) : price;
           const isCurrent = activePlan === p;
           return (
-            <Card key={p} className={`${meta.accent}`} data-testid={`card-plan-${p}`}>
+            <Card key={p} className={`${style.accent}`} data-testid={`card-plan-${p}`}>
               <CardContent className="p-5 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="flex items-center gap-2">
                       <PlanTick plan={p as SubscriptionPlan} size={18} />
-                      <h3 className="font-bold text-lg">{meta.title}</h3>
+                      <h3 className="font-bold text-lg">{planTitle(p)}</h3>
                       {isCurrent && (
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500 text-white font-semibold">Active</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500 text-white font-semibold">{t("subActiveBadge")}</span>
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">{meta.tagline}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{planTagline(p)}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-2xl font-bold" data-testid={`text-price-${p}`}>₹{price}</p>
                     <p className="text-[10px] text-muted-foreground">
-                      {cycle === "yearly" ? `≈ ₹${monthlyEquiv}/mo` : "/month"}
+                      {cycle === "yearly" ? `≈ ₹${monthlyEquiv}${t("subPerYearMo")}` : t("subPerMonth")}
                     </p>
                   </div>
                 </div>
@@ -169,7 +168,7 @@ export default function SubscriptionsPage() {
                 <ul className="space-y-1.5">
                   {cfg[p].perks.map((perk, idx) => (
                     <li key={idx} className="flex items-start gap-2 text-sm">
-                      <Check className={`w-4 h-4 ${meta.tickColor} mt-0.5 shrink-0`} />
+                      <Check className={`w-4 h-4 ${style.tickColor} mt-0.5 shrink-0`} />
                       <span className="text-foreground/80">{perk}</span>
                     </li>
                   ))}
@@ -193,7 +192,7 @@ export default function SubscriptionsPage() {
         {(mine?.history?.length ?? 0) > 0 && (
           <Card>
             <CardContent className="p-4">
-              <h3 className="font-semibold text-sm mb-3">Subscription history</h3>
+              <h3 className="font-semibold text-sm mb-3">{t("subHistory")}</h3>
               <div className="space-y-2">
                 {mine!.history.map((s) => (
                   <div key={s.id} className="flex items-center justify-between gap-3 text-xs border-b border-border last:border-0 pb-2 last:pb-0" data-testid={`row-sub-${s.id}`}>
@@ -202,8 +201,8 @@ export default function SubscriptionsPage() {
                       <div>
                         <p className="font-medium">{(s.plan as string).toUpperCase()} · {s.billingCycle}</p>
                         <p className="text-muted-foreground">
-                          ends {s.endDate ? new Date(s.endDate).toLocaleDateString() : "?"} · {s.status}
-                          {s.grantedBy ? " · admin granted" : ""}
+                          {t("subEnds")} {s.endDate ? new Date(s.endDate).toLocaleDateString() : "?"} · {s.status}
+                          {s.grantedBy ? ` · ${t("subAdminGranted")}` : ""}
                         </p>
                       </div>
                     </div>
@@ -216,7 +215,7 @@ export default function SubscriptionsPage() {
         )}
 
         <p className="text-[11px] text-muted-foreground text-center pt-2">
-          Subscriptions are one-time payments — no auto-renewal. Upgrade replaces your active plan.
+          {t("subFooter")}
         </p>
       </main>
     </div>

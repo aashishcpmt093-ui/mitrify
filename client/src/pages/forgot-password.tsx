@@ -7,12 +7,14 @@ import { useLocation } from "wouter";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { sendFirebaseOtp, verifyFirebaseOtp } from "@/lib/firebase";
+import { useLanguage } from "@/lib/language";
 import { BackButton } from "@/components/BackButton";
 import logoImg from "@assets/772B17C5-7738-43B8-B5C0-04A7F2A6561B_1773842365564.png";
 
 export default function ForgotPasswordPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { t } = useLanguage();
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -25,13 +27,13 @@ export default function ForgotPasswordPage() {
     setOtpSending(true);
     try {
       await sendFirebaseOtp(phone.trim(), "forgot-send-otp-btn");
-      toast({ title: "OTP sent to your phone" });
+      toast({ title: t("forgotOtpSentToast") });
     } catch (err: any) {
       const msg = err?.code === "auth/too-many-requests"
-        ? "Too many attempts. Try again later."
+        ? t("signupTooMany")
         : err?.code === "auth/invalid-phone-number"
-          ? "Invalid phone number. Use format: +91XXXXXXXXXX"
-          : "Failed to send OTP";
+          ? t("signupInvalidNumber")
+          : t("signupOtpFailToast");
       toast({ title: msg, variant: "destructive" });
     } finally {
       setOtpSending(false);
@@ -40,7 +42,7 @@ export default function ForgotPasswordPage() {
 
   const handleSendOtp = () => {
     if (!phone.trim()) {
-      toast({ title: "Phone number required", variant: "destructive" });
+      toast({ title: t("forgotPhoneRequired"), variant: "destructive" });
       return;
     }
     setOtpSent(true);
@@ -49,11 +51,11 @@ export default function ForgotPasswordPage() {
 
   const handleVerifyAndReset = async () => {
     if (!otp.trim()) {
-      toast({ title: "Please enter OTP", variant: "destructive" });
+      toast({ title: t("forgotEnterOtp"), variant: "destructive" });
       return;
     }
     if (!newPassword.trim() || newPassword.length < 4) {
-      toast({ title: "Password must be at least 4 characters", variant: "destructive" });
+      toast({ title: t("forgotPwLen"), variant: "destructive" });
       return;
     }
     setLoading(true);
@@ -67,17 +69,17 @@ export default function ForgotPasswordPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        toast({ title: data.message || "Reset failed", variant: "destructive" });
+        toast({ title: data.message || t("forgotResetFail"), variant: "destructive" });
         return;
       }
-      toast({ title: "Password reset successfully! Please login." });
+      toast({ title: t("forgotResetOk") });
       setLocation("/login");
     } catch (err: any) {
       const msg = err?.code === "auth/invalid-verification-code"
-        ? "Invalid OTP. Please check and try again."
+        ? t("signupInvalidOtp")
         : err?.code === "auth/code-expired"
-          ? "OTP expired. Request a new one."
-          : "Reset failed";
+          ? t("signupOtpExpired")
+          : t("forgotResetFail");
       toast({ title: msg, variant: "destructive" });
     } finally {
       setLoading(false);
@@ -96,14 +98,14 @@ export default function ForgotPasswordPage() {
         <div className="w-14 h-14 mb-4">
           <img src={logoImg} alt="Mitrify" className="w-14 h-14 object-contain" />
         </div>
-        <h2 className="text-2xl font-bold mb-1" data-testid="text-forgot-title">Reset Password</h2>
-        <p className="text-muted-foreground mb-6 text-center text-sm">Verify your phone number to reset password</p>
+        <h2 className="text-2xl font-bold mb-1" data-testid="text-forgot-title">{t("forgotTitle")}</h2>
+        <p className="text-muted-foreground mb-6 text-center text-sm">{t("forgotSubtitle")}</p>
 
         <div className="w-full max-w-sm">
           <Card>
             <CardContent className="pt-6 space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="phone">Registered Mobile Number</Label>
+                <Label htmlFor="phone">{t("forgotPhoneLabel")}</Label>
                 <Input
                   id="phone"
                   value={phone}
@@ -117,28 +119,28 @@ export default function ForgotPasswordPage() {
               {otpSent && (
                 <>
                   <p className="text-xs text-muted-foreground">
-                    {otpSending ? "Sending OTP..." : `OTP sent to ${phone}`}
+                    {otpSending ? t("forgotSendingOtp") : `${t("forgotOtpSentTo")} ${phone}`}
                   </p>
                   <div className="space-y-2">
-                    <Label htmlFor="otp">Enter OTP</Label>
+                    <Label htmlFor="otp">{t("forgotOtpLabel")}</Label>
                     <Input
                       id="otp"
                       value={otp}
                       onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
-                      placeholder="Enter 6-digit OTP"
+                      placeholder={t("forgotOtpPh")}
                       maxLength={6}
                       inputMode="numeric"
                       data-testid="input-forgot-otp"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="newPassword">New Password</Label>
+                    <Label htmlFor="newPassword">{t("forgotNewPwLabel")}</Label>
                     <Input
                       id="newPassword"
                       type="password"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Enter new password"
+                      placeholder={t("forgotNewPwPh")}
                       data-testid="input-forgot-new-password"
                     />
                   </div>
@@ -147,15 +149,15 @@ export default function ForgotPasswordPage() {
 
               {!otpSent ? (
                 <Button id="forgot-send-otp-btn" className="w-full" onClick={handleSendOtp} data-testid="button-forgot-send-otp">
-                  Send OTP
+                  {t("signupSendOtp")}
                 </Button>
               ) : (
                 <div className="space-y-2">
                   <Button className="w-full" onClick={handleVerifyAndReset} disabled={loading} data-testid="button-forgot-reset">
-                    {loading ? "Resetting..." : "Reset Password"}
+                    {loading ? t("forgotResetting") : t("forgotResetBtn")}
                   </Button>
                   <Button variant="ghost" className="w-full text-sm" onClick={() => { setOtpSent(false); setOtp(""); }} data-testid="button-forgot-resend">
-                    Resend OTP
+                    {t("forgotResendBtn")}
                   </Button>
                 </div>
               )}
@@ -169,7 +171,7 @@ export default function ForgotPasswordPage() {
               onClick={() => setLocation("/login")}
               data-testid="button-back-to-login"
             >
-              Back to Login
+              {t("forgotBackToLogin")}
             </Button>
           </div>
         </div>

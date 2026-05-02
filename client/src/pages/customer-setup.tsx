@@ -8,12 +8,14 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Zap, Plus, X, CheckCircle2, Loader2, Phone } from "lucide-react";
 import { sendFirebaseOtp, verifyFirebaseOtp } from "@/lib/firebase";
+import { useLanguage } from "@/lib/language";
 import { BackButton } from "@/components/BackButton";
 import logoImg from "@assets/772B17C5-7738-43B8-B5C0-04A7F2A6561B_1773842365564.png";
 
 export default function CustomerSetupPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { t } = useLanguage();
   const [name, setName] = useState("");
   const [mobileNumbers, setMobileNumbers] = useState<string[]>([]);
   const [promoInput, setPromoInput] = useState("");
@@ -81,13 +83,13 @@ export default function CustomerSetupPage() {
     setOtpSending(true);
     try {
       await sendFirebaseOtp(num, "customer-add-number-btn");
-      toast({ title: "OTP sent to " + num });
+      toast({ title: `${t("setupOtpSentTo")} ${num}` });
     } catch (err: any) {
       const msg = err?.code === "auth/too-many-requests"
-        ? "Too many attempts. Try again later."
+        ? t("signupTooMany")
         : err?.code === "auth/invalid-phone-number"
-          ? "Invalid number. Use format: +91XXXXXXXXXX"
-          : "Failed to send OTP";
+          ? t("signupInvalidNumber")
+          : t("signupOtpFailToast");
       toast({ title: msg, variant: "destructive" });
     } finally {
       setOtpSending(false);
@@ -97,11 +99,11 @@ export default function CustomerSetupPage() {
   const handleSendOtp = () => {
     const num = newNumber.trim();
     if (!num) {
-      toast({ title: "Enter a mobile number", variant: "destructive" });
+      toast({ title: t("setupEnterMobile"), variant: "destructive" });
       return;
     }
     if (mobileNumbers.includes(num)) {
-      toast({ title: "Number already added", variant: "destructive" });
+      toast({ title: t("setupNumberAlready"), variant: "destructive" });
       return;
     }
     setOtpSent(true);
@@ -110,7 +112,7 @@ export default function CustomerSetupPage() {
 
   const handleVerifyOtp = async () => {
     if (!otpValue.trim() || otpValue.trim().length < 5) {
-      toast({ title: "Enter 6-digit OTP", variant: "destructive" });
+      toast({ title: t("signupEnter6Otp"), variant: "destructive" });
       return;
     }
     setOtpLoading(true);
@@ -121,13 +123,13 @@ export default function CustomerSetupPage() {
       setOtpValue("");
       setOtpSent(false);
       setShowAddNumber(false);
-      toast({ title: "Number verified and added!" });
+      toast({ title: t("setupNumberVerified") });
     } catch (err: any) {
       const msg = err?.code === "auth/invalid-verification-code"
-        ? "Invalid OTP. Please check and try again."
+        ? t("signupInvalidOtp")
         : err?.code === "auth/code-expired"
-          ? "OTP expired. Request a new one."
-          : "Verification failed";
+          ? t("signupOtpExpired")
+          : t("signupVerifyFail");
       toast({ title: msg, variant: "destructive" });
     } finally {
       setOtpLoading(false);
@@ -141,7 +143,7 @@ export default function CustomerSetupPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
-      toast({ title: "Name required", variant: "destructive" });
+      toast({ title: t("setupNameRequired"), variant: "destructive" });
       return;
     }
     setLoading(true);
@@ -160,16 +162,16 @@ export default function CustomerSetupPage() {
       if (promoInput.trim()) {
         try {
           await apiRequest("POST", "/api/promo-codes/apply", { code: promoInput.trim() });
-          toast({ title: "Promo code applied!" });
+          toast({ title: t("setupPromoApplied") });
         } catch {
-          toast({ title: "Promo code invalid", variant: "destructive" });
+          toast({ title: t("setupPromoInvalid"), variant: "destructive" });
         }
       }
 
       queryClient.invalidateQueries({ queryKey: ["/api/profiles/me"] });
       setLocation("/customer/home");
     } catch (error: any) {
-      toast({ title: "Setup failed", description: "Please try again", variant: "destructive" });
+      toast({ title: t("setupSetupFail"), description: t("setupTryAgain"), variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -178,7 +180,7 @@ export default function CustomerSetupPage() {
   if (checkingProfile) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="animate-pulse text-muted-foreground">Loading...</div>
+        <div className="animate-pulse text-muted-foreground">{t("loading")}</div>
       </div>
     );
   }
@@ -188,19 +190,19 @@ export default function CustomerSetupPage() {
       <div className="w-14 h-14 mb-4">
         <img src={logoImg} alt="Mitrify" className="w-14 h-14 object-contain" />
       </div>
-      <h2 className="text-xl font-bold mb-1">Complete Your Profile</h2>
-      <p className="text-muted-foreground mb-6 text-sm">Set up your customer account</p>
+      <h2 className="text-xl font-bold mb-1">{t("setupTitle")}</h2>
+      <p className="text-muted-foreground mb-6 text-sm">{t("setupSubtitle")}</p>
 
       <Card className="w-full max-w-sm">
         <CardContent className="pt-6">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="name">Full Name *</Label>
-              <Input id="name" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" data-testid="input-name" />
+              <Label htmlFor="name">{t("setupNameLabel")}</Label>
+              <Input id="name" value={name} onChange={e => setName(e.target.value)} placeholder={t("setupNamePh")} data-testid="input-name" />
             </div>
 
             <div className="space-y-2">
-              <Label>Mobile Numbers</Label>
+              <Label>{t("setupMobiles")}</Label>
               {mobileNumbers.length > 0 && (
                 <div className="space-y-1.5">
                   {mobileNumbers.map((num, i) => (
@@ -228,7 +230,7 @@ export default function CustomerSetupPage() {
                   data-testid="button-add-number"
                 >
                   <Plus className="w-4 h-4 mr-1" />
-                  {mobileNumbers.length === 0 ? "Add Mobile Number" : "Add Other Number"}
+                  {mobileNumbers.length === 0 ? t("setupAddMobile") : t("setupAddOther")}
                 </Button>
               ) : (
                 <Card className="border-dashed">
@@ -243,25 +245,25 @@ export default function CustomerSetupPage() {
                       />
                       {!otpSent && (
                         <Button id="customer-add-number-btn" type="button" size="sm" onClick={handleSendOtp} disabled={otpLoading} data-testid="button-send-number-otp">
-                          {otpLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Send OTP"}
+                          {otpLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : t("setupSendOtp")}
                         </Button>
                       )}
                     </div>
                     {otpSent && (
                       <div className="space-y-2">
-                        <p className="text-xs text-muted-foreground">{otpSending ? "Sending OTP..." : `OTP sent to ${newNumber}`}</p>
+                        <p className="text-xs text-muted-foreground">{otpSending ? t("setupSendingOtp") : `${t("setupSentOtpTo")} ${newNumber}`}</p>
                         <div className="flex gap-2">
                           <Input
                             value={otpValue}
                             onChange={e => setOtpValue(e.target.value.replace(/\D/g, ""))}
-                            placeholder="Enter 6-digit OTP"
+                            placeholder={t("forgotOtpPh")}
                             maxLength={6}
                             inputMode="numeric"
                             className="text-center tracking-widest"
                             data-testid="input-number-otp"
                           />
                           <Button type="button" size="sm" onClick={handleVerifyOtp} disabled={otpLoading} data-testid="button-verify-number-otp">
-                            {otpLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Verify"}
+                            {otpLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : t("setupVerify")}
                           </Button>
                         </div>
                       </div>
@@ -274,7 +276,7 @@ export default function CustomerSetupPage() {
                       onClick={() => { setShowAddNumber(false); setOtpSent(false); setNewNumber(""); setOtpValue(""); }}
                       data-testid="button-cancel-add-number"
                     >
-                      Cancel
+                      {t("cancel")}
                     </Button>
                   </CardContent>
                 </Card>
@@ -282,14 +284,14 @@ export default function CustomerSetupPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="promo">Referral Code (optional)</Label>
-              <Input id="promo" value={promoInput} onChange={e => setPromoInput(e.target.value)} placeholder="Enter promo code" list="promo-suggestions" data-testid="input-promo" />
+              <Label htmlFor="promo">{t("setupReferralLabel")}</Label>
+              <Input id="promo" value={promoInput} onChange={e => setPromoInput(e.target.value)} placeholder={t("setupReferralPh")} list="promo-suggestions" data-testid="input-promo" />
               <datalist id="promo-suggestions">
                 <option value="Newuser" />
               </datalist>
             </div>
             <Button type="submit" className="w-full" disabled={loading} data-testid="button-submit-profile">
-              {loading ? "Setting up..." : "Get Started"}
+              {loading ? t("setupSettingUp") : t("setupGetStarted")}
             </Button>
           </form>
         </CardContent>
