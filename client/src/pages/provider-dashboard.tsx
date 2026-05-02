@@ -202,7 +202,10 @@ export default function ProviderDashboardPage() {
                 <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                   <Mail className="w-4 h-4 text-primary" />
                 </div>
-                <span className="flex-1 font-mono text-sm break-all">help@mitrify.com</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground">{t("mailHelp")}</p>
+                  <p className="font-mono text-sm break-all">help@mitrify.com</p>
+                </div>
                 <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
               </a>
               <a
@@ -213,10 +216,16 @@ export default function ProviderDashboardPage() {
                 <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                   <Mail className="w-4 h-4 text-primary" />
                 </div>
-                <span className="flex-1 font-mono text-sm break-all">contact@mitrify.in</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground">{t("mailContact")}</p>
+                  <p className="font-mono text-sm break-all">contact@mitrify.in</p>
+                </div>
                 <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
               </a>
             </div>
+            <Button variant="outline" className="w-full" onClick={() => setContactSheetOpen(false)} data-testid="button-cancel-contact-sheet">
+              {t("cancel")}
+            </Button>
           </div>
         </div>
       )}
