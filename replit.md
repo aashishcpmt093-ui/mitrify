@@ -23,7 +23,7 @@ The application is built with a modern web stack. The **frontend** uses React, T
 -   **Call Masking:** Privacy feature to protect user and provider phone numbers.
 -   **Dynamic Content:** Admin-editable content for recruitment links and site information.
 -   **Provider Tag Generation:** Automated and persistent job-based system for generating Hinglish and English hashtags for providers using a hybrid approach of a server-side dictionary and Google Gemini API, with error reporting and job recovery mechanisms.
--   **Google Places Integration:** Admin feature to fetch and import potential provider leads directly from Google Places API (New) Text Search.
+-   **Google Places Integration:** Admin feature to fetch and import potential provider leads directly from Google Places API (New) Text Search. Bulk fan-out mode scans up to 6,000 unique businesses per (city × service) via a circle-grid `locationRestriction` strategy with live polling progress, Stop control, dedupe by `placeId` and normalized `(address, city)`, target dropdown (500/1k/3k/6k), and a per-admin daily rate limit (3 runs/day).
 -   **Editable Contact Emails:** Contact emails displayed in customer and provider UIs are now editable via the admin panel.
 
 ## External Dependencies

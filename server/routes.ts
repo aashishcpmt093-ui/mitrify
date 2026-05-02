@@ -17,6 +17,7 @@ import multer from "multer";
 import * as XLSX from "xlsx";
 import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory } from "./backupJob";
 import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverStaleJobs } from "./lib/auto-tags";
+import { startGoogleBulkSearch, getBulkJobStatus, cancelBulkJob, checkRateLimit as checkGpBulkRateLimit } from "./lib/google-places-bulk";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -1946,6 +1947,60 @@ export async function registerRoutes(
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Google Places search failed" });
     }
+  });
+
+  // Google Places — Bulk fetch (multi-cell grid scan) for up to 6000 unique
+  // businesses per city + service. Returns a jobId; client polls status.
+  app.post("/api/admin/google-places-bulk-search", adminCheck, async (req, res) => {
+    try {
+      const { city, service, target } = req.body || {};
+      const cityStr = String(city || "").trim();
+      const serviceStr = String(service || "").trim();
+      if (!cityStr || !serviceStr) {
+        return res.status(400).json({ message: "city aur service dono required hain" });
+      }
+      const targetNum = Math.max(1, Math.min(6000, Math.floor(Number(target) || 6000)));
+      // Single-admin system — bucket by literal "admin" so all admin sessions
+      // share one daily quota. Easy to swap to req session username later.
+      const adminKey = "admin";
+      const rate = checkGpBulkRateLimit(adminKey);
+      if (!rate.ok) {
+        return res.status(429).json({
+          message: `Daily limit exhaust ho gayi (${rate.runsToday}/${rate.max} runs aaj). 24 ghante baad try karein.`,
+          runsToday: rate.runsToday,
+          max: rate.max,
+        });
+      }
+      const jobId = await startGoogleBulkSearch({
+        adminKey,
+        city: cityStr,
+        service: serviceStr,
+        target: targetNum,
+      });
+      const status = getBulkJobStatus(jobId);
+      res.json({
+        ok: true,
+        jobId,
+        target: targetNum,
+        runsToday: rate.runsToday + 1,
+        max: rate.max,
+        status,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Bulk search start failed" });
+    }
+  });
+
+  app.get("/api/admin/google-places-bulk-search/:jobId", adminCheck, (req, res) => {
+    const status = getBulkJobStatus(req.params.jobId);
+    if (!status) return res.status(404).json({ message: "Job not found or expired" });
+    res.json(status);
+  });
+
+  app.post("/api/admin/google-places-bulk-search/:jobId/cancel", adminCheck, (req, res) => {
+    const ok = cancelBulkJob(req.params.jobId);
+    if (!ok) return res.status(404).json({ message: "Job not found, already done, or expired" });
+    res.json({ ok: true });
   });
 
   // Google Places — Bulk import selected places to pending_providers

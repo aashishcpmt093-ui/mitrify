@@ -930,8 +930,21 @@ export default function AdminDashboardPage() {
   const [gpImporting, setGpImporting] = useState(false);
   const [gpResults, setGpResults] = useState<Array<{ placeId: string; name: string; address: string; latitude: number | null; longitude: number | null; phone: string; website: string; rating: number | null; ratingCount: number | null }>>([]);
   const [gpSelected, setGpSelected] = useState<Set<string>>(new Set());
-  const [gpNextPageToken, setGpNextPageToken] = useState<string | null>(null);
   const [gpImportResult, setGpImportResult] = useState<{ imported: number; skipped: number; total: number; skippedNoMobile: number; approved?: number } | null>(null);
+  // Bulk-fetch (Task #59): job-based grid scan, polled every 1.2s.
+  const [gpTarget, setGpTarget] = useState<number>(6000);
+  const [gpJobId, setGpJobId] = useState<string | null>(null);
+  const [gpJobStatus, setGpJobStatus] = useState<{
+    jobId: string; city: string; service: string; target: number;
+    fetched: number; unique: number; dupSkipped: number; apiCalls: number;
+    cellsScanned: number; totalCells: number; currentArea: string;
+    done: boolean; cancelled: boolean; error?: string;
+    startedAt: number; finishedAt?: number;
+    places: Array<{ placeId: string; name: string; address: string; latitude: number | null; longitude: number | null; phone: string; website: string; rating: number | null; ratingCount: number | null }>;
+  } | null>(null);
+  const [gpDisplayLimit, setGpDisplayLimit] = useState(200);
+  const [gpRateInfo, setGpRateInfo] = useState<{ runsToday: number; max: number } | null>(null);
+  const gpAutoSeenRef = useRef<Set<string>>(new Set());
 
   // Meta import state
   const [metaFile, setMetaFile] = useState<File | null>(null);
@@ -1011,6 +1024,88 @@ export default function AdminDashboardPage() {
       );
     }
   }, [contactEmailsContent]);
+
+  // Poll the bulk Google Places job. Stops as soon as the server reports
+  // done (cancelled / target reached / grid exhausted / error). Also bails
+  // out after MAX_POLL_FAILURES consecutive failures so a server crash or
+  // network outage can't leave the UI stuck "fetching forever".
+  useEffect(() => {
+    if (!gpJobId) return;
+    let cancelled = false;
+    let consecutiveFailures = 0;
+    const MAX_POLL_FAILURES = 8; // ~10s of failed polls
+    const giveUp = (reason: string) => {
+      if (cancelled) return;
+      setGpJobId(null);
+      setGpSearching(false);
+      toast({ title: "Polling stopped", description: reason, variant: "destructive" });
+    };
+    const tick = async () => {
+      try {
+        const res = await fetch(`/api/admin/google-places-bulk-search/${gpJobId}`, { credentials: "include" });
+        if (!res.ok) {
+          if (res.status === 404) {
+            // Job GC'd or expired — stop polling cleanly.
+            if (!cancelled) { setGpJobId(null); setGpSearching(false); }
+            return;
+          }
+          consecutiveFailures++;
+          if (consecutiveFailures >= MAX_POLL_FAILURES) {
+            giveUp(`Server returned ${res.status} repeatedly — fetch ka final state pata nahi chala`);
+          }
+          return;
+        }
+        consecutiveFailures = 0;
+        const status = await res.json();
+        if (cancelled) return;
+        setGpJobStatus(status);
+        // Mirror status.places into gpResults so the existing list renderer
+        // and the import flow keep working without additional plumbing.
+        setGpResults(status.places || []);
+        // Auto-select newly-seen places that have a phone number. Tracked via
+        // a ref so unticking a place is "sticky" (we don't re-add it on the
+        // next poll just because it's still in status.places).
+        const fresh: string[] = [];
+        for (const p of status.places || []) {
+          if (!gpAutoSeenRef.current.has(p.placeId)) {
+            gpAutoSeenRef.current.add(p.placeId);
+            if (p.phone) fresh.push(p.placeId);
+          }
+        }
+        if (fresh.length > 0) {
+          setGpSelected(prev => {
+            const next = new Set(prev);
+            for (const id of fresh) next.add(id);
+            return next;
+          });
+        }
+        if (status.done) {
+          setGpJobId(null);
+          setGpSearching(false);
+          if (status.error) {
+            toast({ title: "Bulk fetch failed", description: status.error, variant: "destructive" });
+          } else {
+            const elapsed = Math.round(((status.finishedAt || Date.now()) - status.startedAt) / 1000);
+            toast({
+              title: status.cancelled
+                ? `Stopped — ${status.unique} unique businesses mile`
+                : `Done! ${status.unique} unique businesses mile (${elapsed}s)`,
+              description: `${status.cellsScanned}/${status.totalCells} areas scanned • ${status.dupSkipped} duplicates skip kiye`,
+            });
+          }
+        }
+      } catch {
+        // Network blip — count toward the failure budget.
+        consecutiveFailures++;
+        if (consecutiveFailures >= MAX_POLL_FAILURES) {
+          giveUp("Network errors lagatar aa rahe hain — fetch ka final state pata nahi chala");
+        }
+      }
+    };
+    tick();
+    const t = setInterval(tick, 1200);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [gpJobId, toast]);
 
   const { data: visitorData } = useQuery<{ total: number; today: number; last7Days: { date: string; count: number }[] }>({
     queryKey: ["/api/visitor/stats"],
@@ -1383,45 +1478,54 @@ export default function AdminDashboardPage() {
     }
   };
 
-  const handleGooglePlacesSearch = async (loadMore = false) => {
+  // Bulk grid-fetch (Task #59). Starts an in-process job on the server, then
+  // a useEffect below polls /:jobId every 1.2s until done. Auto-selects each
+  // newly-seen place that has a phone (additive only — won't re-tick a
+  // place the admin manually unticked).
+  const handleGooglePlacesSearch = async () => {
     if (!gpCity.trim() || !gpService.trim()) {
       toast({ title: "City aur Service / Work dono fill karein", variant: "destructive" });
       return;
     }
-    setGpSearching(true);
-    if (!loadMore) {
-      setGpResults([]);
-      setGpSelected(new Set());
-      setGpImportResult(null);
-      setGpNextPageToken(null);
+    if (gpJobId) {
+      toast({ title: "Pehle wala fetch chal raha hai — pehle Stop karein", variant: "destructive" });
+      return;
     }
+    setGpSearching(true);
+    setGpResults([]);
+    setGpSelected(new Set());
+    setGpImportResult(null);
+    setGpJobStatus(null);
+    setGpDisplayLimit(200);
+    gpAutoSeenRef.current = new Set();
     try {
-      const res = await apiRequest("POST", "/api/admin/google-places-search", {
+      const res = await apiRequest("POST", "/api/admin/google-places-bulk-search", {
         city: gpCity.trim(),
         service: gpService.trim(),
-        pageToken: loadMore ? gpNextPageToken : undefined,
+        target: gpTarget,
       });
       const data = await res.json();
-      const newPlaces = data.places || [];
-      setGpResults(prev => loadMore ? [...prev, ...newPlaces] : newPlaces);
-      setGpNextPageToken(data.nextPageToken || null);
-      // Auto-select all newly fetched places (with phone)
-      setGpSelected(prev => {
-        const next = new Set(prev);
-        for (const p of newPlaces) {
-          if (p.phone) next.add(p.placeId);
-        }
-        return next;
+      if (!res.ok) throw new Error(data?.message || "Bulk fetch start failed");
+      setGpRateInfo({ runsToday: data.runsToday, max: data.max });
+      setGpJobId(data.jobId);
+      if (data.status) setGpJobStatus(data.status);
+      toast({
+        title: `Fetching from Google Places…`,
+        description: `Target: ${gpTarget.toLocaleString("en-IN")} businesses (${data.runsToday}/${data.max} runs aaj)`,
       });
-      if (newPlaces.length === 0 && !loadMore) {
-        toast({ title: "Koi business nahi mila", description: "Different city ya service try karein" });
-      } else if (!loadMore) {
-        toast({ title: `${newPlaces.length} businesses mile`, description: "Phone number wale auto-selected hain" });
-      }
     } catch (err: any) {
       toast({ title: err.message || "Search failed", variant: "destructive" });
-    } finally {
       setGpSearching(false);
+    }
+  };
+
+  const handleGooglePlacesCancel = async () => {
+    if (!gpJobId) return;
+    try {
+      await apiRequest("POST", `/api/admin/google-places-bulk-search/${gpJobId}/cancel`, {});
+      toast({ title: "Stop request bhej diya — last cells khatam hone ka wait karein" });
+    } catch (err: any) {
+      toast({ title: err.message || "Cancel failed", variant: "destructive" });
     }
   };
 
@@ -2949,22 +3053,93 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
 
-              {/* Search Button */}
-              <Button
-                className="w-full h-11 text-sm font-semibold gap-2 bg-blue-500 hover:bg-blue-600 text-white"
-                onClick={() => handleGooglePlacesSearch(false)}
-                disabled={gpSearching || !gpCity.trim() || !gpService.trim()}
-                data-testid="button-gp-search"
-              >
-                {gpSearching ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" />Google se fetch ho raha hai...</>
-                ) : (
-                  <><Search className="w-4 h-4" />Fetch from Google</>
-                )}
-              </Button>
+              {/* Step 4: Target dropdown */}
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Step 4: Target — kitne businesses chahiye?</Label>
+                <Select
+                  value={String(gpTarget)}
+                  onValueChange={v => setGpTarget(parseInt(v, 10) || 6000)}
+                  disabled={!!gpJobId}
+                >
+                  <SelectTrigger className="h-9 text-sm" data-testid="select-gp-target">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="500">500 (~30 sec, fastest)</SelectItem>
+                    <SelectItem value="1000">1,000 (~1 min)</SelectItem>
+                    <SelectItem value="3000">3,000 (~3 min)</SelectItem>
+                    <SelectItem value="6000">6,000 (~6 min, MAX)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  Hard cap: 6,000 unique businesses per run • Daily limit: 3 runs/admin
+                  {gpRateInfo && ` • Aaj: ${gpRateInfo.runsToday}/${gpRateInfo.max} use ho chuke`}
+                </p>
+              </div>
+
+              {/* Search / Stop Buttons */}
+              {!gpJobId ? (
+                <Button
+                  className="w-full h-11 text-sm font-semibold gap-2 bg-blue-500 hover:bg-blue-600 text-white"
+                  onClick={handleGooglePlacesSearch}
+                  disabled={gpSearching || !gpCity.trim() || !gpService.trim()}
+                  data-testid="button-gp-search"
+                >
+                  {gpSearching ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" />Starting…</>
+                  ) : (
+                    <><Search className="w-4 h-4" />Fetch up to {gpTarget.toLocaleString("en-IN")} from Google</>
+                  )}
+                </Button>
+              ) : (
+                <Button
+                  className="w-full h-11 text-sm font-semibold gap-2 bg-red-500 hover:bg-red-600 text-white"
+                  onClick={handleGooglePlacesCancel}
+                  disabled={gpJobStatus?.cancelled}
+                  data-testid="button-gp-stop"
+                >
+                  {gpJobStatus?.cancelled ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" />Stopping…</>
+                  ) : (
+                    <>⏹ Stop fetch ({gpJobStatus?.unique ?? 0} so far)</>
+                  )}
+                </Button>
+              )}
+
+              {/* Live progress bar */}
+              {gpJobStatus && (gpJobId || gpJobStatus.done) && (
+                <div className="rounded-xl border border-blue-100 dark:border-blue-900/50 bg-blue-50/60 dark:bg-blue-950/30 p-3 space-y-2" data-testid="panel-gp-progress">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-blue-800 dark:text-blue-200">
+                      {gpJobStatus.done ? (gpJobStatus.cancelled ? "🛑 Stopped" : gpJobStatus.error ? "❌ Failed" : "✓ Complete") : "🔄 Fetching…"}
+                    </span>
+                    <span className="font-mono text-blue-700 dark:text-blue-300" data-testid="text-gp-progress">
+                      {gpJobStatus.unique.toLocaleString("en-IN")} / {gpJobStatus.target.toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-blue-100 dark:bg-blue-900/50 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 transition-all duration-500"
+                      style={{ width: `${Math.min(100, (gpJobStatus.unique / Math.max(1, gpJobStatus.target)) * 100)}%` }}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-blue-700 dark:text-blue-300">
+                    <div><span className="text-muted-foreground">Areas:</span> <span className="font-mono">{gpJobStatus.cellsScanned}/{gpJobStatus.totalCells}</span></div>
+                    <div><span className="text-muted-foreground">API calls:</span> <span className="font-mono">{gpJobStatus.apiCalls}</span></div>
+                    <div><span className="text-muted-foreground">Duplicates:</span> <span className="font-mono">{gpJobStatus.dupSkipped.toLocaleString("en-IN")}</span></div>
+                    <div><span className="text-muted-foreground">Raw fetched:</span> <span className="font-mono">{gpJobStatus.fetched.toLocaleString("en-IN")}</span></div>
+                  </div>
+                  <p className="text-[10px] font-mono text-blue-600/70 dark:text-blue-400/70 truncate">
+                    📍 {gpJobStatus.currentArea}
+                  </p>
+                  {gpJobStatus.error && (
+                    <p className="text-[11px] text-red-600 dark:text-red-400 font-medium">⚠ {gpJobStatus.error}</p>
+                  )}
+                </div>
+              )}
 
               {/* Empty state */}
-              {!gpSearching && gpResults.length === 0 && (gpCity || gpService) && gpImportResult === null && (
+              {!gpSearching && !gpJobId && gpResults.length === 0 && (gpCity || gpService) && gpImportResult === null && !gpJobStatus && (
                 <p className="text-xs text-center text-muted-foreground py-4" data-testid="text-gp-empty-hint">
                   Search dabakar businesses fetch karein
                 </p>
@@ -2997,8 +3172,13 @@ export default function AdminDashboardPage() {
                     </div>
                   </div>
 
+                  {/*
+                    Lazy render: 6000 DOM rows with hover transitions would
+                    hang the UI on initial mount. Slice to gpDisplayLimit and
+                    let the admin reveal more in chunks of 500.
+                  */}
                   <div className="max-h-96 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-xl divide-y divide-slate-100 dark:divide-slate-800">
-                    {gpResults.map(p => (
+                    {gpResults.slice(0, gpDisplayLimit).map(p => (
                       <label
                         key={p.placeId}
                         className={`flex items-start gap-3 p-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${gpSelected.has(p.placeId) ? "bg-blue-50/50 dark:bg-blue-950/20" : ""}`}
@@ -3038,20 +3218,25 @@ export default function AdminDashboardPage() {
                     ))}
                   </div>
 
-                  {gpNextPageToken && (
-                    <Button
-                      variant="outline"
-                      className="w-full h-9 text-sm gap-2"
-                      onClick={() => handleGooglePlacesSearch(true)}
-                      disabled={gpSearching}
-                      data-testid="button-gp-load-more"
-                    >
-                      {gpSearching ? (
-                        <><Loader2 className="w-4 h-4 animate-spin" />Loading...</>
-                      ) : (
-                        <>+ Aur businesses load karein</>
-                      )}
-                    </Button>
+                  {gpResults.length > gpDisplayLimit && (
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <Button
+                        variant="outline"
+                        className="flex-1 h-9 text-sm"
+                        onClick={() => setGpDisplayLimit(n => n + 500)}
+                        data-testid="button-gp-show-more"
+                      >
+                        + Aur 500 dikhayein ({(gpResults.length - gpDisplayLimit).toLocaleString("en-IN")} hidden)
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="flex-1 h-9 text-sm"
+                        onClick={() => setGpDisplayLimit(gpResults.length)}
+                        data-testid="button-gp-show-all"
+                      >
+                        Saare {gpResults.length.toLocaleString("en-IN")} dikhayein
+                      </Button>
+                    </div>
                   )}
 
                   {/* Allow Duplicate */}
