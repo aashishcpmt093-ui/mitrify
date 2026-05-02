@@ -276,6 +276,22 @@ export async function getJobStatus(jobId: string): Promise<JobStatus | null> {
   return row ? rowToStatus(row) : null;
 }
 
+/** Latest job (active or recently-finished) within `maxAgeSeconds`. Used by
+ *  the UI's resume probe so an admin who refreshes after a server restart
+ *  still sees what happened to their last run (e.g. "marked failed: server
+ *  restart") instead of getting a blank slate. */
+export async function getLatestJob(maxAgeSeconds: number): Promise<JobStatus | null> {
+  const memEntries = Array.from(JOBS.entries());
+  let bestMem: JobStatus | null = null;
+  for (const [, s] of memEntries) {
+    if (!bestMem || s.startedAt > bestMem.startedAt) bestMem = s;
+  }
+  const row = await storage.getLatestTagJob(maxAgeSeconds);
+  if (!row) return bestMem;
+  if (bestMem && bestMem.startedAt >= new Date(row.startedAt as any).getTime()) return bestMem;
+  return rowToStatus(row);
+}
+
 /** Boot-time recovery: at startup the in-memory worker pool is empty, so any
  *  `done=false` row in the DB necessarily belongs to a dead process and will
  *  never advance. Mark them all failed (cutoff=0 → matches every not-done

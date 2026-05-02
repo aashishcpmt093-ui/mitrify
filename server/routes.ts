@@ -16,7 +16,7 @@ import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory } from "./backupJob";
-import { startAutoTagJob, getJobStatus, getActiveJobId, recoverStaleJobs } from "./lib/auto-tags";
+import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverStaleJobs } from "./lib/auto-tags";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -931,15 +931,16 @@ export async function registerRoutes(
     }
   });
 
-  // Used by the admin UI on mount to resume polling a job that was started
-  // before a page refresh or server restart. Returns the latest not-done job
-  // (or null if none).
+  // Used by the admin UI on mount to resume polling. Returns the most recent
+  // job within the last 30 min — active OR terminal — so an admin who
+  // refreshes after a server restart still sees the final state of their
+  // last run (e.g. "marked failed: server restart"), not a blank slate. The
+  // UI uses `status.done` to decide whether to keep polling.
   app.get("/api/admin/auto-generate-tags/active", adminCheck, async (_req, res) => {
     try {
-      const activeId = await getActiveJobId();
-      if (!activeId) return res.json({ jobId: null });
-      const status = await getJobStatus(activeId);
-      res.json({ jobId: activeId, status });
+      const status = await getLatestJob(30 * 60);
+      if (!status) return res.json({ jobId: null });
+      res.json({ jobId: status.jobId, status });
     } catch (err: any) {
       console.error("auto-generate-tags active fetch error:", err);
       res.status(500).json({ message: err?.message || "Failed to fetch active job" });

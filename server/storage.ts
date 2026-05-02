@@ -130,6 +130,10 @@ export interface IStorage {
   updateTagJob(jobId: string, patch: Partial<Omit<TagJob, "jobId" | "startedAt">>): Promise<void>;
   getTagJob(jobId: string): Promise<TagJob | undefined>;
   getActiveTagJob(): Promise<TagJob | undefined>;
+  /** Most-recently-started job (active OR terminal), constrained to the last
+   *  `maxAgeSeconds` so the UI can surface the just-restored "you crashed
+   *  mid-run" state when an admin refreshes after a restart. */
+  getLatestTagJob(maxAgeSeconds: number): Promise<TagJob | undefined>;
   markStaleTagJobsFailed(staleSeconds: number): Promise<number>;
 }
 
@@ -1916,6 +1920,15 @@ export class DatabaseStorage implements IStorage {
   async getActiveTagJob(): Promise<TagJob | undefined> {
     const [row] = await db.select().from(tagJobs)
       .where(eq(tagJobs.done, false))
+      .orderBy(desc(tagJobs.startedAt))
+      .limit(1);
+    return row;
+  }
+
+  async getLatestTagJob(maxAgeSeconds: number): Promise<TagJob | undefined> {
+    const cutoff = new Date(Date.now() - maxAgeSeconds * 1000);
+    const [row] = await db.select().from(tagJobs)
+      .where(gte(tagJobs.startedAt, cutoff))
       .orderBy(desc(tagJobs.startedAt))
       .limit(1);
     return row;

@@ -243,9 +243,10 @@ function AutoGenerateTagsCard() {
     ? `~${estMinutes} min ${estSeconds % 60}s`
     : `~${estSeconds}s`;
 
-  // On mount, ask the backend if there's an in-flight job (started by this
-  // admin in a previous tab/session, or surviving a server restart). If so,
-  // auto-resume polling — the existing useEffect on `jobId` handles the rest.
+  // On mount, ask the backend for the most recent job (active OR a recently
+  // finished one — including jobs the server marked failed on boot after a
+  // restart). If it's still running, resume polling; if it's already
+  // terminal, just show the final state without re-firing the success toast.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -253,11 +254,18 @@ function AutoGenerateTagsCard() {
         const res = await fetch("/api/admin/auto-generate-tags/active", { credentials: "include" });
         if (!res.ok) return;
         const data = await res.json();
-        if (cancelled || !data?.jobId) return;
-        finalToastFired.current = false;
-        if (data.status) setStatus(data.status as TagJobStatus);
-        setJobId(data.jobId as string);
+        if (cancelled || !data?.jobId || !data?.status) return;
+        const s = data.status as TagJobStatus;
+        setStatus(s);
         setResumed(true);
+        if (s.done) {
+          // Terminal state — don't start polling and don't fire the success
+          // toast (the run already finished, possibly in a previous process).
+          finalToastFired.current = true;
+        } else {
+          finalToastFired.current = false;
+          setJobId(data.jobId as string);
+        }
       } catch {
         // Silent — admin can still start a fresh job.
       }
