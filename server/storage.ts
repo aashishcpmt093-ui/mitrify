@@ -824,13 +824,13 @@ export class DatabaseStorage implements IStorage {
         creditsCharged = 0;
       } else if (customerFree) {
         // Caller is Premium → caller side is free regardless of provider.
-        // Provider side still pays normally (provider is not Pro/Premium
-        // since providerFree is false here). If provider is at 0 balance,
-        // the call still happens (Premium subscribers bypass the
-        // double-charge cap entirely; we just don't deduct from them).
-        if (providerTotal > 0) {
-          await decrement(providerId, 1);
-        }
+        // The provider, however, is NOT Pro/Premium here (providerFree is
+        // false), so they must still be charged 1 credit for receiving the
+        // call. If they cannot pay, the call is blocked the same way as
+        // an ordinary `provider_no_balance` situation — Premium does not
+        // entitle the caller to a free incoming side from the provider.
+        if (providerTotal <= 0) throw new Error("provider_no_balance");
+        await decrement(providerId, 1);
         chargeReason = "subscription_free_outgoing";
         creditsCharged = 0;
       } else if (providerFree) {

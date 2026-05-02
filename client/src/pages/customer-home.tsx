@@ -549,6 +549,14 @@ export default function CustomerHomePage() {
       return;
     }
 
+    // Free-call cases (caller Premium OR provider Premium) bypass every
+    // double-charge / low-balance dialog: the customer is never charged so
+    // those warnings are irrelevant.
+    if (isFreeCall(result.plan)) {
+      proceedToDial(result, numbers);
+      return;
+    }
+
     // Provider has 0 balance → require explicit confirmation up-front.
     // Customer 0-balance is NOT pre-blocked: the server may still allow
     // the call when the provider has acceptDoubleCharge=true (Force
@@ -1565,14 +1573,19 @@ export default function CustomerHomePage() {
                 {selectedProvider.canCall ? (
                   <div className="flex flex-col items-center gap-1">
                     <Button
-                      className={`h-9 px-4 rounded-xl text-white gap-2 ${selectedProvider.providerLowBalance ? "bg-red-500 hover:bg-red-600" : "bg-green-500 hover:bg-green-600"}`}
+                      className={`h-9 px-4 rounded-xl text-white gap-2 ${
+                        isFreeCall(selectedProvider.plan)
+                          ? "bg-emerald-600 hover:bg-emerald-700"
+                          : selectedProvider.providerLowBalance ? "bg-red-500 hover:bg-red-600" : "bg-green-500 hover:bg-green-600"
+                      }`}
                       onClick={() => { handleCall(selectedProvider); setSelectedProvider(null); }}
                       disabled={isDialing}
                       data-testid="button-provider-call-top"
                     >
-                      {isDialing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Phone className="w-4 h-4" />} Call
+                      {isDialing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Phone className="w-4 h-4" />}
+                      {isFreeCall(selectedProvider.plan) ? "Free Call" : "Call"}
                     </Button>
-                    {selectedProvider.providerLowBalance && (
+                    {!isFreeCall(selectedProvider.plan) && selectedProvider.providerLowBalance && (
                       <Badge variant="destructive" className="text-[8px] leading-none px-1 py-0.5">{t("doubleChargeBadge")}</Badge>
                     )}
                   </div>
@@ -1632,15 +1645,21 @@ export default function CustomerHomePage() {
               {selectedProvider.canCall ? (
                 <div className="space-y-2">
                   <Button
-                    className={`w-full h-12 rounded-xl text-white text-base font-semibold gap-2 ${selectedProvider.providerLowBalance ? "bg-red-500 hover:bg-red-600" : "bg-green-500 hover:bg-green-600"}`}
+                    className={`w-full h-12 rounded-xl text-white text-base font-semibold gap-2 ${
+                      isFreeCall(selectedProvider.plan)
+                        ? "bg-emerald-600 hover:bg-emerald-700"
+                        : selectedProvider.providerLowBalance ? "bg-red-500 hover:bg-red-600" : "bg-green-500 hover:bg-green-600"
+                    }`}
                     onClick={() => { handleCall(selectedProvider); setSelectedProvider(null); }}
                     disabled={isDialing}
                     data-testid="button-provider-call-bottom"
                   >
                     {isDialing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Phone className="w-5 h-5" />}
-                    {isDialing ? t("connectingCall") : t("callBtn")}
+                    {isDialing
+                      ? t("connectingCall")
+                      : isFreeCall(selectedProvider.plan) ? "Free Call" : t("callBtn")}
                   </Button>
-                  {selectedProvider.providerLowBalance && (
+                  {!isFreeCall(selectedProvider.plan) && selectedProvider.providerLowBalance && (
                     <p className="text-xs text-red-600 dark:text-red-400 text-center font-medium">
                       {t("doubleChargeBadge")} · {t("lowBalanceWarningTitle")}
                     </p>
