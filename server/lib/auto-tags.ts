@@ -4,8 +4,12 @@ import crypto from "crypto";
 
 const MAX_TAGS = 10;
 const MIN_TAGS_BEFORE_AI = 5;
-const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_MODEL = "gemini-flash-latest";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+function getGeminiKey(): string | undefined {
+  return process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+}
 
 /** Lower-case, trim, collapse whitespace, strip a leading '#'. */
 function normaliseTag(t: string): string {
@@ -18,28 +22,42 @@ function normaliseTag(t: string): string {
     .slice(0, 40);
 }
 
-/** Merge two tag arrays case-insensitively, preserving the FIRST occurrence's casing,
- *  capped at `cap`. */
+/** Merge two tag arrays case-insensitively, preserving existing tags VERBATIM
+ *  (no normalization), and only normalising incoming new tags. Capped at `cap`. */
 function mergeAndCap(existing: string[], incoming: string[], cap = MAX_TAGS): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  const push = (raw: string) => {
-    const norm = normaliseTag(raw);
-    if (!norm || norm.length < 2) return;
-    if (seen.has(norm)) return;
-    seen.add(norm);
-    out.push(norm);
-  };
-  for (const t of existing || []) push(t);
+  // Existing tags: preserve EXACT casing/length; only use lowercase form as the dedupe key.
+  for (const t of existing || []) {
+    if (typeof t !== "string" || !t.trim()) continue;
+    const key = t.toLowerCase().trim();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+    if (out.length >= cap) return out;
+  }
+  // Incoming tags: normalise (lowercase, hyphenated, max 40 chars).
   for (const t of incoming || []) {
     if (out.length >= cap) break;
-    push(t);
+    const norm = normaliseTag(t);
+    if (!norm || norm.length < 2) continue;
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    out.push(norm);
   }
   return out.slice(0, cap);
 }
 
+/** Returns the jobId of any currently-running (not done) job, or null. */
+export function getActiveJobId(): string | null {
+  for (const [id, s] of JOBS.entries()) {
+    if (!s.done) return id;
+  }
+  return null;
+}
+
 async function callGemini(serviceName: string, description: string | null): Promise<string[]> {
-  const key = process.env.GEMINI_API_KEY;
+  const key = getGeminiKey();
   if (!key) return [];
 
   const prompt = [
@@ -66,9 +84,12 @@ async function callGemini(serviceName: string, description: string | null): Prom
   };
 
   const doFetch = async () => {
-    const resp = await fetch(`${GEMINI_URL}?key=${encodeURIComponent(key)}`, {
+    const resp = await fetch(GEMINI_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-goog-api-key": key,
+      },
       body: JSON.stringify(body),
     });
     if (resp.status === 429) {
@@ -141,7 +162,7 @@ export async function generateTagsForProvider(
 
   if (dict.length >= MIN_TAGS_BEFORE_AI) {
     source = "dictionary";
-  } else if (process.env.GEMINI_API_KEY) {
+  } else if (getGeminiKey()) {
     try {
       aiTags = await callGemini(cleanService, description);
       source = dict.length > 0 ? "hybrid" : "ai";
@@ -203,7 +224,7 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
     failed: 0,
     done: false,
     startedAt: Date.now(),
-    geminiAvailable: !!process.env.GEMINI_API_KEY,
+    geminiAvailable: !!getGeminiKey(),
     dryRun: !!opts.dryRun,
     errorSample: [],
   };

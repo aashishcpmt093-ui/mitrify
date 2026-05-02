@@ -16,7 +16,7 @@ import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory } from "./backupJob";
-import { startAutoTagJob, getJobStatus } from "./lib/auto-tags";
+import { startAutoTagJob, getJobStatus, getActiveJobId } from "./lib/auto-tags";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -911,6 +911,10 @@ export async function registerRoutes(
   // ─── Auto-Generate Provider Tags (dictionary + Gemini AI fallback) ───
   app.post("/api/admin/auto-generate-tags", adminCheck, async (req, res) => {
     try {
+      const activeId = getActiveJobId();
+      if (activeId) {
+        return res.status(409).json({ message: "Ek job already chal raha hai", activeJobId: activeId });
+      }
       const dryRun = req.body?.dryRun === true;
       const limit = typeof req.body?.limit === "number" && req.body.limit > 0 ? Math.floor(req.body.limit) : undefined;
       const jobId = await startAutoTagJob({ dryRun, limit });
