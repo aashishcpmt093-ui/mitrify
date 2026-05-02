@@ -153,6 +153,11 @@ export default function MyProfilePage() {
                       <p className="text-[11px] text-muted-foreground" data-testid="text-active-plan-days">
                         {subDays} day{subDays === 1 ? "" : "s"} left · {activeSub.billingCycle}
                       </p>
+                      {activeSub.endDate && (
+                        <p className="text-[11px] text-muted-foreground" data-testid="text-active-plan-expiry">
+                          Expires {new Date(activeSub.endDate).toLocaleDateString()}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <Button size="sm" variant="outline" onClick={() => setLocation("/subscriptions")} data-testid="button-manage-subscription">

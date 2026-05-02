@@ -310,11 +310,18 @@ export default function ProviderDashboardPage() {
                 <div className="min-w-0">
                   <p className="font-semibold text-sm">My Subscription</p>
                   {activeSubPlan !== "none" ? (
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <PlanTick plan={activeSubPlan} size={14} />
-                      <span className="text-[11px] text-muted-foreground capitalize" data-testid="text-provider-active-plan">
-                        {activeSubPlan} · {subDays} day{subDays === 1 ? "" : "s"} left
-                      </span>
+                    <div className="mt-0.5">
+                      <div className="flex items-center gap-1.5">
+                        <PlanTick plan={activeSubPlan} size={14} />
+                        <span className="text-[11px] text-muted-foreground capitalize" data-testid="text-provider-active-plan">
+                          {activeSubPlan} · {subDays} day{subDays === 1 ? "" : "s"} left
+                        </span>
+                      </div>
+                      {mySub?.active?.endDate && (
+                        <p className="text-[11px] text-muted-foreground" data-testid="text-provider-active-plan-expiry">
+                          Expires {new Date(mySub.active.endDate).toLocaleDateString()}
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <p className="text-[11px] text-muted-foreground">No active plan</p>

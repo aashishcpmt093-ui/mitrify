@@ -263,6 +263,11 @@ export function SubscriptionsAdminPanel() {
                           : ""}
                         {s.grantedBy ? ` · by ${s.grantedBy}` : ""}
                       </p>
+                      {s.paymentId && (
+                        <p className="text-[11px] text-muted-foreground font-mono truncate" data-testid={`text-sub-payment-id-${s.id}`}>
+                          pay: {s.paymentId}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
