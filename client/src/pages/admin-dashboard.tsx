@@ -395,7 +395,7 @@ function AutoGenerateTagsCard() {
           </div>
           {!status.geminiAvailable && (
             <p className="text-[11px] text-amber-700 dark:text-amber-400">
-              ⚠ GEMINI_API_KEY missing — sirf dictionary use ho rahi hai. AI fallback ke liye secret add karein.
+              ⚠ GOOGLE_API_KEY missing — sirf dictionary use ho rahi hai. AI fallback ke liye secret add karein.
             </p>
           )}
           {status.errorSample.length > 0 && (

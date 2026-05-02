@@ -174,9 +174,12 @@ export async function generateTagsForProvider(
     source = "dictionary";
   }
 
-  const beforeCount = (existingTags || []).filter(Boolean).length;
   const merged = mergeAndCap(existingTags || [], [...dict, ...aiTags]);
-  const added = Math.max(0, merged.length - beforeCount);
+  const existingNorm = new Set((existingTags || []).filter(Boolean).map(normaliseTag));
+  let added = 0;
+  for (const t of merged) {
+    if (!existingNorm.has(normaliseTag(t))) added++;
+  }
   if (added === 0 && source !== "skipped") source = "skipped";
   return { finalTags: merged, newTagsAdded: added, source };
 }
