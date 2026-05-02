@@ -119,3 +119,17 @@ export function useAuth() {
     isLoggingOut: logoutMutation.isPending,
   };
 }
+
+// Returns the in-app "home" route for the currently authenticated user.
+// Used by Back buttons so that pressing Back always lands on a known
+// app screen instead of relying on the browser history stack (which
+// can leak the user out to a previous origin or jump back into the app
+// after they pressed back).
+export function useHomeRoute(): string {
+  const { user } = useAuth();
+  const role = user?.role || "customer";
+  if (role === "admin") return "/admin/dashboard";
+  if (role === "coadmin") return "/coadmin/dashboard";
+  if (role === "provider") return "/provider/dashboard";
+  return "/customer/home";
+}

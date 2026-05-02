@@ -8,6 +8,7 @@ import { useLocation } from "wouter";
 import { ArrowLeft, Check, Loader2, Sparkles } from "lucide-react";
 import { PlanTick } from "@/components/PlanTick";
 import type { SubscriptionPlanConfig, SubscriptionResponse, SubscriptionPlan } from "@shared/schema";
+import { useHomeRoute } from "@/hooks/use-auth";
 
 type Plan = "boost" | "pro" | "premium";
 type Cycle = "monthly" | "yearly";
@@ -39,6 +40,7 @@ export default function SubscriptionsPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [cycle, setCycle] = useState<Cycle>("monthly");
+  const homeRoute = useHomeRoute();
 
   const { data: cfg } = useQuery<SubscriptionPlanConfig>({
     queryKey: ["/api/subscriptions/config"],
@@ -93,7 +95,7 @@ export default function SubscriptionsPage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 bg-card border-b px-4 py-3 flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => history.length > 1 ? history.back() : setLocation("/customer/home")} data-testid="button-back">
+        <Button variant="ghost" size="icon" onClick={() => setLocation(homeRoute)} data-testid="button-back">
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <h1 className="font-semibold text-lg flex items-center gap-2">

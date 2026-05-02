@@ -6,6 +6,7 @@ import { ArrowLeft, Bell, Phone } from "lucide-react";
 import { useLocation } from "wouter";
 import { useEffect } from "react";
 import { useLanguage } from "@/lib/language";
+import { useHomeRoute } from "@/hooks/use-auth";
 
 interface NotificationItem {
   id: number;
@@ -20,6 +21,7 @@ interface NotificationItem {
 export default function NotificationsPage() {
   const [, setLocation] = useLocation();
   const { t } = useLanguage();
+  const homeRoute = useHomeRoute();
 
   const { data: notifications, isLoading } = useQuery<NotificationItem[]>({
     queryKey: ["/api/notifications"],
@@ -56,7 +58,7 @@ export default function NotificationsPage() {
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => window.history.length > 1 ? window.history.back() : setLocation("/customer/home")}
+          onClick={() => setLocation(homeRoute)}
           data-testid="button-back"
         >
           <ArrowLeft className="w-5 h-5" />

@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ArrowLeft, ScrollText } from "lucide-react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { useHomeRoute } from "@/hooks/use-auth";
 
 const defaultTerms = {
   intro: "Mitrify.com का उपयोग करने से पहले कृपया निम्नलिखित नियमों और शर्तों को ध्यान से पढ़ें। इस वेबसाइट का उपयोग करके, आप इन शर्तों से सहमत होते हैं:",
@@ -41,6 +42,7 @@ const defaultTerms = {
 
 export default function TermsPage() {
   const [, setLocation] = useLocation();
+  const homeRoute = useHomeRoute();
 
   const { data: termsData } = useQuery<typeof defaultTerms | null>({
     queryKey: ["/api/content", "terms"],
@@ -59,7 +61,7 @@ export default function TermsPage() {
       <div className="gradient-hero dark:gradient-hero-dark pt-3 pb-4 px-4 relative overflow-hidden">
         <div className="relative z-10">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => window.history.back()} className="text-white/80" data-testid="button-back">
+            <Button variant="ghost" size="icon" onClick={() => setLocation(homeRoute)} className="text-white/80" data-testid="button-back">
               <ArrowLeft className="w-5 h-5" />
             </Button>
             <div className="flex items-center gap-2">
@@ -104,7 +106,7 @@ export default function TermsPage() {
             About Us
           </Button>
           <span className="text-muted-foreground mx-2">|</span>
-          <Button variant="link" className="text-sm" onClick={() => window.history.back()} data-testid="link-back">
+          <Button variant="link" className="text-sm" onClick={() => setLocation(homeRoute)} data-testid="link-back">
             Back
           </Button>
         </div>

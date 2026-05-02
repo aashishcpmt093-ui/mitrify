@@ -142,7 +142,7 @@ export default function EmployeeEditPage() {
     <div className="min-h-screen bg-background">
       <div className="gradient-hero dark:gradient-hero-dark pt-3 pb-4 px-4">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => window.history.back()} className="text-white/80" data-testid="button-back">
+          <Button variant="ghost" size="icon" onClick={() => setLocation("/coadmin/dashboard")} className="text-white/80" data-testid="button-back">
             <ArrowLeft className="w-5 h-5" />
           </Button>
           <h1 className="text-lg font-bold text-white">Edit Profile</h1>

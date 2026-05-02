@@ -4,12 +4,14 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { ArrowLeft, Coins, Phone, Settings, Plus, History, ChevronRight, Sparkles } from "lucide-react";
 import { useLanguage } from "@/lib/language";
+import { useHomeRoute } from "@/hooks/use-auth";
 import { PlanTick } from "@/components/PlanTick";
 import type { SubscriptionResponse, SubscriptionPlan } from "@shared/schema";
 
 export default function MyProfilePage() {
   const [, setLocation] = useLocation();
   const { t } = useLanguage();
+  const homeRoute = useHomeRoute();
 
   const { data: credits } = useQuery<{ freeCredits: number; purchasedCredits: number; totalCredits: number }>({
     queryKey: ["/api/credits/me"],
@@ -90,8 +92,7 @@ export default function MyProfilePage() {
   });
 
   const goBack = () => {
-    if (window.history.length > 1) window.history.back();
-    else setLocation("/customer/home");
+    setLocation(homeRoute);
   };
 
   return (

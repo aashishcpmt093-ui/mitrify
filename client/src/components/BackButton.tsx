@@ -2,18 +2,18 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 
-export function BackButton() {
-  const [, setLocation] = useLocation();
+interface BackButtonProps {
+  to?: string;
+}
 
-  const handleBack = () => {
-    window.history.back();
-  };
+export function BackButton({ to = "/" }: BackButtonProps) {
+  const [, setLocation] = useLocation();
 
   return (
     <Button
       variant="ghost"
       size="icon"
-      onClick={handleBack}
+      onClick={() => setLocation(to)}
       className="fixed top-4 left-4 z-50 hover:bg-muted/50 rounded-full"
       title="Go back"
       data-testid="button-back-universal"

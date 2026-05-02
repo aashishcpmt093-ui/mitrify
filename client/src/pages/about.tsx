@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ArrowLeft, MapPin, GraduationCap, Heart, Users, Phone, Globe, Info, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { useHomeRoute } from "@/hooks/use-auth";
 import founderImage from "@assets/IMG_8630_1771950896722.jpeg";
 
 const defaultAbout = {
@@ -21,6 +22,7 @@ const defaultAbout = {
 
 export default function AboutPage() {
   const [, setLocation] = useLocation();
+  const homeRoute = useHomeRoute();
 
   const { data: aboutData } = useQuery<typeof defaultAbout | null>({
     queryKey: ["/api/content", "about"],
@@ -39,7 +41,7 @@ export default function AboutPage() {
       <div className="gradient-hero dark:gradient-hero-dark pt-3 pb-4 px-4 relative overflow-hidden">
         <div className="relative z-10">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => window.history.back()} className="text-white/80" data-testid="button-back">
+            <Button variant="ghost" size="icon" onClick={() => setLocation(homeRoute)} className="text-white/80" data-testid="button-back">
               <ArrowLeft className="w-5 h-5" />
             </Button>
             <div className="flex items-center gap-2">
@@ -133,7 +135,7 @@ export default function AboutPage() {
             Terms & Conditions
           </Button>
           <span className="text-muted-foreground mx-2">|</span>
-          <Button variant="link" className="text-sm" onClick={() => window.history.back()} data-testid="link-back">
+          <Button variant="link" className="text-sm" onClick={() => setLocation(homeRoute)} data-testid="link-back">
             Back
           </Button>
         </div>

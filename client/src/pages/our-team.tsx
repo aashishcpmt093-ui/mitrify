@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowLeft, Users, GraduationCap, Briefcase, Edit2, Plus } from "lucide-react";
 import { useLocation } from "wouter";
-import { useAuth } from "@/hooks/use-auth";
+import { useAuth, useHomeRoute } from "@/hooks/use-auth";
 
 interface Employee {
   id: number;
@@ -19,6 +19,7 @@ interface Employee {
 export default function OurTeamPage() {
   const [, setLocation] = useLocation();
   const { user, isAuthenticated } = useAuth();
+  const homeRoute = useHomeRoute();
 
   const { data: employees = [], isLoading } = useQuery<Employee[]>({
     queryKey: ["/api/employees"],
@@ -33,7 +34,7 @@ export default function OurTeamPage() {
       <div className="gradient-hero dark:gradient-hero-dark pt-3 pb-4 px-4 relative overflow-hidden">
         <div className="relative z-10">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => window.history.back()} className="text-white/80" data-testid="button-back">
+            <Button variant="ghost" size="icon" onClick={() => setLocation(homeRoute)} className="text-white/80" data-testid="button-back">
               <ArrowLeft className="w-5 h-5" />
             </Button>
             <div className="flex items-center gap-2">
@@ -130,7 +131,7 @@ export default function OurTeamPage() {
         )}
 
         <div className="text-center pt-2">
-          <Button variant="link" className="text-sm" onClick={() => window.history.back()} data-testid="link-back">
+          <Button variant="link" className="text-sm" onClick={() => setLocation(homeRoute)} data-testid="link-back">
             Back
           </Button>
         </div>
