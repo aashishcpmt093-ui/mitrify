@@ -16,6 +16,7 @@ export default function PaymentSuccessPage() {
   const params = new URLSearchParams(window.location.search);
   const orderId = params.get("order_id");
   const kind = params.get("kind") || "credits";
+  const role = params.get("role") || "customer";
   const creditsParam = params.get("credits") || "0";
   const planParam = params.get("plan") || "";
   const cycleParam = params.get("cycle") || "";
@@ -59,6 +60,7 @@ export default function PaymentSuccessPage() {
 
   const goHome = () => {
     if (kind === "subscription") setLocation("/subscriptions");
+    else if (role === "provider") setLocation("/provider/dashboard");
     else setLocation("/customer/home");
   };
 
