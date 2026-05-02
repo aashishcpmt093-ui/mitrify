@@ -936,10 +936,12 @@ export default function AdminDashboardPage() {
   const [gpJobId, setGpJobId] = useState<string | null>(null);
   const [gpJobStatus, setGpJobStatus] = useState<{
     jobId: string; city: string; service: string; target: number;
-    fetched: number; unique: number; dupSkipped: number; apiCalls: number;
-    cellsScanned: number; totalCells: number; currentArea: string;
+    fetched: number; unique: number; dupSkipped: number;
+    dupByPlaceId: number; dupByAddress: number;
+    apiCalls: number; cellsScanned: number; totalCells: number; cellFailures: number;
+    currentArea: string;
     done: boolean; cancelled: boolean; error?: string;
-    startedAt: number; finishedAt?: number;
+    startedAt: number; finishedAt?: number; lastPolledAt: number;
     places: Array<{ placeId: string; name: string; address: string; latitude: number | null; longitude: number | null; phone: string; website: string; rating: number | null; ratingCount: number | null }>;
   } | null>(null);
   const [gpDisplayLimit, setGpDisplayLimit] = useState(200);
@@ -1082,10 +1084,15 @@ export default function AdminDashboardPage() {
         if (status.done) {
           setGpJobId(null);
           setGpSearching(false);
+          const elapsed = Math.round(((status.finishedAt || Date.now()) - status.startedAt) / 1000);
           if (status.error) {
-            toast({ title: "Bulk fetch failed", description: status.error, variant: "destructive" });
+            // Partial results may still be importable — surface that.
+            toast({
+              title: `Bulk fetch failed (${status.unique} mile partial)`,
+              description: `${status.error}${status.unique > 0 ? " — partial results import kar sakte hain" : ""}`,
+              variant: "destructive",
+            });
           } else {
-            const elapsed = Math.round(((status.finishedAt || Date.now()) - status.startedAt) / 1000);
             toast({
               title: status.cancelled
                 ? `Stopped — ${status.unique} unique businesses mile`
@@ -3134,6 +3141,65 @@ export default function AdminDashboardPage() {
                   </p>
                   {gpJobStatus.error && (
                     <p className="text-[11px] text-red-600 dark:text-red-400 font-medium">⚠ {gpJobStatus.error}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Post-run summary card — separate from the live progress
+                  panel so the admin gets a final, scannable breakdown. */}
+              {gpJobStatus && gpJobStatus.done && (
+                <div className={`rounded-xl p-4 border ${
+                  gpJobStatus.error
+                    ? "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800/40"
+                    : gpJobStatus.cancelled
+                      ? "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800/40"
+                      : "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/40"
+                }`} data-testid="card-gp-summary">
+                  <p className="text-xs font-semibold mb-3">
+                    {gpJobStatus.error
+                      ? "❌ Bulk fetch summary (failed — partial results)"
+                      : gpJobStatus.cancelled
+                        ? "🛑 Bulk fetch summary (stopped)"
+                        : "✓ Bulk fetch summary"}
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                    <div className="bg-white dark:bg-slate-900 rounded-lg p-2 text-center">
+                      <p className="text-muted-foreground text-[10px]">Total fetched</p>
+                      <p className="text-lg font-bold font-mono">{gpJobStatus.fetched.toLocaleString("en-IN")}</p>
+                    </div>
+                    <div className="bg-white dark:bg-slate-900 rounded-lg p-2 text-center">
+                      <p className="text-muted-foreground text-[10px]">Unique kept</p>
+                      <p className="text-lg font-bold font-mono text-emerald-700 dark:text-emerald-300">{gpJobStatus.unique.toLocaleString("en-IN")}</p>
+                    </div>
+                    <div className="bg-white dark:bg-slate-900 rounded-lg p-2 text-center">
+                      <p className="text-muted-foreground text-[10px]">Dup placeId</p>
+                      <p className="text-lg font-bold font-mono text-orange-700 dark:text-orange-300">{gpJobStatus.dupByPlaceId.toLocaleString("en-IN")}</p>
+                    </div>
+                    <div className="bg-white dark:bg-slate-900 rounded-lg p-2 text-center">
+                      <p className="text-muted-foreground text-[10px]">Dup address</p>
+                      <p className="text-lg font-bold font-mono text-orange-700 dark:text-orange-300">{gpJobStatus.dupByAddress.toLocaleString("en-IN")}</p>
+                    </div>
+                    <div className="bg-white dark:bg-slate-900 rounded-lg p-2 text-center">
+                      <p className="text-muted-foreground text-[10px]">Areas scanned</p>
+                      <p className="text-lg font-bold font-mono">{gpJobStatus.cellsScanned}/{gpJobStatus.totalCells}</p>
+                    </div>
+                    <div className="bg-white dark:bg-slate-900 rounded-lg p-2 text-center">
+                      <p className="text-muted-foreground text-[10px]">API calls</p>
+                      <p className="text-lg font-bold font-mono">{gpJobStatus.apiCalls}</p>
+                    </div>
+                    <div className="bg-white dark:bg-slate-900 rounded-lg p-2 text-center">
+                      <p className="text-muted-foreground text-[10px]">Cell failures</p>
+                      <p className={`text-lg font-bold font-mono ${gpJobStatus.cellFailures > 0 ? "text-amber-700 dark:text-amber-300" : ""}`}>{gpJobStatus.cellFailures}</p>
+                    </div>
+                    <div className="bg-white dark:bg-slate-900 rounded-lg p-2 text-center">
+                      <p className="text-muted-foreground text-[10px]">Time</p>
+                      <p className="text-lg font-bold font-mono">{Math.round(((gpJobStatus.finishedAt || Date.now()) - gpJobStatus.startedAt) / 1000)}s</p>
+                    </div>
+                  </div>
+                  {gpJobStatus.error && gpJobStatus.unique > 0 && (
+                    <p className="text-[11px] text-red-700 dark:text-red-300 mt-3 font-medium">
+                      ⚠ Partial results import ho sakte hain — neeche se select karke "Import" press karein
+                    </p>
                   )}
                 </div>
               )}

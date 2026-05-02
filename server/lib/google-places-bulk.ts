@@ -31,18 +31,29 @@ export interface BulkJobStatus {
   fetched: number;
   /** Unique places kept after placeId + (address,city) dedupe — = places.length. */
   unique: number;
-  /** Duplicates skipped (already-seen placeId or address). */
+  /** Duplicates skipped — sum of dupByPlaceId + dupByAddress (kept for back-compat). */
   dupSkipped: number;
+  /** Subset: skipped because the same `placeId` was already kept. */
+  dupByPlaceId: number;
+  /** Subset: skipped because the same `(normalisedAddress, city)` was already kept. */
+  dupByAddress: number;
   /** Total `searchText` calls made (including anchor lookup + pagination). */
   apiCalls: number;
   cellsScanned: number;
   totalCells: number;
+  /** Per-cell soft failures (logged + skipped, not terminal). */
+  cellFailures: number;
   currentArea: string;
   done: boolean;
   cancelled: boolean;
+  /** Set on terminal failure (auth/quota/key) OR when frontend polling
+   *  stops sending heartbeats and the watcher auto-cancels the job. */
   error?: string;
   startedAt: number;
   finishedAt?: number;
+  /** Last time a status poll was received. Updated by routes; read by the
+   *  heartbeat watcher to auto-cancel abandoned jobs. */
+  lastPolledAt: number;
   places: GpPlace[];
 }
 
@@ -66,6 +77,23 @@ const JOB_GC_AFTER_MS = 30 * 60 * 1000;
 // counts (could prematurely stop a run that still had results to find).
 const MIN_CELLS_BEFORE_EARLY_STOP = 12;
 const EMPTY_RATIO_STOP = 0.85;
+// Heartbeat: if no client poll arrives for this long while the job is
+// still running, auto-cancel it. Polling cadence on the client is ~1.2s,
+// so 60s is comfortable for transient network blips and tab background.
+const HEARTBEAT_TTL_MS = 60 * 1000;
+const HEARTBEAT_CHECK_INTERVAL_MS = 15 * 1000;
+// Google API status codes that mean "stop the entire run, not just this cell".
+// 401 (bad/missing key), 403 (PERMISSION_DENIED), 429 (RESOURCE_EXHAUSTED quota).
+const TERMINAL_HTTP_STATUSES = new Set([401, 403, 429]);
+// Terminal error class used by callPlacesText to signal "abort the whole job".
+class TerminalPlacesError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+    this.name = "TerminalPlacesError";
+  }
+}
 
 // Per-admin rate limit. In-memory map of `{ adminKey -> [timestampMs] }`.
 // Survives within one process lifetime; resets on restart (acceptable —
@@ -127,13 +155,19 @@ async function callPlacesText(body: any, apiKey: string, fieldMask = FIELD_MASK,
     },
     body: JSON.stringify(body),
   });
-  if ((resp.status === 429 || resp.status >= 500) && attempt < 3) {
+  // Retry only on transient 5xx; treat 429 as terminal (quota) — retrying it
+  // would just burn more cells and continue producing zero results.
+  if (resp.status >= 500 && attempt < 3) {
     await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
     return callPlacesText(body, apiKey, fieldMask, attempt + 1);
   }
   const data: any = await resp.json().catch(() => ({}));
   if (!resp.ok) {
-    throw new Error(data?.error?.message || `Places API ${resp.status}`);
+    const msg = data?.error?.message || `Places API ${resp.status}`;
+    if (TERMINAL_HTTP_STATUSES.has(resp.status)) {
+      throw new TerminalPlacesError(resp.status, msg);
+    }
+    throw new Error(msg);
   }
   return data;
 }
@@ -204,7 +238,11 @@ function generateGrid(
 }
 
 export function getBulkJobStatus(jobId: string): BulkJobStatus | null {
-  return JOBS.get(jobId) || null;
+  const j = JOBS.get(jobId);
+  if (!j) return null;
+  // Heartbeat: every status poll counts as the client still being alive.
+  j.lastPolledAt = Date.now();
+  return j;
 }
 
 export function cancelBulkJob(jobId: string): boolean {
@@ -213,6 +251,21 @@ export function cancelBulkJob(jobId: string): boolean {
   j.cancelled = true;
   return true;
 }
+
+// Heartbeat watcher: scans active jobs every 15s and auto-cancels any whose
+// last poll is older than HEARTBEAT_TTL_MS. Handles browser-close /
+// tab-discard / network drop without leaving cell scans running for hours.
+setInterval(() => {
+  const now = Date.now();
+  JOBS.forEach((j) => {
+    if (j.done || j.cancelled) return;
+    if (now - j.lastPolledAt > HEARTBEAT_TTL_MS) {
+      j.cancelled = true;
+      j.error = j.error || `Auto-cancelled — client polling stopped (${Math.round((now - j.lastPolledAt) / 1000)}s)`;
+      console.warn(`[gp-bulk] ${j.jobId} heartbeat timeout, cancelling`);
+    }
+  });
+}, HEARTBEAT_CHECK_INTERVAL_MS).unref?.();
 
 export interface StartBulkOpts {
   adminKey: string;
@@ -230,6 +283,7 @@ export async function startGoogleBulkSearch(opts: StartBulkOpts): Promise<string
   if (!city || !service) throw new Error("city aur service dono required hain");
 
   const jobId = crypto.randomBytes(6).toString("hex");
+  const now = Date.now();
   const status: BulkJobStatus = {
     jobId,
     city,
@@ -238,13 +292,17 @@ export async function startGoogleBulkSearch(opts: StartBulkOpts): Promise<string
     fetched: 0,
     unique: 0,
     dupSkipped: 0,
+    dupByPlaceId: 0,
+    dupByAddress: 0,
     apiCalls: 0,
     cellsScanned: 0,
     totalCells: 0,
+    cellFailures: 0,
     currentArea: "Anchor lookup…",
     done: false,
     cancelled: false,
-    startedAt: Date.now(),
+    startedAt: now,
+    lastPolledAt: now,
     places: [],
   };
   JOBS.set(jobId, status);
@@ -295,8 +353,14 @@ export async function startGoogleBulkSearch(opts: StartBulkOpts): Promise<string
           try {
             data = await callPlacesText(body, apiKey);
           } catch (e: any) {
-            // Per-cell errors must not crash the whole job — log and move on.
-            console.warn(`[gp-bulk] cell ${idx} page ${page} failed:`, e?.message || e);
+            // Distinguish terminal errors (auth/key/quota) from soft per-cell
+            // failures. Terminal errors must abort the whole job and surface
+            // to the UI; soft failures are logged and skipped.
+            if (e instanceof TerminalPlacesError) {
+              throw e;
+            }
+            status.cellFailures++;
+            console.warn(`[gp-bulk] cell ${idx} page ${page} failed (soft):`, e?.message || e);
             return cellAdded;
           }
           status.apiCalls++;
@@ -305,12 +369,18 @@ export async function startGoogleBulkSearch(opts: StartBulkOpts): Promise<string
           for (const p of places) {
             if (status.unique >= target) break;
             if (!p.placeId) continue;
-            if (placeIds.has(p.placeId)) { status.dupSkipped++; continue; }
+            if (placeIds.has(p.placeId)) {
+              status.dupByPlaceId++;
+              status.dupSkipped++;
+              continue;
+            }
             const addrKey = normaliseAddress(p.address) + "|" + cityNorm;
             // Only treat as address-dup when address is non-empty — otherwise
             // every "no address" place would collide on "|city".
             if (addrKey.length > cityNorm.length + 1 && addrSet.has(addrKey)) {
-              status.dupSkipped++; continue;
+              status.dupByAddress++;
+              status.dupSkipped++;
+              continue;
             }
             placeIds.add(p.placeId);
             if (addrKey.length > cityNorm.length + 1) addrSet.add(addrKey);
@@ -325,29 +395,55 @@ export async function startGoogleBulkSearch(opts: StartBulkOpts): Promise<string
         return cellAdded;
       };
 
+      // Workers throw TerminalPlacesError up to abort the whole job; we
+      // catch in Promise.allSettled and store partial results + error.
+      // Typed as a mutable holder so TS doesn't narrow it to `never` after
+      // the initial null assignment (it's mutated inside async closures).
+      const terminalRef: { err: TerminalPlacesError | null } = { err: null };
       const worker = async () => {
         while (true) {
-          if (status.cancelled || status.unique >= target) return;
+          if (status.cancelled || status.unique >= target || terminalRef.err) return;
           if (shouldEarlyStop()) return;
           const item = next();
           if (!item) return;
           status.currentArea =
             `${item.cell.lat.toFixed(3)}, ${item.cell.lng.toFixed(3)} — cell ${item.idx + 1}/${grid.length}`;
-          const added = await scanCell(item.cell, item.idx);
-          status.cellsScanned++;
-          if (added === 0) emptyCells++;
+          try {
+            const added = await scanCell(item.cell, item.idx);
+            status.cellsScanned++;
+            if (added === 0) emptyCells++;
+          } catch (e) {
+            if (e instanceof TerminalPlacesError) {
+              terminalRef.err = e;
+              status.cancelled = true; // signal other workers to bail
+              return;
+            }
+            // Defensive — scanCell already swallows soft failures, but if
+            // anything else escapes, just count it and continue.
+            status.cellFailures++;
+            status.cellsScanned++;
+            emptyCells++;
+          }
         }
       };
 
       await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
 
-      const reason = status.cancelled
-        ? "Cancelled"
-        : status.unique >= target
-          ? "Target reached"
-          : shouldEarlyStop()
-            ? `Early stop (${emptyCells}/${status.cellsScanned} cells empty)`
-            : "Grid exhausted";
+      // Surface terminal errors (auth/quota/key) but keep accumulated
+      // partial results so the admin can still import what was fetched.
+      if (terminalRef.err) {
+        status.error = `Google API ${terminalRef.err.status}: ${terminalRef.err.message}`;
+      }
+
+      const reason = terminalRef.err
+        ? `Stopped on Google API ${terminalRef.err.status}`
+        : status.cancelled
+          ? "Cancelled"
+          : status.unique >= target
+            ? "Target reached"
+            : shouldEarlyStop()
+              ? `Early stop (${emptyCells}/${status.cellsScanned} cells empty)`
+              : "Grid exhausted";
       status.currentArea = reason;
       status.done = true;
       status.finishedAt = Date.now();
