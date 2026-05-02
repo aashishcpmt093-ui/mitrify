@@ -246,12 +246,26 @@ function AutoGenerateTagsCard() {
     if (!jobId) return;
     let cancelled = false;
     let intervalId: ReturnType<typeof setInterval> | null = null;
+    let consecutiveErrors = 0;
     const tick = async () => {
       try {
         const res = await fetch(`/api/admin/auto-generate-tags/status/${jobId}`, { credentials: "include" });
+        if (res.status === 404) {
+          if (intervalId) { clearInterval(intervalId); intervalId = null; }
+          if (!cancelled) {
+            toast({
+              title: "Job khatam ho gaya",
+              description: "Job status server par nahi mila (shayad server restart ya 30-min auto-cleanup). Dobara try karein.",
+              variant: "destructive",
+            });
+            setJobId(null);
+          }
+          return;
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data: TagJobStatus = await res.json();
         if (cancelled) return;
+        consecutiveErrors = 0;
         setStatus(data);
         if (data.done) {
           if (intervalId) {
@@ -270,7 +284,18 @@ function AutoGenerateTagsCard() {
           }
         }
       } catch (err) {
-        // ignore transient errors during polling
+        consecutiveErrors++;
+        if (consecutiveErrors >= 5) {
+          if (intervalId) { clearInterval(intervalId); intervalId = null; }
+          if (!cancelled) {
+            toast({
+              title: "Status fetch fail ho raha hai",
+              description: "Server reachable nahi hai. Page refresh karke dobara try karein.",
+              variant: "destructive",
+            });
+            setJobId(null);
+          }
+        }
       }
     };
     tick();
@@ -303,6 +328,8 @@ function AutoGenerateTagsCard() {
       setJobId(data.jobId);
       setConfirmOpen(false);
     } catch (err: any) {
+      setJobId(null);
+      setStatus(null);
       toast({ title: "Start failed", description: err?.message || "Could not start tag generation", variant: "destructive" });
     } finally {
       setStarting(false);
