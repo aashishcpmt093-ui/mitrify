@@ -9,3 +9,11 @@ backup.sql
 database_export.sql
 railway_data_import.sql
 *.sql.bak
+
+# Never commit credential JSON files dropped into attached_assets/
+attached_assets/client_secret*.json
+attached_assets/*credentials*.json
+attached_assets/*service-account*.json
+attached_assets/*service_account*.json
+*.pem
+*.p12

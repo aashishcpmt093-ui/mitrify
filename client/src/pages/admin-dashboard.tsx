@@ -234,6 +234,14 @@ function AutoGenerateTagsCard() {
   const [starting, setStarting] = useState(false);
   const finalToastFired = useRef(false);
 
+  const { data: providerList } = useQuery<any[]>({ queryKey: ["/api/admin/providers"] });
+  const providerCount = providerList?.length ?? 0;
+  const estSeconds = Math.max(2, Math.ceil(providerCount / 4));
+  const estMinutes = Math.floor(estSeconds / 60);
+  const estLabel = estMinutes >= 1
+    ? `~${estMinutes} min ${estSeconds % 60}s`
+    : `~${estSeconds}s`;
+
   useEffect(() => {
     if (!jobId) return;
     let cancelled = false;
@@ -289,7 +297,7 @@ function AutoGenerateTagsCard() {
       if (!data.geminiAvailable) {
         toast({
           title: "Gemini key nahi mili",
-          description: "Sirf dictionary se tags fill hongi. AI fallback ke liye GEMINI_API_KEY secret add karein.",
+          description: "Sirf dictionary se tags fill hongi. AI fallback ke liye GOOGLE_API_KEY secret add karein.",
         });
       }
       setJobId(data.jobId);
@@ -414,6 +422,20 @@ function AutoGenerateTagsCard() {
                 : "Yeh action saare providers ke hashtags update karega. Existing tags safe rahengi (sirf naye merge honge), lekin yeh action undo nahi ho sakta."}
             </DialogDescription>
           </DialogHeader>
+          <div className="bg-slate-50 dark:bg-slate-800/40 rounded-lg p-3 border border-slate-200 dark:border-slate-700/40 text-xs space-y-1.5" data-testid="text-tag-estimate">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Total providers:</span>
+              <span className="font-bold text-slate-900 dark:text-white" data-testid="text-tag-provider-count">{providerCount}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Estimated time:</span>
+              <span className="font-semibold text-slate-700 dark:text-slate-200">{estLabel}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Estimated cost:</span>
+              <span className="font-semibold text-emerald-700 dark:text-emerald-400">≈ ₹0 (Gemini free tier)</span>
+            </div>
+          </div>
           <div className="bg-fuchsia-50 dark:bg-fuchsia-950/20 rounded-lg p-3 text-xs text-fuchsia-800 dark:text-fuchsia-300 space-y-1">
             <p>• Dictionary first (instant, free)</p>
             <p>• Gemini AI fallback when dictionary &lt; 5 tags</p>
