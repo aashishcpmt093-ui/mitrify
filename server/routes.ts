@@ -17,7 +17,25 @@ import multer from "multer";
 import * as XLSX from "xlsx";
 import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory } from "./backupJob";
 import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverStaleJobs } from "./lib/auto-tags";
-import { startGoogleBulkSearch, getBulkJobStatus, cancelBulkJob, checkRateLimit as checkGpBulkRateLimit, recordGpBulkRun } from "./lib/google-places-bulk";
+// Per-admin daily quota for Google Places admin search. In-memory map of
+// `{ adminKey -> [timestampMs] }`. Resets on process restart (acceptable —
+// the safety cap is to prevent accidental cost spikes from rapid clicks).
+const GP_ADMIN_RUNS = new Map<string, number[]>();
+const GP_RUNS_PER_DAY = 3;
+const GP_DAY_MS = 24 * 60 * 60 * 1000;
+
+function checkGpBulkRateLimit(adminKey: string): { ok: boolean; runsToday: number; max: number } {
+  const now = Date.now();
+  const arr = (GP_ADMIN_RUNS.get(adminKey) || []).filter(t => now - t < GP_DAY_MS);
+  GP_ADMIN_RUNS.set(adminKey, arr);
+  return { ok: arr.length < GP_RUNS_PER_DAY, runsToday: arr.length, max: GP_RUNS_PER_DAY };
+}
+
+function recordGpBulkRun(adminKey: string): void {
+  const arr = GP_ADMIN_RUNS.get(adminKey) || [];
+  arr.push(Date.now());
+  GP_ADMIN_RUNS.set(adminKey, arr);
+}
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -2305,84 +2323,6 @@ export async function registerRoutes(
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Google Places search failed" });
     }
-  });
-
-  // Google Places — Bulk fetch (multi-cell grid scan) for up to 6000 unique
-  // businesses per city + service. Returns a jobId; client polls status.
-  app.post("/api/admin/google-places-bulk-search", adminCheck, async (req, res) => {
-    try {
-      const { city, service, target } = req.body || {};
-      const cityStr = String(city || "").trim();
-      const serviceStr = String(service || "").trim();
-      if (!cityStr || !serviceStr) {
-        return res.status(400).json({ message: "city aur service dono required hain" });
-      }
-      const targetNum = Math.max(1, Math.min(6000, Math.floor(Number(target) || 6000)));
-      // Single-admin system — bucket by literal "admin" so all admin sessions
-      // share one daily quota. Easy to swap to req session username later.
-      const adminKey = "admin";
-      const rate = checkGpBulkRateLimit(adminKey);
-      if (!rate.ok) {
-        return res.status(429).json({
-          message: `Daily limit exhaust ho gayi (${rate.runsToday}/${rate.max} runs aaj). 24 ghante baad try karein.`,
-          runsToday: rate.runsToday,
-          max: rate.max,
-        });
-      }
-      // Charge against quota up-front so the count we return is truthful.
-      // (Previously charged inside background runner after anchor success,
-      //  which made `runsToday + 1` a guess.)
-      recordGpBulkRun(adminKey);
-      const post = checkGpBulkRateLimit(adminKey);
-      const jobId = await startGoogleBulkSearch({
-        adminKey,
-        city: cityStr,
-        service: serviceStr,
-        target: targetNum,
-      });
-      // Strip places from the start response — they are always empty here
-      // and including the field needlessly hints at unbounded payload.
-      const full = getBulkJobStatus(jobId);
-      const { places: _omit, ...statusMeta } = full || ({} as any);
-      res.json({
-        ok: true,
-        jobId,
-        target: targetNum,
-        runsToday: post.runsToday,
-        max: post.max,
-        status: { ...statusMeta, places: [], totalPlaces: 0 },
-      });
-    } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Bulk search start failed" });
-    }
-  });
-
-  app.get("/api/admin/google-places-bulk-search/:jobId", adminCheck, (req, res) => {
-    const status = getBulkJobStatus(req.params.jobId);
-    if (!status) return res.status(404).json({ message: "Job not found or expired" });
-    // Incremental delivery: client passes `?since=<idx>` and we return only
-    // the slice of `places` it hasn't seen yet, plus `totalPlaces` so the
-    // client can update its high-water mark. Default `since=0` returns all
-    // (back-compat for one-shot consumers). Without this the server was
-    // re-sending the full 6,000-row array every 1.2s, blowing up CPU,
-    // bandwidth, AND request-logging memory.
-    const sinceRaw = Number(req.query.since);
-    const since = Number.isFinite(sinceRaw) && sinceRaw >= 0
-      ? Math.min(Math.floor(sinceRaw), status.places.length)
-      : 0;
-    const { places, ...meta } = status;
-    res.json({
-      ...meta,
-      places: places.slice(since),
-      totalPlaces: places.length,
-      since,
-    });
-  });
-
-  app.post("/api/admin/google-places-bulk-search/:jobId/cancel", adminCheck, (req, res) => {
-    const ok = cancelBulkJob(req.params.jobId);
-    if (!ok) return res.status(404).json({ message: "Job not found, already done, or expired" });
-    res.json({ ok: true });
   });
 
   // Google Places — Bulk import selected places to pending_providers
