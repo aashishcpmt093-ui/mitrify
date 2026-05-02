@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Sparkles, Plus, Save, X, Loader2 } from "lucide-react";
 import { PlanTick } from "@/components/PlanTick";
-import type { SubscriptionPlanConfig, SubscriptionResponse } from "@shared/schema";
+import type { SubscriptionPlanConfig, SubscriptionResponse, SubscriptionPlan } from "@shared/schema";
 
 type Plan = "boost" | "pro" | "premium";
 type Cycle = "monthly" | "yearly";
@@ -249,7 +249,7 @@ export function SubscriptionsAdminPanel() {
               return (
                 <div key={s.id} className="p-3 flex items-center justify-between gap-3" data-testid={`admin-sub-row-${s.id}`}>
                   <div className="flex items-center gap-2 min-w-0">
-                    <PlanTick plan={s.plan as any} size={14} />
+                    <PlanTick plan={(s.plan || "none") as SubscriptionPlan} size={14} />
                     <div className="min-w-0">
                       <p className="text-sm font-medium truncate" data-testid={`text-sub-userid-${s.id}`}>{s.userId}</p>
                       <p className="text-[11px] text-muted-foreground">

@@ -186,8 +186,11 @@ export default function CustomerHomePage() {
     enabled: isAuthenticated,
   });
   const callerPlan = (mySubscription?.active?.plan as "boost" | "pro" | "premium" | undefined) || "none";
+  // Customer pays 0 only when their own plan is Premium, OR when the provider
+  // is Premium. Pro on the provider side means the provider's incoming side
+  // is free but the customer is still billed 1 credit, so it is NOT free.
   const isFreeCall = (providerPlan: string | undefined | null) =>
-    callerPlan === "premium" || providerPlan === "premium" || providerPlan === "pro";
+    callerPlan === "premium" || providerPlan === "premium";
 
   const handleGoToLogin = async () => {
     try { await fetch("/api/guest-mode", { method: "POST", credentials: "include" }); } catch {}
@@ -1399,7 +1402,7 @@ export default function CustomerHomePage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <h3 className="font-semibold truncate">{result.profile.name}</h3>
-                        <PlanTick plan={(result as any).plan} size={14} />
+                        <PlanTick plan={result.plan} size={14} />
                         <Badge variant="secondary" className="text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">Matched</Badge>
                       </div>
                       <p className="text-sm text-primary font-medium">{result.provider.serviceName}</p>
@@ -1431,7 +1434,7 @@ export default function CustomerHomePage() {
                       >
                         <Phone className="w-5 h-5" />
                       </Button>
-                      {isFreeCall((result as any).plan) ? (
+                      {isFreeCall(result.plan) ? (
                         <Badge className="text-[8px] leading-none px-1 py-0.5 bg-emerald-500 hover:bg-emerald-500 text-white border-0" data-testid={`badge-free-call-phone-${result.provider.id}`}>
                           Free Call
                         </Badge>
@@ -1467,7 +1470,7 @@ export default function CustomerHomePage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <h3 className="font-semibold truncate hover:underline">{result.profile.name}</h3>
-                        <PlanTick plan={(result as any).plan} size={14} />
+                        <PlanTick plan={result.plan} size={14} />
                       </div>
                       <p className="text-sm text-primary font-medium">{result.provider.serviceName}</p>
                       {result.provider.approxCharge && (
@@ -1508,7 +1511,7 @@ export default function CustomerHomePage() {
                       >
                         <Phone className="w-5 h-5" />
                       </Button>
-                      {isFreeCall((result as any).plan) ? (
+                      {isFreeCall(result.plan) ? (
                         <Badge className="text-[8px] leading-none px-1 py-0.5 bg-emerald-500 hover:bg-emerald-500 text-white border-0" data-testid={`badge-free-call-${result.provider.id}`}>
                           Free Call
                         </Badge>
@@ -1549,7 +1552,7 @@ export default function CustomerHomePage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <h3 className="font-bold text-lg leading-tight">{selectedProvider.profile.name}</h3>
-                  <PlanTick plan={(selectedProvider as any).plan} size={16} />
+                  <PlanTick plan={selectedProvider.plan} size={16} />
                 </div>
                 <p className="text-sm text-primary font-medium">{selectedProvider.provider.serviceName}</p>
                 {selectedProvider.distanceKm !== null && selectedProvider.distanceKm !== undefined && (

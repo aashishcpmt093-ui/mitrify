@@ -2062,6 +2062,7 @@ export class DatabaseStorage implements IStorage {
 
   // ── Subscriptions ──────────────────────────────────────────────────────
   async getActiveSubscriptionPlan(userId: string): Promise<SubscriptionPlan> {
+    await this.reconcileExpiredSubscriptions(userId);
     const now = new Date();
     const rows = await db.select().from(subscriptions).where(and(
       eq(subscriptions.userId, userId),
@@ -2077,6 +2078,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getActiveSubscription(userId: string): Promise<Subscription | undefined> {
+    await this.reconcileExpiredSubscriptions(userId);
     const now = new Date();
     const rows = await db.select().from(subscriptions).where(and(
       eq(subscriptions.userId, userId),
@@ -2102,7 +2104,9 @@ export class DatabaseStorage implements IStorage {
     grantedBy?: string | null;
   }): Promise<Subscription> {
     const now = new Date();
-    // Same-tier active sub → simply extend.
+    // Same-tier active sub → simply extend its endDate. Different-tier active
+    // subs are cancelled and the new plan starts fresh from `now`
+    // (remaining time on the old tier is forfeited per spec).
     const [existingSame] = await db.select().from(subscriptions).where(and(
       eq(subscriptions.userId, opts.userId),
       eq(subscriptions.status, "active"),
@@ -2123,21 +2127,14 @@ export class DatabaseStorage implements IStorage {
       }).where(eq(subscriptions.id, existingSame.id)).returning();
       result = updated;
     } else {
-      // Different-tier active sub: carry remaining time over to new tier so the
-      // user does not forfeit unused days when upgrading/downgrading.
-      const [existingOther] = await db.select().from(subscriptions).where(and(
-        eq(subscriptions.userId, opts.userId),
-        eq(subscriptions.status, "active"),
-        gte(subscriptions.endDate, now),
-      )).orderBy(desc(subscriptions.endDate)).limit(1);
-
-      const baseEnd = existingOther && existingOther.endDate > now ? existingOther.endDate : now;
-      const newEnd = new Date(baseEnd.getTime() + opts.durationDays * 86400_000);
-
-      if (existingOther) {
-        await db.update(subscriptions).set({ status: "cancelled" })
-          .where(eq(subscriptions.id, existingOther.id));
-      }
+      // Cancel any active sub on a different tier; new plan starts from now.
+      await db.update(subscriptions).set({ status: "cancelled" })
+        .where(and(
+          eq(subscriptions.userId, opts.userId),
+          eq(subscriptions.status, "active"),
+          gte(subscriptions.endDate, now),
+        ));
+      const newEnd = new Date(now.getTime() + opts.durationDays * 86400_000);
       const [created] = await db.insert(subscriptions).values({
         userId: opts.userId,
         plan: opts.plan,
@@ -2154,6 +2151,18 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
+  /**
+   * Lazy expiry: any row still flagged "active" but past its endDate is
+   * transitioned to "expired" so admin filtering and reporting reflect
+   * reality without needing a cron.
+   */
+  private async reconcileExpiredSubscriptions(userId?: string): Promise<void> {
+    const now = new Date();
+    const conds = [eq(subscriptions.status, "active"), lt(subscriptions.endDate, now)];
+    if (userId) conds.push(eq(subscriptions.userId, userId));
+    await db.update(subscriptions).set({ status: "expired" }).where(and(...conds));
+  }
+
   async getSubscriptionByPaymentId(paymentId: string): Promise<Subscription | undefined> {
     const [row] = await db.select().from(subscriptions)
       .where(eq(subscriptions.paymentId, paymentId)).limit(1);
@@ -2161,12 +2170,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async listUserSubscriptions(userId: string): Promise<Subscription[]> {
+    await this.reconcileExpiredSubscriptions(userId);
     return await db.select().from(subscriptions)
       .where(eq(subscriptions.userId, userId))
       .orderBy(desc(subscriptions.createdAt));
   }
 
   async listAllSubscriptions(opts?: { search?: string; status?: string; plan?: string }): Promise<Array<Subscription & { name: string; mobile: string }>> {
+    await this.reconcileExpiredSubscriptions();
     const rows = await db.select().from(subscriptions).orderBy(desc(subscriptions.createdAt));
     const profileRows = await db.select().from(profiles);
     const luRows = await db.select().from(localUsers);
@@ -2243,10 +2254,10 @@ export class DatabaseStorage implements IStorage {
     const [existing] = await db.select().from(siteContent).where(eq(siteContent.key, "subscription_plans"));
     if (existing) {
       await db.update(siteContent)
-        .set({ value: cfg as any, updatedAt: new Date() })
+        .set({ value: cfg, updatedAt: new Date() })
         .where(eq(siteContent.key, "subscription_plans"));
     } else {
-      await db.insert(siteContent).values({ key: "subscription_plans", value: cfg as any, updatedAt: new Date() });
+      await db.insert(siteContent).values({ key: "subscription_plans", value: cfg, updatedAt: new Date() });
     }
     return cfg;
   }

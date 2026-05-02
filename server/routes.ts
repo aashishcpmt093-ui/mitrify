@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { storage } from "./storage";
 import { db, pool } from "./db";
-import { profiles, siteContent, jobs, pendingProviders } from "@shared/schema";
+import { profiles, siteContent, jobs, pendingProviders, type SubscriptionPlanConfig } from "@shared/schema";
 import { api, buildUrl } from "@shared/routes";
 import { z } from "zod";
 import { eq, desc, count, and, inArray } from "drizzle-orm";
@@ -1408,16 +1408,22 @@ export async function registerRoutes(
       let orderTags: Record<string, string>;
 
       if (kind === "subscription") {
-        const plan = String(req.body?.plan || "");
-        const cycle = String(req.body?.cycle || "");
-        if (!["boost", "pro", "premium"].includes(plan)) {
+        const planRaw = String(req.body?.plan || "");
+        const cycleRaw = String(req.body?.cycle || "");
+        const validPlans = ["boost", "pro", "premium"] as const;
+        const validCycles = ["monthly", "yearly"] as const;
+        type Plan = typeof validPlans[number];
+        type Cycle = typeof validCycles[number];
+        if (!(validPlans as readonly string[]).includes(planRaw)) {
           return res.status(400).json({ message: "Invalid plan" });
         }
-        if (!["monthly", "yearly"].includes(cycle)) {
+        if (!(validCycles as readonly string[]).includes(cycleRaw)) {
           return res.status(400).json({ message: "Invalid billing cycle" });
         }
+        const plan = planRaw as Plan;
+        const cycle = cycleRaw as Cycle;
         const cfg = await storage.getSubscriptionPlanConfig();
-        amount = (cfg as any)[plan][cycle];
+        amount = cfg[plan][cycle];
         if (!amount || amount < 1) {
           return res.status(400).json({ message: "Plan price not configured" });
         }
@@ -1476,7 +1482,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Payment not completed", status: order.order_status });
       }
 
-      const tags = (order as any).order_tags || {};
+      const tags: Record<string, string> = order.order_tags || {};
       if (tags.userId !== userId) {
         return res.status(403).json({ message: "Payment does not belong to this user" });
       }
@@ -1501,7 +1507,7 @@ export async function registerRoutes(
         // config and verify it matches the amount Cashfree actually charged.
         const cfg = await storage.getSubscriptionPlanConfig();
         const expected = cfg?.[plan]?.[cycle];
-        const paid = Number((order as any).order_amount || 0);
+        const paid = Number(order.order_amount || 0);
         if (typeof expected !== "number" || expected <= 0 || Math.abs(paid - expected) > 0.5) {
           return res.status(400).json({ message: "Payment amount does not match plan price" });
         }
@@ -1571,13 +1577,20 @@ export async function registerRoutes(
   // Admin: edit price/perks config.
   app.put("/api/admin/subscriptions/config", adminCheck, async (req, res) => {
     try {
-      const cfg = req.body as any;
-      // Light validation — every tier needs monthly + yearly numbers.
-      for (const tier of ["boost", "pro", "premium"]) {
-        if (!cfg?.[tier] || typeof cfg[tier].monthly !== "number" || typeof cfg[tier].yearly !== "number") {
+      const body = req.body as Partial<SubscriptionPlanConfig> | undefined;
+      // Light validation — every tier needs monthly + yearly numbers + perks.
+      const tiers: Array<keyof SubscriptionPlanConfig> = ["boost", "pro", "premium"];
+      for (const tier of tiers) {
+        const t = body?.[tier];
+        if (!t || typeof t.monthly !== "number" || typeof t.yearly !== "number" || !Array.isArray(t.perks)) {
           return res.status(400).json({ message: `Invalid config for ${tier}` });
         }
       }
+      const cfg: SubscriptionPlanConfig = {
+        boost: body!.boost!,
+        pro: body!.pro!,
+        premium: body!.premium!,
+      };
       const saved = await storage.setSubscriptionPlanConfig(cfg);
       res.json(saved);
     } catch (e: any) {
@@ -1592,12 +1605,13 @@ export async function registerRoutes(
       if (!userId || !["boost", "pro", "premium"].includes(plan)) {
         return res.status(400).json({ message: "userId and a valid plan are required" });
       }
-      const billingCycle = cycle === "monthly" || cycle === "yearly" ? cycle : "custom";
+      const billingCycle: "monthly" | "yearly" | "custom" =
+        cycle === "monthly" || cycle === "yearly" ? cycle : "custom";
       const durationDays = Number(days) > 0 ? Number(days) : (cycle === "yearly" ? 365 : 30);
       const sub = await storage.createOrExtendSubscription({
         userId,
         plan,
-        billingCycle: billingCycle as any,
+        billingCycle,
         durationDays,
         amount: 0,
         paymentId: null,

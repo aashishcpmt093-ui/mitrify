@@ -27,6 +27,9 @@ export interface CashfreeOrderResponse {
   payment_session_id: string;
   order_status: string;
   payment_link?: string;
+  // Present on the GET /orders/{id} verify response.
+  order_amount?: number;
+  order_tags?: Record<string, string>;
 }
 
 export async function createCashfreeOrder(params: {
