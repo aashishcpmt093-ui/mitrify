@@ -22,16 +22,18 @@ function normaliseTag(t: string): string {
     .slice(0, 40);
 }
 
-/** Merge two tag arrays case-insensitively, preserving existing tags VERBATIM
- *  (no normalization), and only normalising incoming new tags. Capped at `cap`. */
+/** Merge two tag arrays, preserving existing tags VERBATIM (no normalization)
+ *  and only normalising incoming new tags. Dedupe uses the same canonical
+ *  `normaliseTag` form for both sides so e.g. `#Plumber` and `plumber` collapse.
+ *  Capped at `cap`. */
 function mergeAndCap(existing: string[], incoming: string[], cap = MAX_TAGS): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  // Existing tags: preserve EXACT casing/length; only use lowercase form as the dedupe key.
+  // Existing tags: preserve EXACT casing/length; use canonical normalised form as dedupe key.
   for (const t of existing || []) {
     if (typeof t !== "string" || !t.trim()) continue;
-    const key = t.toLowerCase().trim();
-    if (seen.has(key)) continue;
+    const key = normaliseTag(t);
+    if (!key || seen.has(key)) continue;
     seen.add(key);
     out.push(t);
     if (out.length >= cap) return out;
