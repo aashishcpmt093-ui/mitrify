@@ -1,4 +1,4 @@
-import { useLocation } from "wouter";
+import { useLocation, useParams } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -10,9 +10,9 @@ import { useState } from "react";
 import { useLanguage } from "@/lib/language";
 
 export default function JobDetailPage() {
-  const { location, params } = useLocation();
-  const [, , setLocation] = useLocation();
-  const jobId = (params as any)?.id;
+  const [, setLocation] = useLocation();
+  const params = useParams<{ id: string }>();
+  const jobId = params?.id;
   const { user } = useAuth();
   const { toast } = useToast();
   const { t } = useLanguage();

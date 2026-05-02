@@ -22,7 +22,7 @@ import { useTheme } from "@/lib/theme";
 import { useLanguage, LANGUAGE_NAMES, Language } from "@/lib/language";
 import { BackButton } from "@/components/BackButton";
 import logoImg from "@assets/772B17C5-7738-43B8-B5C0-04A7F2A6561B_1773842365564.png";
-import type { CallLog, SubscriptionResponse, SubscriptionPlan } from "@shared/schema";
+import type { CallLog, SubscriptionResponse, SubscriptionPlan, Provider } from "@shared/schema";
 
 export default function ProviderDashboardPage() {
   const { user, logout } = useAuth();
@@ -59,7 +59,7 @@ export default function ProviderDashboardPage() {
     if (!res.ok) throw new Error("Not found");
     return res.json();
   }});
-  const { data: provider } = useQuery({ queryKey: ["/api/providers/me"] });
+  const { data: provider } = useQuery<Provider>({ queryKey: ["/api/providers/me"] });
   const { data: mySub } = useQuery<{ active: SubscriptionResponse | null; history: SubscriptionResponse[] }>({
     queryKey: ["/api/subscriptions/me"],
   });
@@ -83,7 +83,7 @@ export default function ProviderDashboardPage() {
     queryKey: ["/api/notifications/unread-count"],
     refetchInterval: 60000,
   });
-  const { data: myPromo } = useQuery({ queryKey: ["/api/promo-codes/mine"] });
+  const { data: myPromo } = useQuery<{ code: string; usageCount: number } | null>({ queryKey: ["/api/promo-codes/mine"] });
   const { data: recruitmentLink } = useQuery<string>({
     queryKey: ["/api/content", "recruitment_link"],
     queryFn: async () => { const res = await fetch("/api/content/recruitment_link"); if (!res.ok) return "https://forms.gle/C54uAz7pkupe6g136"; return res.json(); },

@@ -12,6 +12,7 @@ import { useState, useEffect } from "react";
 import { ArrowLeft, Save, Loader2, Wrench, X, Plus, Phone, Camera, User, EyeOff, Eye, Lock } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import ChangeCredentialsDialog from "@/components/ChangeCredentialsDialog";
+import type { Provider } from "@shared/schema";
 
 export default function ProviderEditProfilePage() {
   const { toast } = useToast();
@@ -81,7 +82,7 @@ export default function ProviderEditProfilePage() {
     },
   });
 
-  const { data: provider, isLoading: providerLoading } = useQuery({
+  const { data: provider, isLoading: providerLoading } = useQuery<Provider>({
     queryKey: ["/api/providers/me"],
   });
 

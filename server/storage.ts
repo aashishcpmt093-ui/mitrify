@@ -321,9 +321,8 @@ async function getSearchDataset(): Promise<SearchDataset> {
     };
     for (const p of allProviders) {
       if (p.latitude == null || p.longitude == null) continue;
-      const prof = profileMap.get(p.userId);
-      const district = normalizePlace(prof?.district);
-      const addressCity = extractCityFromAddress(prof?.address);
+      const district = normalizePlace(p.district);
+      const addressCity = extractCityFromAddress(p.address);
       if (district) addAnchor(district, p.latitude, p.longitude);
       if (addressCity) addAnchor(addressCity, p.latitude, p.longitude);
     }
@@ -640,8 +639,8 @@ export class DatabaseStorage implements IStorage {
 
       // Pull a best-effort city out of the address so the UI can show it
       // even when GPS coordinates are missing.
-      const cityRaw = (profile.address || "").split(",")[0]?.trim() || null;
-      const city = cityRaw || profile.district || null;
+      const cityRaw = (provider.address || "").split(",")[0]?.trim() || null;
+      const city = cityRaw || provider.district || null;
 
       // Distance: prefer real GPS, fall back to estimate from city/district.
       let distanceKm: number | null = null;
@@ -652,7 +651,7 @@ export class DatabaseStorage implements IStorage {
         if (provider.radiusKm && distanceKm > provider.radiusKm) continue;
       } else if (lat != null && lng != null) {
         // No GPS on this provider → try to anchor by city or district
-        const keys = [extractCityFromAddress(profile.address), normalizePlace(profile.district)];
+        const keys = [extractCityFromAddress(provider.address), normalizePlace(provider.district)];
         for (const k of keys) {
           const anchor = k ? cityAnchors.get(k) : undefined;
           if (anchor) {
@@ -1331,7 +1330,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createPendingProvider(data: InsertPendingProvider): Promise<PendingProvider> {
-    const [pp] = await db.insert(pendingProviders).values({ ...data, status: "pending" }).returning();
+    const [pp] = await db.insert(pendingProviders).values({ ...data, status: "pending" } as any).returning();
     // Track entry in salary cycle (exclude bulk imports)
     if (data.addedBy && data.addedBy !== "bulk-import") {
       await this.incrementCycleStat(data.addedBy, "entry");
@@ -1457,13 +1456,13 @@ export class DatabaseStorage implements IStorage {
     // Determine sort order
     let orderByClause = desc(pendingProviders.id);
     if (sortBy === "name-asc") {
-      orderByClause = pendingProviders.name;
+      orderByClause = asc(pendingProviders.name);
     } else if (sortBy === "name-desc") {
       orderByClause = desc(pendingProviders.name);
     } else if (sortBy === "date-newest") {
       orderByClause = desc(pendingProviders.createdAt);
     } else if (sortBy === "date-oldest") {
-      orderByClause = pendingProviders.createdAt;
+      orderByClause = asc(pendingProviders.createdAt);
     }
 
     // Get all unique co-admins for filter dropdown (always pending status)
@@ -1607,8 +1606,6 @@ export class DatabaseStorage implements IStorage {
         address: pp.address || null,
         isActive: true,
         isHidden: pp.isHidden || false,
-        name: pp.name,
-        mobile: phone || null,
         profilePhoto: pp.profilePhoto || null,
         addedBy: pp.addedBy || "coadmin",
         approvedBy: approvedBy || null,
@@ -1807,11 +1804,11 @@ export class DatabaseStorage implements IStorage {
     if (!allowDuplicate) {
       // 1. Fetch all existing mobiles in pending_providers (one query)
       const existingPending = await db.select({ mobile: pendingProviders.mobile }).from(pendingProviders);
-      pendingMobiles = new Set(existingPending.map(r => r.mobile).filter(Boolean));
+      pendingMobiles = new Set(existingPending.map(r => r.mobile).filter((m): m is string => !!m));
 
       // 2. Fetch all registered user phones (one query)
       const existingUsers = await db.select({ phone: localUsers.phone }).from(localUsers);
-      userPhones = new Set(existingUsers.map(r => r.phone).filter(Boolean));
+      userPhones = new Set(existingUsers.map(r => r.phone).filter((p): p is string => !!p));
     }
 
     // 3. Filter out duplicates in memory
@@ -1838,7 +1835,7 @@ export class DatabaseStorage implements IStorage {
         serviceName: "",
         addedBy: rec.addedBy,
         status: "pending" as const,
-      }));
+      } as any));
       try {
         await db.insert(pendingProviders).values(chunk);
         imported += chunk.length;
@@ -1929,10 +1926,10 @@ export class DatabaseStorage implements IStorage {
     let userPhones = new Set<string>();
     if (!allowDuplicate) {
       const existingPending = await db.select({ mobile: pendingProviders.mobile }).from(pendingProviders);
-      pendingMobiles = new Set(existingPending.map(r => r.mobile).filter(Boolean));
+      pendingMobiles = new Set(existingPending.map(r => r.mobile).filter((m): m is string => !!m));
 
       const existingUsers = await db.select({ phone: localUsers.phone }).from(localUsers);
-      userPhones = new Set(existingUsers.map(r => r.phone).filter(Boolean));
+      userPhones = new Set(existingUsers.map(r => r.phone).filter((p): p is string => !!p));
     }
 
     const seen = new Set<string>();
@@ -1989,14 +1986,14 @@ export class DatabaseStorage implements IStorage {
       byMobile.get(p.mobile)!.push(p);
     }
     // Filter to mobiles with more than 1 distinct userId
-    const duplicateEntries = [...byMobile.entries()].filter(([_, profs]) => {
-      const uniqueUserIds = new Set(profs.map(p => p.userId));
+    const duplicateEntries = [...byMobile.entries()].filter(([_, profs]: [string, Profile[]]) => {
+      const uniqueUserIds = new Set(profs.map((p: Profile) => p.userId));
       return uniqueUserIds.size > 1;
     });
     if (duplicateEntries.length === 0) return [];
 
     // 2. Gather all userIds involved
-    const allUserIds = [...new Set(duplicateEntries.flatMap(([_, profs]) => profs.map(p => p.userId)))];
+    const allUserIds = [...new Set(duplicateEntries.flatMap(([_, profs]: [string, Profile[]]) => profs.map((p: Profile) => p.userId)))];
 
     // 3. Fetch credits and providers in bulk
     const allCredits = await db.select().from(credits).where(inArray(credits.userId, allUserIds));
@@ -2012,8 +2009,8 @@ export class DatabaseStorage implements IStorage {
     const result = [];
     for (const [mobile, profs] of duplicateEntries) {
       const seenIds = new Set<string>();
-      const uniqueProfiles = profs.filter(p => { if (seenIds.has(p.userId)) return false; seenIds.add(p.userId); return true; });
-      const enriched = uniqueProfiles.map(p => {
+      const uniqueProfiles = profs.filter((p: Profile) => { if (seenIds.has(p.userId)) return false; seenIds.add(p.userId); return true; });
+      const enriched = uniqueProfiles.map((p: Profile) => {
         const pv = provByUserId.get(p.userId);
         let score = 0;
         if (p.name) score += 1;
@@ -2043,7 +2040,7 @@ export class DatabaseStorage implements IStorage {
           approxCharge: pv?.approxCharge || "",
         };
       });
-      enriched.sort((a, b) => b.completenessScore - a.completenessScore);
+      enriched.sort((a: { completenessScore: number }, b: { completenessScore: number }) => b.completenessScore - a.completenessScore);
       result.push({ mobile, count: enriched.length, profiles: enriched });
     }
     result.sort((a, b) => b.count - a.count);
