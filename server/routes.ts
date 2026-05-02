@@ -7,7 +7,7 @@ import { db, pool } from "./db";
 import { profiles, siteContent, jobs, pendingProviders } from "@shared/schema";
 import { api, buildUrl } from "@shared/routes";
 import { z } from "zod";
-import { eq, desc, count, and } from "drizzle-orm";
+import { eq, desc, count, and, inArray } from "drizzle-orm";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
@@ -1823,6 +1823,38 @@ export async function registerRoutes(
         }
       }
       res.json({ approved, total: pending.length, errors });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Bulk approve failed" });
+    }
+  });
+
+  // ── BULK APPROVE BOTH META + GOOGLE LEADS (combined) ──
+  app.post("/api/admin/approve-all-bulk", adminCheck, async (req, res) => {
+    try {
+      const pending = await db
+        .select()
+        .from(pendingProviders)
+        .where(and(
+          eq(pendingProviders.status, "pending"),
+          inArray(pendingProviders.source, ["meta", "google"]),
+        ));
+
+      let approved = 0;
+      let metaApproved = 0;
+      let googleApproved = 0;
+      const errors: string[] = [];
+      for (const pp of pending) {
+        try {
+          await storage.approvePendingProvider(pp.id, "admin");
+          await storage.updatePendingProviderStatus(pp.id, "approved", undefined, "admin");
+          approved++;
+          if (pp.source === "meta") metaApproved++;
+          else if (pp.source === "google") googleApproved++;
+        } catch (e: any) {
+          errors.push(`ID ${pp.id}: ${e.message}`);
+        }
+      }
+      res.json({ approved, metaApproved, googleApproved, total: pending.length, errors });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Bulk approve failed" });
     }

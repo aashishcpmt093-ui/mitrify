@@ -596,8 +596,6 @@ export default function AdminDashboardPage() {
   const [gpSelected, setGpSelected] = useState<Set<string>>(new Set());
   const [gpNextPageToken, setGpNextPageToken] = useState<string | null>(null);
   const [gpImportResult, setGpImportResult] = useState<{ imported: number; skipped: number; total: number; skippedNoMobile: number; approved?: number } | null>(null);
-  const [gpBulkApproving, setGpBulkApproving] = useState(false);
-  const [gpBulkResult, setGpBulkResult] = useState<{ approved: number; total: number; errors: string[] } | null>(null);
 
   // Meta import state
   const [metaFile, setMetaFile] = useState<File | null>(null);
@@ -1178,31 +1176,15 @@ export default function AdminDashboardPage() {
     }
   };
 
-  const handleGoogleBulkApprove = async () => {
-    if (!confirm("Kya aap confirm karte hain? Saare pending Google Places leads approve ho jayenge aur live providers ban jayenge.")) return;
-    setGpBulkApproving(true);
-    setGpBulkResult(null);
-    try {
-      const res = await apiRequest("POST", "/api/admin/approve-google-bulk");
-      const data = await res.json();
-      setGpBulkResult(data);
-      toast({ title: `✅ ${data.approved} Google leads live ho gaye!` });
-    } catch (err: any) {
-      toast({ title: err.message || "Bulk approve failed", variant: "destructive" });
-    } finally {
-      setGpBulkApproving(false);
-    }
-  };
-
-  const handleMetaBulkApprove = async () => {
-    if (!confirm("Kya aap confirm karte hain? Saare pending Meta leads approve ho jayenge aur providers ban jayenge.")) return;
+  const handleAllBulkApprove = async () => {
+    if (!confirm("Kya aap confirm karte hain? Saare pending Meta + Google Places leads ek saath approve ho jayenge aur live providers ban jayenge.")) return;
     setMetaBulkApproving(true);
     setMetaBulkResult(null);
     try {
-      const res = await apiRequest("POST", "/api/admin/approve-meta-bulk");
+      const res = await apiRequest("POST", "/api/admin/approve-all-bulk");
       const data = await res.json();
-      setMetaBulkResult(data);
-      toast({ title: `✅ ${data.approved} Meta leads approve ho gaye!` });
+      setMetaBulkResult({ approved: data.approved, total: data.total, errors: data.errors });
+      toast({ title: `✅ ${data.approved} leads live hue (Meta: ${data.metaApproved}, Google: ${data.googleApproved})` });
     } catch (err: any) {
       toast({ title: err.message || "Bulk approve failed", variant: "destructive" });
     } finally {
@@ -2712,51 +2694,6 @@ export default function AdminDashboardPage() {
               )}
             </div>
 
-            {/* ── BULK APPROVE GOOGLE LEADS ── */}
-            <div className="bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/40 rounded-2xl p-5 space-y-4 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
-                  <span className="text-lg">🌐</span>
-                </div>
-                <div>
-                  <h3 className="font-semibold text-base text-slate-900 dark:text-white">Google Leads — Bulk Approve</h3>
-                  <p className="text-xs text-muted-foreground">Saare pending Google Places leads ek saath live karein — Google se verified businesses hain</p>
-                </div>
-              </div>
-
-              <Button
-                className="w-full h-11 text-sm font-semibold gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
-                onClick={handleGoogleBulkApprove}
-                disabled={gpBulkApproving}
-                data-testid="button-google-bulk-approve"
-              >
-                {gpBulkApproving ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" />Approve ho rahe hain...</>
-                ) : (
-                  <><CheckCircle className="w-4 h-4" />Saare Google Leads Live Karein</>
-                )}
-              </Button>
-
-              {gpBulkResult && (
-                <div className="bg-emerald-50 dark:bg-emerald-950/30 rounded-xl p-4 border border-emerald-100 dark:border-emerald-900/50 space-y-2">
-                  <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">✅ Bulk Approve Result:</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-white dark:bg-slate-800 rounded-lg p-2.5 text-center">
-                      <p className="text-xs text-muted-foreground">Total Found</p>
-                      <p className="text-xl font-extrabold text-foreground">{gpBulkResult.total}</p>
-                    </div>
-                    <div className="bg-white dark:bg-slate-800 rounded-lg p-2.5 text-center">
-                      <p className="text-xs text-muted-foreground">Live Hue</p>
-                      <p className="text-xl font-extrabold text-emerald-700 dark:text-emerald-300">{gpBulkResult.approved}</p>
-                    </div>
-                  </div>
-                  {gpBulkResult.errors.length > 0 && (
-                    <p className="text-xs text-red-600 dark:text-red-400">{gpBulkResult.errors.length} errors huye — baaki live ho gaye</p>
-                  )}
-                </div>
-              )}
-            </div>
-
             {/* ── META ADS LEAD IMPORT ── */}
             <div className="bg-white dark:bg-slate-900 border border-orange-200 dark:border-orange-800/40 rounded-2xl p-5 space-y-5 shadow-sm">
               <div className="flex items-center gap-3">
@@ -2968,28 +2905,28 @@ export default function AdminDashboardPage() {
               )}
             </div>
 
-            {/* ── BULK APPROVE META LEADS ── */}
+            {/* ── BULK APPROVE META + GOOGLE LEADS (COMBINED) ── */}
             <div className="bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/40 rounded-2xl p-5 space-y-4 shadow-sm">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
                   <span className="text-lg">✅</span>
                 </div>
                 <div>
-                  <h3 className="font-semibold text-base text-slate-900 dark:text-white">Meta Leads — Bulk Approve</h3>
-                  <p className="text-xs text-muted-foreground">Saare pending Meta leads ek saath approve karein — ye OTP-verified leads hain, directly provider ban jayenge</p>
+                  <h3 className="font-semibold text-base text-slate-900 dark:text-white">Meta + Google Leads — Bulk Approve</h3>
+                  <p className="text-xs text-muted-foreground">Saare pending Meta aur Google Places leads ek saath approve karein — verified leads directly live providers ban jayenge</p>
                 </div>
               </div>
 
               <Button
                 className="w-full h-11 text-sm font-semibold gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
-                onClick={handleMetaBulkApprove}
+                onClick={handleAllBulkApprove}
                 disabled={metaBulkApproving}
-                data-testid="button-meta-bulk-approve"
+                data-testid="button-all-bulk-approve"
               >
                 {metaBulkApproving ? (
                   <><Loader2 className="w-4 h-4 animate-spin" />Approve ho rahe hain...</>
                 ) : (
-                  <><CheckCircle className="w-4 h-4" />Saare Meta Leads Approve Karein</>
+                  <><CheckCircle className="w-4 h-4" />Saare Meta + Google Leads Approve Karein</>
                 )}
               </Button>
 
