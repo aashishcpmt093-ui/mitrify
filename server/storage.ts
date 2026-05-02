@@ -2080,18 +2080,17 @@ export class DatabaseStorage implements IStorage {
   async getActiveSubscription(userId: string): Promise<Subscription | undefined> {
     await this.reconcileExpiredSubscriptions(userId);
     const now = new Date();
-    const rows = await db.select().from(subscriptions).where(and(
+    // Single-active invariant: createOrExtendSubscription ensures only one
+    // status='active' row exists per user at a time (prior actives are
+    // 'superseded' or 'cancelled'), so the row with the latest endDate is
+    // unambiguously the entitlement period. Order by endDate desc and take
+    // the first.
+    const [row] = await db.select().from(subscriptions).where(and(
       eq(subscriptions.userId, userId),
       eq(subscriptions.status, "active"),
       gte(subscriptions.endDate, now),
-    )).orderBy(desc(subscriptions.endDate));
-    // Return the highest-rank one if multiple are active.
-    let best: Subscription | undefined;
-    for (const r of rows) {
-      const p = (r.plan as SubscriptionPlan) || "none";
-      if (!best || PLAN_RANK[p] > PLAN_RANK[(best.plan as SubscriptionPlan) || "none"]) best = r;
-    }
-    return best;
+    )).orderBy(desc(subscriptions.endDate)).limit(1);
+    return row;
   }
 
   async createOrExtendSubscription(opts: {
@@ -2104,9 +2103,17 @@ export class DatabaseStorage implements IStorage {
     grantedBy?: string | null;
   }): Promise<Subscription> {
     const now = new Date();
-    // Same-tier active sub → simply extend its endDate. Different-tier active
-    // subs are cancelled and the new plan starts fresh from `now`
-    // (remaining time on the old tier is forfeited per spec).
+
+    // Storage-level idempotency: if this paymentId was already converted into
+    // a subscription row, return that row instead of creating/extending again.
+    // Routes also short-circuits on this, but defending here makes the
+    // operation safe to call from any future code path.
+    if (opts.paymentId) {
+      const [existingPayment] = await db.select().from(subscriptions)
+        .where(eq(subscriptions.paymentId, opts.paymentId)).limit(1);
+      if (existingPayment) return existingPayment;
+    }
+
     const [existingSame] = await db.select().from(subscriptions).where(and(
       eq(subscriptions.userId, opts.userId),
       eq(subscriptions.status, "active"),
@@ -2115,38 +2122,108 @@ export class DatabaseStorage implements IStorage {
     )).orderBy(desc(subscriptions.endDate)).limit(1);
 
     let result: Subscription;
-    if (existingSame) {
-      const baseEnd = existingSame.endDate > now ? existingSame.endDate : now;
-      const newEnd = new Date(baseEnd.getTime() + opts.durationDays * 86400_000);
-      const [updated] = await db.update(subscriptions).set({
-        endDate: newEnd,
-        billingCycle: opts.billingCycle,
-        paymentId: opts.paymentId ?? existingSame.paymentId,
-        amount: existingSame.amount + opts.amount,
-        grantedBy: opts.grantedBy ?? existingSame.grantedBy,
-      }).where(eq(subscriptions.id, existingSame.id)).returning();
-      result = updated;
-    } else {
-      // Cancel any active sub on a different tier; new plan starts from now.
-      await db.update(subscriptions).set({ status: "cancelled" })
+
+    // EVERY mutation path runs inside a per-user advisory-locked transaction
+    // so concurrent paid-creates and concurrent admin grants for the same
+    // user cannot interleave to violate the single-active invariant that
+    // getActiveSubscription depends on.
+    result = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${"sub:" + opts.userId}))`);
+
+      // Re-read same-tier active inside the lock (state may have changed
+      // between the pre-check above and entering the transaction).
+      const [sameInTx] = await tx.select().from(subscriptions).where(and(
+        eq(subscriptions.userId, opts.userId),
+        eq(subscriptions.status, "active"),
+        gte(subscriptions.endDate, now),
+        eq(subscriptions.plan, opts.plan),
+      )).orderBy(desc(subscriptions.endDate)).limit(1);
+
+      if (opts.paymentId) {
+        // Paid event → always insert a NEW row so each payment is its own
+        // immutable history entry. The partial unique index on payment_id
+        // (DB-enforced) makes duplicate order_ids replay-safe.
+        const paymentId = opts.paymentId;
+        const baseStart = sameInTx && sameInTx.endDate > now ? sameInTx.endDate : now;
+        const newEnd = new Date(baseStart.getTime() + opts.durationDays * 86400_000);
+
+        const inserted = await tx.insert(subscriptions).values({
+          userId: opts.userId,
+          plan: opts.plan,
+          billingCycle: opts.billingCycle,
+          endDate: newEnd,
+          paymentId,
+          amount: opts.amount,
+          status: "active",
+          grantedBy: opts.grantedBy ?? null,
+        }).onConflictDoNothing({ target: subscriptions.paymentId }).returning();
+
+        if (inserted.length === 0) {
+          const [existingPayment] = await tx.select().from(subscriptions)
+            .where(eq(subscriptions.paymentId, paymentId)).limit(1);
+          if (existingPayment) return existingPayment;
+          throw new Error("subscription_insert_conflict");
+        }
+
+        if (sameInTx) {
+          await tx.update(subscriptions)
+            .set({ status: "superseded" })
+            .where(eq(subscriptions.id, sameInTx.id));
+        }
+        // Demote ANY other still-active rows for this user (cross-tier
+        // legacy rows or duplicates from pre-invariant data). The insert
+        // we just won is excluded; any same-tier `sameInTx` was already
+        // marked 'superseded' above and so will not match here.
+        await tx.update(subscriptions).set({ status: "cancelled" })
+          .where(and(
+            eq(subscriptions.userId, opts.userId),
+            eq(subscriptions.status, "active"),
+            ne(subscriptions.id, inserted[0].id),
+          ));
+        return inserted[0];
+      }
+
+      if (sameInTx) {
+        // Admin grant on the same tier → extend the existing row in place
+        // and demote any cross-tier active rows that may have appeared.
+        await tx.update(subscriptions).set({ status: "cancelled" })
+          .where(and(
+            eq(subscriptions.userId, opts.userId),
+            eq(subscriptions.status, "active"),
+            gte(subscriptions.endDate, now),
+            ne(subscriptions.id, sameInTx.id),
+          ));
+        const baseEnd = sameInTx.endDate > now ? sameInTx.endDate : now;
+        const newEnd = new Date(baseEnd.getTime() + opts.durationDays * 86400_000);
+        const [updated] = await tx.update(subscriptions).set({
+          endDate: newEnd,
+          billingCycle: opts.billingCycle,
+          amount: sameInTx.amount + opts.amount,
+          grantedBy: opts.grantedBy ?? sameInTx.grantedBy,
+        }).where(eq(subscriptions.id, sameInTx.id)).returning();
+        return updated;
+      }
+
+      // Admin grant on a different tier → cancel old, start fresh from now.
+      await tx.update(subscriptions).set({ status: "cancelled" })
         .where(and(
           eq(subscriptions.userId, opts.userId),
           eq(subscriptions.status, "active"),
           gte(subscriptions.endDate, now),
         ));
       const newEnd = new Date(now.getTime() + opts.durationDays * 86400_000);
-      const [created] = await db.insert(subscriptions).values({
+      const [created] = await tx.insert(subscriptions).values({
         userId: opts.userId,
         plan: opts.plan,
         billingCycle: opts.billingCycle,
         endDate: newEnd,
-        paymentId: opts.paymentId ?? null,
+        paymentId: null,
         amount: opts.amount,
         status: "active",
         grantedBy: opts.grantedBy ?? null,
       }).returning();
-      result = created;
-    }
+      return created;
+    });
     invalidateSearchDataset();
     return result;
   }
@@ -2203,7 +2280,7 @@ export class DatabaseStorage implements IStorage {
         if (status && r.status !== status) return false;
         if (plan && r.plan !== plan) return false;
         if (search) {
-          const hay = `${r.name} ${r.mobile} ${r.userId}`.toLowerCase();
+          const hay = `${r.name} ${r.mobile} ${r.userId} ${r.paymentId || ""}`.toLowerCase();
           if (!hay.includes(search)) return false;
         }
         return true;
@@ -2220,17 +2297,32 @@ export class DatabaseStorage implements IStorage {
   }
 
   async extendSubscription(id: number, extraDays: number): Promise<Subscription> {
+    // Wrapped in a per-user advisory-lock transaction so that activating a
+    // historical row + demoting any other currently-active rows for the
+    // same user happens atomically — preserves the single-active invariant
+    // that getActiveSubscription depends on.
     const [existing] = await db.select().from(subscriptions).where(eq(subscriptions.id, id));
     if (!existing) throw new Error("Subscription not found");
     const now = new Date();
-    const baseEnd = existing.endDate > now ? existing.endDate : now;
-    const newEnd = new Date(baseEnd.getTime() + extraDays * 86400_000);
-    const [updated] = await db.update(subscriptions)
-      .set({ endDate: newEnd, status: "active" })
-      .where(eq(subscriptions.id, id))
-      .returning();
-    invalidateSearchDataset();
-    return updated;
+    return await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${"sub:" + existing.userId}))`);
+      const baseEnd = existing.endDate > now ? existing.endDate : now;
+      const newEnd = new Date(baseEnd.getTime() + extraDays * 86400_000);
+      // Demote every other active row for this user so only the extended
+      // row remains active (cross-tier rows are cancelled per task spec).
+      await tx.update(subscriptions).set({ status: "cancelled" })
+        .where(and(
+          eq(subscriptions.userId, existing.userId),
+          eq(subscriptions.status, "active"),
+          ne(subscriptions.id, id),
+        ));
+      const [updated] = await tx.update(subscriptions)
+        .set({ endDate: newEnd, status: "active" })
+        .where(eq(subscriptions.id, id))
+        .returning();
+      invalidateSearchDataset();
+      return updated;
+    });
   }
 
   async getSubscriptionPlanConfig(): Promise<SubscriptionPlanConfig> {

@@ -94,6 +94,10 @@ export const subscriptions = pgTable("subscriptions", {
 }, (table) => [
   index("subs_user_idx").on(table.userId),
   index("subs_active_idx").on(table.userId, table.status, table.endDate),
+  // Partial unique index on payment_id (NULLs excluded) makes Cashfree
+  // order_id idempotency race-safe at the DB level: two concurrent
+  // verify-payment calls cannot both insert a row for the same order.
+  uniqueIndex("subs_payment_id_unique").on(table.paymentId).where(sql`${table.paymentId} IS NOT NULL`),
 ]);
 
 export const credits = pgTable("credits", {

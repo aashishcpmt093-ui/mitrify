@@ -49,17 +49,21 @@ export default function SubscriptionsPage() {
     queryKey: ["/api/subscriptions/me"],
   });
 
-  const subscribe = useMutation({
-    mutationFn: async (vars: { plan: Plan }) => {
+  const subscribe = useMutation<
+    { paymentSessionId: string; orderId: string; cfMode?: string; plan: Plan; cycle: Cycle },
+    Error,
+    { plan: Plan }
+  >({
+    mutationFn: async (vars) => {
       const res = await apiRequest("POST", "/api/cashfree/create-order", {
         kind: "subscription",
         plan: vars.plan,
         cycle,
       });
-      const data = await res.json();
+      const data = (await res.json()) as { paymentSessionId: string; orderId: string; cfMode?: string };
       return { ...data, plan: vars.plan, cycle };
     },
-    onSuccess: (data: any) => {
+    onSuccess: (data) => {
       const q = new URLSearchParams({
         session_id: data.paymentSessionId,
         order_id: data.orderId,

@@ -22,7 +22,7 @@ import { useTheme } from "@/lib/theme";
 import { useLanguage, LANGUAGE_NAMES, Language } from "@/lib/language";
 import { BackButton } from "@/components/BackButton";
 import logoImg from "@assets/772B17C5-7738-43B8-B5C0-04A7F2A6561B_1773842365564.png";
-import type { CallLog } from "@shared/schema";
+import type { CallLog, SubscriptionResponse, SubscriptionPlan } from "@shared/schema";
 
 export default function ProviderDashboardPage() {
   const { user, logout } = useAuth();
@@ -60,10 +60,10 @@ export default function ProviderDashboardPage() {
     return res.json();
   }});
   const { data: provider } = useQuery({ queryKey: ["/api/providers/me"] });
-  const { data: mySub } = useQuery<{ active: any | null; history: any[] }>({
+  const { data: mySub } = useQuery<{ active: SubscriptionResponse | null; history: SubscriptionResponse[] }>({
     queryKey: ["/api/subscriptions/me"],
   });
-  const activeSubPlan = (mySub?.active?.plan as "boost" | "pro" | "premium" | undefined) || "none";
+  const activeSubPlan: SubscriptionPlan = (mySub?.active?.plan as SubscriptionPlan) || "none";
   const subDays = mySub?.active?.endDate
     ? Math.max(0, Math.ceil((new Date(mySub.active.endDate).getTime() - Date.now()) / 86400000))
     : 0;
