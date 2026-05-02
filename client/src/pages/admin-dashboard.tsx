@@ -598,7 +598,6 @@ export default function AdminDashboardPage() {
     { label: "General Inquiries", email: "contact@mitrify.in" },
   ]);
   const [activeTab, setActiveTab] = useState("providers");
-  const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [gcsMode, setGcsMode] = useState<"overwrite" | "new">("new");
   const [gcsUploadResult, setGcsUploadResult] = useState<{ gcsName: string; url: string; size: number } | null>(null);
   const [testAlertPending, setTestAlertPending] = useState(false);
@@ -1205,7 +1204,7 @@ export default function AdminDashboardPage() {
 
   const gcsListQuery = useQuery<{ files: Array<{ name: string; size: number; updated: string }> }>({
     queryKey: ["/api/admin/backup/gcs-list"],
-    enabled: !!isAdmin && backupDialogOpen && restoreMode === "gcs" && gcsStatus?.configured === true,
+    enabled: !!isAdmin && activeTab === "backup" && restoreMode === "gcs" && gcsStatus?.configured === true,
     staleTime: 30 * 1000,
   });
 
@@ -1828,11 +1827,13 @@ export default function AdminDashboardPage() {
                 setRestoreSummary(null);
                 setParsedTables(null);
                 setSelectedTables(new Set());
-                setRestoreMode("upload");
                 setSelectedGcsName("");
+                setGcsUploadResult(null);
+                setGcsMode("new");
+                setRestoreMode("upload");
+                setRestoreStrategy("merge");
                 setSelectedStoredFilename(null);
                 setDryRunResult(null);
-                setBackupDialogOpen(true);
               } },
           ];
           return (
@@ -1843,9 +1844,13 @@ export default function AdminDashboardPage() {
                   <button
                     key={value}
                     onClick={() => {
+                      if (activeTab === "backup" && restoreInProgress) {
+                        toast({ title: "Restore in progress", description: "Restore complete hone tak wait karo, phir tab switch karo.", variant: "destructive" });
+                        return;
+                      }
                       if (value === "duplicateentry") setSelectedDeleteIds(new Set());
                       if (onClick) onClick();
-                      if (value !== "backup") setActiveTab(value);
+                      setActiveTab(value);
                     }}
                     data-testid={`card-tab-${value}`}
                     className={`flex flex-col items-center gap-1 py-3 px-1 rounded-2xl border transition-all active:scale-95 ${
@@ -4515,35 +4520,20 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {/* ── BACKUP / RESTORE DIALOG ── */}
-      <Dialog open={backupDialogOpen} onOpenChange={(open) => {
-        if (restoreInProgress) return;
-        setBackupDialogOpen(open);
-        if (!open) {
-          setRestoreFile(null);
-          setRestoreConfirmed(false);
-          setRestoreSummary(null);
-          setParsedTables(null);
-          setSelectedTables(new Set());
-          setSelectedGcsName("");
-          setGcsUploadResult(null);
-          setGcsMode("new");
-          setRestoreMode("upload");
-          setRestoreStrategy("merge");
-          setSelectedStoredFilename(null);
-          setDryRunResult(null);
-        }
-      }}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="dialog-backup">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Database className="w-5 h-5 text-amber-600" />
-              Database Backup
-            </DialogTitle>
-            <DialogDescription>
-              Download a full snapshot or restore the database from a previously-downloaded .sql file.
-            </DialogDescription>
-          </DialogHeader>
+      {/* ── BACKUP / RESTORE INLINE CARD ── */}
+      {activeTab === "backup" && (
+        <div className="px-4 pb-6 -mt-2" data-testid="section-backup">
+          <Card className="shadow-sm">
+            <CardContent className="p-4 space-y-3">
+              <div className="space-y-1">
+                <h2 className="flex items-center gap-2 text-base font-semibold">
+                  <Database className="w-5 h-5 text-amber-600" />
+                  Database Backup
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Download a full snapshot or restore the database from a previously-downloaded .sql file.
+                </p>
+              </div>
 
           {/* Download section */}
           <div className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/20 p-4 space-y-2">
@@ -5425,31 +5415,25 @@ export default function AdminDashboardPage() {
             })()}
           </div>
 
-          <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setBackupDialogOpen(false)}
-              disabled={restoreInProgress}
-              data-testid="button-backup-close"
-            >
-              Close
-            </Button>
-            {restoreMode === "upload" && (
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  const input = document.getElementById("restore-file") as HTMLInputElement | null;
-                  input?.click();
-                }}
-                disabled={restoreInProgress}
-                data-testid="button-backup-restore"
-              >
-                Upload backup file
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t">
+                {restoreMode === "upload" && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      const input = document.getElementById("restore-file") as HTMLInputElement | null;
+                      input?.click();
+                    }}
+                    disabled={restoreInProgress}
+                    data-testid="button-backup-restore"
+                  >
+                    Upload backup file
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
     </div>
   );
