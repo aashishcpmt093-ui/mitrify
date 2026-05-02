@@ -893,7 +893,8 @@ export default function AdminDashboardPage() {
   const [changePwdId, setChangePwdId] = useState<number | null>(null);
   const [changePwdVal, setChangePwdVal] = useState("");
   const [editJobId, setEditJobId] = useState<number | null>(null);
-  const [editJobForm, setEditJobForm] = useState({ jobName: "", description: "", location: "", salary: "", workHours: "", contactPhone: "", isActive: true });
+  const [editJobForm, setEditJobForm] = useState({ jobName: "", description: "", location: "", salary: "", workHours: "", contactPhone: "", isActive: true, postType: "mitrify", googleFormUrl: "" });
+  const GOOGLE_FORM_URL_RE = /^https?:\/\/(forms\.gle\/[^\s]+|docs\.google\.com\/forms\/[^\s]+)$/i;
   const [selectedProviderDetail, setSelectedProviderDetail] = useState<any | null>(null);
   const [selectedCoAdminId, setSelectedCoAdminId] = useState<number | null>(null);
   const [showSalaryHistory, setShowSalaryHistory] = useState(false);
@@ -2553,16 +2554,45 @@ export default function AdminDashboardPage() {
                     <div key={job.id} className="border border-slate-200 dark:border-slate-700 rounded-xl p-4 space-y-3" data-testid={`card-admin-job-${job.id}`}>
                       {editJobId === job.id ? (
                         <div className="space-y-2">
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="text-muted-foreground">Post type:</span>
+                            <label className="flex items-center gap-1 cursor-pointer">
+                              <input type="radio" name={`pt-${job.id}`} checked={editJobForm.postType === "mitrify"} onChange={() => setEditJobForm(f => ({ ...f, postType: "mitrify" }))} data-testid={`radio-edit-job-mitrify-${job.id}`} />
+                              Mitrify
+                            </label>
+                            <label className="flex items-center gap-1 cursor-pointer">
+                              <input type="radio" name={`pt-${job.id}`} checked={editJobForm.postType === "google_form"} onChange={() => setEditJobForm(f => ({ ...f, postType: "google_form" }))} data-testid={`radio-edit-job-google-${job.id}`} />
+                              Google Form
+                            </label>
+                          </div>
                           <Input value={editJobForm.jobName} onChange={e => setEditJobForm(f => ({ ...f, jobName: e.target.value }))} placeholder="Job Title" className="h-8 text-xs" data-testid={`input-edit-job-name-${job.id}`} />
                           <Textarea value={editJobForm.description} onChange={e => setEditJobForm(f => ({ ...f, description: e.target.value }))} placeholder="Description" rows={2} className="text-xs" data-testid={`input-edit-job-desc-${job.id}`} />
                           <div className="grid grid-cols-2 gap-2">
                             <Input value={editJobForm.location} onChange={e => setEditJobForm(f => ({ ...f, location: e.target.value }))} placeholder="Location" className="h-8 text-xs" />
-                            <Input value={editJobForm.contactPhone} onChange={e => setEditJobForm(f => ({ ...f, contactPhone: e.target.value }))} placeholder="Contact Phone" className="h-8 text-xs" />
+                            <Input value={editJobForm.contactPhone} onChange={e => setEditJobForm(f => ({ ...f, contactPhone: e.target.value }))} placeholder={editJobForm.postType === "google_form" ? "Contact Phone (optional)" : "Contact Phone"} className="h-8 text-xs" />
                           </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <Input value={editJobForm.salary || ""} onChange={e => setEditJobForm(f => ({ ...f, salary: e.target.value }))} placeholder="Salary (optional)" className="h-8 text-xs" />
-                            <Input value={editJobForm.workHours || ""} onChange={e => setEditJobForm(f => ({ ...f, workHours: e.target.value }))} placeholder="Work Hours (optional)" className="h-8 text-xs" />
-                          </div>
+                          {editJobForm.postType === "mitrify" && (
+                            <div className="grid grid-cols-2 gap-2">
+                              <Input value={editJobForm.salary || ""} onChange={e => setEditJobForm(f => ({ ...f, salary: e.target.value }))} placeholder="Salary (optional)" className="h-8 text-xs" />
+                              <Input value={editJobForm.workHours || ""} onChange={e => setEditJobForm(f => ({ ...f, workHours: e.target.value }))} placeholder="Work Hours (optional)" className="h-8 text-xs" />
+                            </div>
+                          )}
+                          {editJobForm.postType === "google_form" && (
+                            <div className="space-y-1">
+                              <Input
+                                value={editJobForm.googleFormUrl || ""}
+                                onChange={e => setEditJobForm(f => ({ ...f, googleFormUrl: e.target.value }))}
+                                placeholder="https://forms.gle/... or https://docs.google.com/forms/..."
+                                className="h-8 text-xs"
+                                data-testid={`input-edit-job-form-url-${job.id}`}
+                              />
+                              {editJobForm.googleFormUrl && !GOOGLE_FORM_URL_RE.test(editJobForm.googleFormUrl.trim()) && (
+                                <p className="text-[10px] text-red-600" data-testid={`text-edit-job-form-url-error-${job.id}`}>
+                                  Sirf forms.gle ya docs.google.com/forms link allowed hai
+                                </p>
+                              )}
+                            </div>
+                          )}
                           <div className="flex items-center gap-2">
                             <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                               <input type="checkbox" checked={editJobForm.isActive} onChange={e => setEditJobForm(f => ({ ...f, isActive: e.target.checked }))} className="accent-primary" />
@@ -2570,7 +2600,29 @@ export default function AdminDashboardPage() {
                             </label>
                           </div>
                           <div className="flex gap-2">
-                            <Button size="sm" className="flex-1 h-7 text-xs" onClick={() => updateAdminJob.mutate({ id: job.id, ...editJobForm })} disabled={updateAdminJob.isPending} data-testid={`button-save-job-${job.id}`}>Save</Button>
+                            <Button
+                              size="sm"
+                              className="flex-1 h-7 text-xs"
+                              onClick={() => {
+                                const isForm = editJobForm.postType === "google_form";
+                                updateAdminJob.mutate({
+                                  id: job.id,
+                                  ...editJobForm,
+                                  // Clear Mitrify-only fields when switching to google_form
+                                  // so legacy values don't linger on the row.
+                                  salary: isForm ? "" : editJobForm.salary,
+                                  workHours: isForm ? "" : editJobForm.workHours,
+                                  googleFormUrl: isForm ? editJobForm.googleFormUrl.trim() : "",
+                                });
+                              }}
+                              disabled={
+                                updateAdminJob.isPending ||
+                                (editJobForm.postType === "google_form" && !GOOGLE_FORM_URL_RE.test((editJobForm.googleFormUrl || "").trim()))
+                              }
+                              data-testid={`button-save-job-${job.id}`}
+                            >
+                              Save
+                            </Button>
                             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditJobId(null)}>Cancel</Button>
                           </div>
                         </div>
@@ -2580,22 +2632,39 @@ export default function AdminDashboardPage() {
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className="font-semibold text-sm">{job.jobName}</p>
+                                {job.postType === "google_form" ? (
+                                  <Badge variant="secondary" className="text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" data-testid={`badge-job-type-google-${job.id}`}>Google Form</Badge>
+                                ) : (
+                                  <Badge variant="secondary" className="text-xs bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" data-testid={`badge-job-type-mitrify-${job.id}`}>Mitrify</Badge>
+                                )}
                                 {!job.isActive && <Badge variant="secondary" className="text-xs bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">Inactive</Badge>}
                                 {job.lowCredit && <Badge variant="secondary" className="text-xs bg-orange-100 text-orange-700">Low Credit</Badge>}
                               </div>
                               <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{job.description}</p>
                               <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
                                 <span className="text-xs text-muted-foreground">📍 {job.location}</span>
-                                <span className="text-xs text-muted-foreground">📞 {job.contactPhone}</span>
-                                {job.salary && <span className="text-xs text-green-600">💰 {job.salary}</span>}
+                                {job.contactPhone && <span className="text-xs text-muted-foreground">📞 {job.contactPhone}</span>}
+                                {job.postType !== "google_form" && job.salary && <span className="text-xs text-green-600">💰 {job.salary}</span>}
+                                {job.postType !== "google_form" && job.workHours && <span className="text-xs text-muted-foreground">🕒 {job.workHours}</span>}
                               </div>
+                              {job.postType === "google_form" && job.googleFormUrl && (
+                                <a
+                                  href={job.googleFormUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-blue-600 hover:underline mt-0.5 inline-block break-all"
+                                  data-testid={`link-job-form-url-${job.id}`}
+                                >
+                                  🔗 {job.googleFormUrl}
+                                </a>
+                              )}
                               <p className="text-xs text-muted-foreground mt-0.5">Posted by: <span className="font-mono text-[10px]">{job.userId?.slice(0, 12)}...</span></p>
                             </div>
                             <Button
                               size="sm"
                               variant="outline"
                               className="h-7 text-xs shrink-0"
-                              onClick={() => { setEditJobId(job.id); setEditJobForm({ jobName: job.jobName, description: job.description, location: job.location, salary: job.salary || "", workHours: job.workHours || "", contactPhone: job.contactPhone, isActive: job.isActive }); }}
+                              onClick={() => { setEditJobId(job.id); setEditJobForm({ jobName: job.jobName, description: job.description, location: job.location, salary: job.salary || "", workHours: job.workHours || "", contactPhone: job.contactPhone || "", isActive: job.isActive, postType: job.postType || "mitrify", googleFormUrl: job.googleFormUrl || "" }); }}
                               data-testid={`button-edit-job-${job.id}`}
                             >
                               Edit

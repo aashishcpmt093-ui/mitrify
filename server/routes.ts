@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { storage } from "./storage";
 import { db, pool } from "./db";
-import { profiles, siteContent, jobs, pendingProviders, insertJobSchema, type SubscriptionPlanConfig } from "@shared/schema";
+import { profiles, siteContent, jobs, pendingProviders, insertJobSchema, GOOGLE_FORM_URL_REGEX, type SubscriptionPlanConfig } from "@shared/schema";
 import { api, buildUrl } from "@shared/routes";
 import { z } from "zod";
 import { eq, desc, count, and, inArray } from "drizzle-orm";
@@ -1175,8 +1175,53 @@ export async function registerRoutes(
   app.patch("/api/admin/jobs/:id", adminCheck, async (req, res) => {
     try {
       const jobId = parseInt(req.params.id);
-      const { jobName, description, location, salary, workHours, contactPhone, isActive } = req.body;
-      const updated = await storage.adminUpdateJob(jobId, { jobName, description, location, salary, workHours, contactPhone, isActive });
+      const { jobName, description, location, salary, workHours, contactPhone, isActive, googleFormUrl, postType } = req.body;
+
+      const updates: Parameters<typeof storage.adminUpdateJob>[1] = {};
+      if (jobName !== undefined) updates.jobName = String(jobName);
+      if (description !== undefined) updates.description = String(description);
+      if (location !== undefined) updates.location = String(location);
+      if (salary !== undefined) updates.salary = String(salary);
+      if (workHours !== undefined) updates.workHours = String(workHours);
+      if (contactPhone !== undefined) {
+        const trimmed = String(contactPhone || "").trim();
+        updates.contactPhone = trimmed.length > 0 ? trimmed : null;
+      }
+      if (typeof isActive === "boolean") updates.isActive = isActive;
+
+      // postType change is only allowed between the two known values.
+      if (postType !== undefined) {
+        if (postType !== "mitrify" && postType !== "google_form") {
+          return res.status(400).json({ message: "Invalid postType" });
+        }
+        updates.postType = postType;
+      }
+
+      // googleFormUrl: validate against the same regex used at create-time.
+      // Empty string clears the field; non-empty must be a forms.gle or
+      // docs.google.com/forms URL.
+      if (googleFormUrl !== undefined) {
+        const trimmed = String(googleFormUrl || "").trim();
+        if (trimmed.length === 0) {
+          updates.googleFormUrl = null;
+        } else if (!GOOGLE_FORM_URL_REGEX.test(trimmed)) {
+          return res.status(400).json({ message: "Sirf Google Form ka link allowed hai" });
+        } else {
+          updates.googleFormUrl = trimmed;
+        }
+      }
+
+      // Cross-field invariant: a google_form job (after this update) must
+      // have a non-empty googleFormUrl.
+      const existing = await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
+      if (!existing[0]) return res.status(404).json({ message: "Job not found" });
+      const finalPostType = updates.postType ?? existing[0].postType;
+      const finalUrl = updates.googleFormUrl !== undefined ? updates.googleFormUrl : existing[0].googleFormUrl;
+      if (finalPostType === "google_form" && (!finalUrl || !GOOGLE_FORM_URL_REGEX.test(String(finalUrl)))) {
+        return res.status(400).json({ message: "Google Form job ke liye valid form URL zaroori hai" });
+      }
+
+      const updated = await storage.adminUpdateJob(jobId, updates);
       if (!updated) return res.status(404).json({ message: "Job not found" });
       res.json(updated);
     } catch (e: any) {

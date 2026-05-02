@@ -116,7 +116,7 @@ export interface IStorage {
   getJob(jobId: number): Promise<Job | undefined>;
   updateJobLowCredit(userId: string, lowCredit: boolean): Promise<void>;
   deleteJob(jobId: number, userId: string): Promise<void>;
-  adminUpdateJob(jobId: number, updates: { jobName?: string; description?: string; location?: string; salary?: string; workHours?: string; contactPhone?: string; isActive?: boolean }): Promise<Job | undefined>;
+  adminUpdateJob(jobId: number, updates: { jobName?: string; description?: string; location?: string; salary?: string; workHours?: string; contactPhone?: string | null; isActive?: boolean; googleFormUrl?: string | null; postType?: string }): Promise<Job | undefined>;
 
   hasUsedPromo(phone: string, code: string): Promise<boolean>;
   recordPromoUsage(phone: string, code: string): Promise<void>;
@@ -1685,7 +1685,7 @@ export class DatabaseStorage implements IStorage {
     await db.update(jobs).set({ isActive: false }).where(and(eq(jobs.id, jobId), eq(jobs.userId, userId)));
   }
 
-  async adminUpdateJob(jobId: number, updates: { jobName?: string; description?: string; location?: string; salary?: string; workHours?: string; contactPhone?: string; isActive?: boolean }): Promise<Job | undefined> {
+  async adminUpdateJob(jobId: number, updates: { jobName?: string; description?: string; location?: string; salary?: string; workHours?: string; contactPhone?: string | null; isActive?: boolean; googleFormUrl?: string | null; postType?: string }): Promise<Job | undefined> {
     const [updated] = await db.update(jobs).set(updates).where(eq(jobs.id, jobId)).returning();
     return updated;
   }
