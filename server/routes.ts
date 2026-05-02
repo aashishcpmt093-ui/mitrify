@@ -16,7 +16,7 @@ import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory } from "./backupJob";
-import { startAutoTagJob, getJobStatus, getActiveJobId } from "./lib/auto-tags";
+import { startAutoTagJob, getJobStatus, getActiveJobId, recoverStaleJobs } from "./lib/auto-tags";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -911,14 +911,14 @@ export async function registerRoutes(
   // ─── Auto-Generate Provider Tags (dictionary + Gemini AI fallback) ───
   app.post("/api/admin/auto-generate-tags", adminCheck, async (req, res) => {
     try {
-      const activeId = getActiveJobId();
+      const activeId = await getActiveJobId();
       if (activeId) {
         return res.status(409).json({ message: "Ek job already chal raha hai", activeJobId: activeId });
       }
       const dryRun = req.body?.dryRun === true;
       const limit = typeof req.body?.limit === "number" && req.body.limit > 0 ? Math.floor(req.body.limit) : undefined;
       const jobId = await startAutoTagJob({ dryRun, limit });
-      const status = getJobStatus(jobId);
+      const status = await getJobStatus(jobId);
       res.json({ jobId, total: status?.total ?? 0, geminiAvailable: status?.geminiAvailable ?? false, dryRun });
     } catch (err: any) {
       console.error("auto-generate-tags start error:", err);
@@ -926,8 +926,23 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/admin/auto-generate-tags/status/:jobId", adminCheck, (req, res) => {
-    const status = getJobStatus(req.params.jobId);
+  // Used by the admin UI on mount to resume polling a job that was started
+  // before a page refresh or server restart. Returns the latest not-done job
+  // (or null if none).
+  app.get("/api/admin/auto-generate-tags/active", adminCheck, async (_req, res) => {
+    try {
+      const activeId = await getActiveJobId();
+      if (!activeId) return res.json({ jobId: null });
+      const status = await getJobStatus(activeId);
+      res.json({ jobId: activeId, status });
+    } catch (err: any) {
+      console.error("auto-generate-tags active fetch error:", err);
+      res.status(500).json({ message: err?.message || "Failed to fetch active job" });
+    }
+  });
+
+  app.get("/api/admin/auto-generate-tags/status/:jobId", adminCheck, async (req, res) => {
+    const status = await getJobStatus(req.params.jobId);
     if (!status) return res.status(404).json({ message: "Job not found or expired" });
     res.json(status);
   });

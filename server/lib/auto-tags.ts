@@ -11,7 +11,6 @@ function getGeminiKey(): string | undefined {
   return process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
 }
 
-/** Lower-case, trim, collapse whitespace, strip a leading '#'. */
 function normaliseTag(t: string): string {
   return t
     .toLowerCase()
@@ -22,14 +21,9 @@ function normaliseTag(t: string): string {
     .slice(0, 40);
 }
 
-/** Merge two tag arrays, preserving existing tags VERBATIM (no normalization)
- *  and only normalising incoming new tags. Dedupe uses the same canonical
- *  `normaliseTag` form for both sides so e.g. `#Plumber` and `plumber` collapse.
- *  Capped at `cap`. */
 function mergeAndCap(existing: string[], incoming: string[], cap = MAX_TAGS): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  // Existing tags: preserve EXACT casing/length; use canonical normalised form as dedupe key.
   for (const t of existing || []) {
     if (typeof t !== "string" || !t.trim()) continue;
     const key = normaliseTag(t);
@@ -38,7 +32,6 @@ function mergeAndCap(existing: string[], incoming: string[], cap = MAX_TAGS): st
     out.push(t);
     if (out.length >= cap) return out;
   }
-  // Incoming tags: normalise (lowercase, hyphenated, max 40 chars).
   for (const t of incoming || []) {
     if (out.length >= cap) break;
     const norm = normaliseTag(t);
@@ -48,14 +41,6 @@ function mergeAndCap(existing: string[], incoming: string[], cap = MAX_TAGS): st
     out.push(norm);
   }
   return out.slice(0, cap);
-}
-
-/** Returns the jobId of any currently-running (not done) job, or null. */
-export function getActiveJobId(): string | null {
-  for (const [id, s] of JOBS.entries()) {
-    if (!s.done) return id;
-  }
-  return null;
 }
 
 async function callGemini(serviceName: string, description: string | null): Promise<string[]> {
@@ -143,11 +128,6 @@ export interface TagResult {
   source: TagSource;
 }
 
-/**
- * Build a merged hashtag list for one provider. Always preserves existing tags;
- * dictionary first, Gemini fallback when key present and < MIN_TAGS_BEFORE_AI
- * fresh tags came from the dictionary (or no dictionary match at all).
- */
 export async function generateTagsForProvider(
   serviceName: string,
   description: string | null,
@@ -190,7 +170,13 @@ export async function generateTagsForProvider(
   return { finalTags: merged, newTagsAdded: added, source };
 }
 
-// ---------- Job runner (in-memory progress for polling) ----------
+// ─── Job runner ──────────────────────────────────────────────────────────
+// Hybrid persistence model:
+//   • In-memory `JOBS` map → fast updates from worker loops, polled by UI.
+//   • Postgres `tag_jobs` table → survives restart so the admin can resume
+//     polling a job whose progress was made in a previous server lifetime.
+// DB writes are throttled (every 5 processed providers + always on done) so
+// we don't hammer the database with one row update per provider.
 
 export interface JobStatus {
   jobId: string;
@@ -211,12 +197,83 @@ export interface JobStatus {
 
 const JOBS = new Map<string, JobStatus>();
 const CONCURRENCY = 5;
+const DB_WRITE_EVERY = 5; // processed-count interval to flush to DB
+const STALE_RECOVERY_SECONDS = 5 * 60; // any "not done" job not touched in 5 min on boot is failed
 
-export function getJobStatus(jobId: string): JobStatus | null {
-  return JOBS.get(jobId) || null;
+function rowToStatus(row: any): JobStatus {
+  return {
+    jobId: row.jobId,
+    total: row.total ?? 0,
+    processed: row.processed ?? 0,
+    fromDict: row.fromDict ?? 0,
+    fromAi: row.fromAi ?? 0,
+    fromHybrid: row.fromHybrid ?? 0,
+    skipped: row.skipped ?? 0,
+    failed: row.failed ?? 0,
+    done: !!row.done,
+    startedAt: row.startedAt ? new Date(row.startedAt).getTime() : Date.now(),
+    finishedAt: row.finishedAt ? new Date(row.finishedAt).getTime() : undefined,
+    geminiAvailable: !!row.geminiAvailable,
+    dryRun: !!row.dryRun,
+    errorSample: Array.isArray(row.errorSample) ? row.errorSample : [],
+  };
 }
 
-/** Start a backfill job. Returns the jobId immediately and runs in the background. */
+async function flushToDb(status: JobStatus): Promise<void> {
+  try {
+    await storage.updateTagJob(status.jobId, {
+      processed: status.processed,
+      fromDict: status.fromDict,
+      fromAi: status.fromAi,
+      fromHybrid: status.fromHybrid,
+      skipped: status.skipped,
+      failed: status.failed,
+      done: status.done,
+      finishedAt: status.finishedAt ? new Date(status.finishedAt) : null,
+      errorSample: status.errorSample,
+    });
+  } catch (err: any) {
+    console.warn("[auto-tags] DB flush failed:", err?.message || err);
+  }
+}
+
+/** Returns the jobId of any currently-running (not done) job, or null.
+ *  Reads from DB so it survives a server restart. */
+export async function getActiveJobId(): Promise<string | null> {
+  for (const [id, s] of JOBS.entries()) {
+    if (!s.done) return id;
+  }
+  const row = await storage.getActiveTagJob();
+  return row?.jobId ?? null;
+}
+
+/** Read job status. Prefers in-memory (fresh), falls back to DB so polling
+ *  works after a server restart (UI sees "done" with whatever counts the
+ *  worker last flushed before going down). */
+export async function getJobStatus(jobId: string): Promise<JobStatus | null> {
+  const mem = JOBS.get(jobId);
+  if (mem) return mem;
+  const row = await storage.getTagJob(jobId);
+  return row ? rowToStatus(row) : null;
+}
+
+/** Boot-time recovery: any job rows still marked not-done whose updatedAt is
+ *  older than STALE_RECOVERY_SECONDS were almost certainly killed by a
+ *  server restart or crash mid-run. Mark them failed so the UI can show a
+ *  final state instead of polling forever. Called once on app startup. */
+export async function recoverStaleJobs(): Promise<void> {
+  try {
+    const n = await storage.markStaleTagJobsFailed(STALE_RECOVERY_SECONDS);
+    if (n > 0) {
+      console.log(`[auto-tags] recovered ${n} stale tag job(s) (marked failed)`);
+    }
+  } catch (err: any) {
+    console.warn("[auto-tags] recoverStaleJobs failed:", err?.message || err);
+  }
+}
+
+/** Start a backfill job. Returns the jobId immediately and runs in the
+ *  background. Persists to DB so progress survives a server restart. */
 export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }): Promise<string> {
   const jobId = crypto.randomBytes(6).toString("hex");
   const all = await storage.getAllProviders();
@@ -240,9 +297,18 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
   };
   JOBS.set(jobId, status);
 
-  // background runner
+  // Persist initial row so it's discoverable across restarts.
+  await storage.createTagJob({
+    jobId,
+    total: slice.length,
+    dryRun: !!opts.dryRun,
+    geminiAvailable: !!getGeminiKey(),
+  });
+
+  // Background runner.
   (async () => {
     let idx = 0;
+    let lastFlushed = 0;
     const next = () => (idx < slice.length ? slice[idx++] : null);
 
     const worker = async () => {
@@ -269,6 +335,11 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
           }
         } finally {
           status.processed++;
+          // Throttled DB flush: every DB_WRITE_EVERY processed records.
+          if (status.processed - lastFlushed >= DB_WRITE_EVERY) {
+            lastFlushed = status.processed;
+            void flushToDb(status);
+          }
         }
       }
     };
@@ -276,13 +347,18 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
     await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
     status.done = true;
     status.finishedAt = Date.now();
+    await flushToDb(status); // final write, awaited so caller sees done
 
-    // Garbage-collect old jobs after 30 minutes
+    // GC in-memory slot after 30 min — DB row stays for resume-after-restart.
     setTimeout(() => JOBS.delete(jobId), 30 * 60 * 1000);
-  })().catch(err => {
+  })().catch(async err => {
     console.error("[auto-tags] job runner crashed:", err);
     status.done = true;
     status.finishedAt = Date.now();
+    if (status.errorSample.length < 5) {
+      status.errorSample.push(`runner crash: ${String(err?.message || err).slice(0, 100)}`);
+    }
+    await flushToDb(status);
   });
 
   return jobId;

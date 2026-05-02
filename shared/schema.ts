@@ -347,4 +347,24 @@ export type SearchLog = typeof searchLog.$inferSelect;
 export const insertSearchLogSchema = createInsertSchema(searchLog).omit({ id: true, lastSearched: true });
 export type InsertSearchLog = z.infer<typeof insertSearchLogSchema>;
 
+export const tagJobs = pgTable("tag_jobs", {
+  jobId: varchar("job_id", { length: 32 }).primaryKey(),
+  total: integer("total").notNull().default(0),
+  processed: integer("processed").notNull().default(0),
+  fromDict: integer("from_dict").notNull().default(0),
+  fromAi: integer("from_ai").notNull().default(0),
+  fromHybrid: integer("from_hybrid").notNull().default(0),
+  skipped: integer("skipped").notNull().default(0),
+  failed: integer("failed").notNull().default(0),
+  done: boolean("done").notNull().default(false),
+  dryRun: boolean("dry_run").notNull().default(false),
+  geminiAvailable: boolean("gemini_available").notNull().default(false),
+  errorSample: jsonb("error_sample").$type<string[]>().default([]),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  finishedAt: timestamp("finished_at"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type TagJob = typeof tagJobs.$inferSelect;
+
 export const NO_ALERT_NEEDED_MESSAGE = "No alert needed (backup succeeded)";

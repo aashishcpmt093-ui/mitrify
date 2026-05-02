@@ -2,7 +2,8 @@ import { db } from "./db";
 import {
   profiles, providers, calls, promoCodes, localUsers, credits, subscriptions,
   coAdmins, pendingProviders, visitorStats, jobs, promoUsageLog, employees, searchLog,
-  salaryPayments, creditPayments, appNotifications,
+  salaryPayments, creditPayments, appNotifications, tagJobs,
+  type TagJob,
   type Job,
   type Profile, type InsertProfile,
   type Provider, type InsertProvider,
@@ -124,6 +125,12 @@ export interface IStorage {
   bulkCreateGooglePlaces(records: Array<{ name: string; mobile?: string; serviceName: string; address?: string; latitude?: number; longitude?: number; description?: string }>, assignedTo: string, allowDuplicate?: boolean): Promise<{ imported: number; skipped: number; total: number; skippedNoMobile: number; insertedIds: number[] }>;
   getDuplicateProfiles(): Promise<Array<{ mobile: string; count: number; profiles: Array<{ userId: string; role: string; name: string; mobile: string; isBlocked: boolean; totalCredits: number; completenessScore: number; serviceName: string; description: string; address: string; hasLocation: boolean; hashtags: string[]; approxCharge: string; }>; }>>;
   updatePendingProviderFields(id: number, fields: { serviceName?: string; address?: string; district?: string; state?: string; approxCharge?: string }): Promise<PendingProvider>;
+
+  createTagJob(data: { jobId: string; total: number; dryRun: boolean; geminiAvailable: boolean }): Promise<void>;
+  updateTagJob(jobId: string, patch: Partial<Omit<TagJob, "jobId" | "startedAt">>): Promise<void>;
+  getTagJob(jobId: string): Promise<TagJob | undefined>;
+  getActiveTagJob(): Promise<TagJob | undefined>;
+  markStaleTagJobsFailed(staleSeconds: number): Promise<number>;
 }
 
 function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -1882,6 +1889,50 @@ export class DatabaseStorage implements IStorage {
     if (fields.approxCharge !== undefined) updateData.approxCharge = fields.approxCharge;
     const [pp] = await db.update(pendingProviders).set(updateData).where(eq(pendingProviders.id, id)).returning();
     return pp;
+  }
+
+  async createTagJob(data: { jobId: string; total: number; dryRun: boolean; geminiAvailable: boolean }): Promise<void> {
+    await db.insert(tagJobs).values({
+      jobId: data.jobId,
+      total: data.total,
+      dryRun: data.dryRun,
+      geminiAvailable: data.geminiAvailable,
+      startedAt: new Date(),
+      updatedAt: new Date(),
+    });
+  }
+
+  async updateTagJob(jobId: string, patch: Partial<Omit<TagJob, "jobId" | "startedAt">>): Promise<void> {
+    await db.update(tagJobs)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(tagJobs.jobId, jobId));
+  }
+
+  async getTagJob(jobId: string): Promise<TagJob | undefined> {
+    const [row] = await db.select().from(tagJobs).where(eq(tagJobs.jobId, jobId)).limit(1);
+    return row;
+  }
+
+  async getActiveTagJob(): Promise<TagJob | undefined> {
+    const [row] = await db.select().from(tagJobs)
+      .where(eq(tagJobs.done, false))
+      .orderBy(desc(tagJobs.startedAt))
+      .limit(1);
+    return row;
+  }
+
+  async markStaleTagJobsFailed(staleSeconds: number): Promise<number> {
+    const cutoff = new Date(Date.now() - staleSeconds * 1000);
+    const result = await db.update(tagJobs)
+      .set({
+        done: true,
+        finishedAt: new Date(),
+        updatedAt: new Date(),
+        errorSample: sql`COALESCE(${tagJobs.errorSample}, '[]'::jsonb) || '["job marked failed: server restart or stalled before completion"]'::jsonb`,
+      })
+      .where(and(eq(tagJobs.done, false), lt(tagJobs.updatedAt, cutoff)))
+      .returning({ jobId: tagJobs.jobId });
+    return result.length;
   }
 }
 
