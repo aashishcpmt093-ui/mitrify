@@ -2230,6 +2230,22 @@ export async function registerRoutes(
       const serviceStr = String(service || "").trim();
       if (!cityStr || !serviceStr) return res.status(400).json({ message: "city aur service dono required hain" });
 
+      // Per-admin daily quota. Charge a slot only on the *first* page of a
+      // run (no `pageToken`) so a multi-page client loop counts as one run.
+      const adminKey = "admin";
+      if (!pageToken) {
+        const rate = checkGpBulkRateLimit(adminKey);
+        if (!rate.ok) {
+          return res.status(429).json({
+            message: `Daily limit exhaust ho gayi (${rate.runsToday}/${rate.max} runs aaj). 24 ghante baad try karein.`,
+            runsToday: rate.runsToday,
+            max: rate.max,
+          });
+        }
+        recordGpBulkRun(adminKey);
+      }
+      const rateNow = checkGpBulkRateLimit(adminKey);
+
       const textQuery = `${serviceStr} in ${cityStr}`;
       const body: any = { textQuery, regionCode: "IN", maxResultCount: 20 };
       if (pageToken) body.pageToken = String(pageToken);
@@ -2278,7 +2294,14 @@ export async function registerRoutes(
         ratingCount: p.userRatingCount ?? null,
         types: p.types || [],
       }));
-      res.json({ ok: true, places, nextPageToken: data.nextPageToken || null, query: textQuery });
+      res.json({
+        ok: true,
+        places,
+        nextPageToken: data.nextPageToken || null,
+        query: textQuery,
+        runsToday: rateNow.runsToday,
+        max: rateNow.max,
+      });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Google Places search failed" });
     }
