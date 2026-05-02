@@ -1503,10 +1503,13 @@ export async function registerRoutes(
           return res.json({ success: true, kind, subscription: already, alreadyProcessed: true });
         }
 
-        // Price-integrity: recompute the expected price from the live plan
-        // config and verify it matches the amount Cashfree actually charged.
+        // Price-integrity: bind to the IMMUTABLE order_tags snapshot we
+        // wrote at create-order time (not live config), so admin price
+        // edits mid-checkout cannot reject a valid in-flight payment.
+        // Fall back to live config only if the snapshot is missing.
+        const snapshot = Number(tags.amount || 0);
         const cfg = await storage.getSubscriptionPlanConfig();
-        const expected = cfg?.[plan]?.[cycle];
+        const expected = snapshot > 0 ? snapshot : cfg?.[plan]?.[cycle];
         const paid = Number(order.order_amount || 0);
         if (typeof expected !== "number" || expected <= 0 || Math.abs(paid - expected) > 0.5) {
           return res.status(400).json({ message: "Payment amount does not match plan price" });
