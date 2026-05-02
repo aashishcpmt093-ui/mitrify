@@ -292,19 +292,38 @@ export async function getLatestJob(maxAgeSeconds: number): Promise<JobStatus | n
   return rowToStatus(row);
 }
 
-/** Boot-time recovery: at startup the in-memory worker pool is empty, so any
- *  `done=false` row in the DB necessarily belongs to a dead process and will
- *  never advance. Mark them all failed (cutoff=0 → matches every not-done
- *  row) so the UI can render a terminal state instead of polling forever.
- *  Called once on app startup. */
-export async function recoverStaleJobs(): Promise<void> {
+/** Heartbeat threshold: a `done=false` row whose `updated_at` is older than
+ *  this is considered orphaned (worker process died). The active worker
+ *  loop flushes every 5 processed providers, which under realistic
+ *  concurrency (5 workers, even a slow ~10s/provider) updates `updated_at`
+ *  well within 60s — so 120s gives plenty of headroom and avoids
+ *  false-positives in multi-instance deployments. */
+const STALE_HEARTBEAT_SECONDS = 120;
+
+async function sweepStaleJobs(): Promise<void> {
   try {
-    const n = await storage.markStaleTagJobsFailed(0);
+    const n = await storage.markStaleTagJobsFailed(STALE_HEARTBEAT_SECONDS);
     if (n > 0) {
-      console.log(`[auto-tags] recovered ${n} stale tag job(s) (marked failed)`);
+      console.log(`[auto-tags] swept ${n} stale tag job(s) (heartbeat > ${STALE_HEARTBEAT_SECONDS}s, marked failed)`);
     }
   } catch (err: any) {
-    console.warn("[auto-tags] recoverStaleJobs failed:", err?.message || err);
+    console.warn("[auto-tags] sweepStaleJobs failed:", err?.message || err);
+  }
+}
+
+let sweepTimer: NodeJS.Timeout | null = null;
+
+/** Start the stale-job recovery loop. Runs once immediately (so a row whose
+ *  worker died long enough ago is finalised at boot) and then every 60s. We
+ *  intentionally do NOT mark every `done=false` row failed at boot — in a
+ *  multi-instance deployment another live instance may still own the
+ *  in-flight job. Heartbeat-based detection is safe across both single and
+ *  multi-instance setups. Idempotent: safe to call multiple times. */
+export async function recoverStaleJobs(): Promise<void> {
+  await sweepStaleJobs();
+  if (!sweepTimer) {
+    sweepTimer = setInterval(() => { void sweepStaleJobs(); }, 60_000);
+    if (typeof sweepTimer.unref === "function") sweepTimer.unref();
   }
 }
 
