@@ -984,6 +984,14 @@ export default function AdminDashboardPage() {
   const [gpRateInfo, setGpRateInfo] = useState<{ runsToday: number; max: number } | null>(null);
   const gpAutoSeenRef = useRef<Set<string>>(new Set());
   const gpCancelRef = useRef<boolean>(false);
+  // Saved continuation token from the last fetch — lets the admin click
+  // "Add 20 More" to append the next Google page to existing results
+  // without resetting the list or current selection.
+  const [gpNextPageToken, setGpNextPageToken] = useState<string | null>(null);
+  const [gpFetchingMore, setGpFetchingMore] = useState(false);
+  // Tracks every placeId already in `gpResults` across the original fetch
+  // and any subsequent "Add More" clicks, so we never insert duplicates.
+  const gpSeenIdsRef = useRef<Set<string>>(new Set());
   // Mirrors `gpCancelRef` so the Stop button can re-render immediately
   // into a "Stopping…" state — refs alone don't trigger re-renders.
   const [gpCancelRequested, setGpCancelRequested] = useState(false);
@@ -1462,12 +1470,14 @@ export default function AdminDashboardPage() {
     gpAutoSeenRef.current = new Set();
     gpCancelRef.current = false;
     setGpCancelRequested(false);
+    setGpNextPageToken(null);
+    gpSeenIdsRef.current = new Set();
 
     const target = gpTarget;
     const startedAt = Date.now();
     setGpProgress({ target, fetched: 0, unique: 0, duplicates: 0, apiCalls: 0, done: false, cancelled: false, startedAt });
 
-    const seen = new Set<string>();
+    const seen = gpSeenIdsRef.current;
     const accumulated: typeof gpResults = [];
     let pageToken: string | undefined;
     let fetched = 0, unique = 0, duplicates = 0, apiCalls = 0;
@@ -1531,6 +1541,9 @@ export default function AdminDashboardPage() {
     const finishedAt = Date.now();
     setGpProgress({ target, fetched, unique, duplicates, apiCalls, done: true, cancelled, error: errorMsg, startedAt, finishedAt });
     setGpSearching(false);
+    // Save the continuation token (if Google still has more pages) so the
+    // admin can press "Add 20 More" later without re-running the whole fetch.
+    setGpNextPageToken(pageToken || null);
     const elapsed = Math.round((finishedAt - startedAt) / 1000);
     if (errorMsg) {
       toast({
@@ -1545,6 +1558,70 @@ export default function AdminDashboardPage() {
           : `Done! ${unique} unique businesses mile (${elapsed}s)`,
         description: `${apiCalls} API calls • ${duplicates} duplicates skip kiye`,
       });
+    }
+  };
+
+  // Append the next Google page (~20 more businesses) to the existing
+  // results without resetting the list, selection, or progress card.
+  const handleGoogleAddMore = async () => {
+    if (gpFetchingMore || gpSearching) return;
+    if (!gpCity.trim() || !gpService.trim()) return;
+    setGpFetchingMore(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/google-places-search", {
+        city: gpCity.trim(),
+        service: gpService.trim(),
+        pageToken: gpNextPageToken || undefined,
+      });
+      const data = await res.json();
+      if (typeof data.runsToday === "number") {
+        setGpRateInfo({ runsToday: data.runsToday, max: data.max });
+      }
+      const places: any[] = data.places || [];
+      const fresh: typeof gpResults = [];
+      const freshAutoSelect: string[] = [];
+      let dup = 0;
+      for (const p of places) {
+        if (!p.placeId) continue;
+        if (gpSeenIdsRef.current.has(p.placeId)) { dup++; continue; }
+        gpSeenIdsRef.current.add(p.placeId);
+        fresh.push(p);
+        if (!gpAutoSeenRef.current.has(p.placeId)) {
+          gpAutoSeenRef.current.add(p.placeId);
+          if (p.phone) freshAutoSelect.push(p.placeId);
+        }
+      }
+      if (fresh.length > 0) {
+        setGpResults(prev => [...prev, ...fresh]);
+        if (freshAutoSelect.length > 0) {
+          setGpSelected(prev => {
+            const next = new Set(prev);
+            for (const id of freshAutoSelect) next.add(id);
+            return next;
+          });
+        }
+      }
+      // Update progress counters so the summary card stays accurate.
+      setGpProgress(prev => prev ? {
+        ...prev,
+        fetched: prev.fetched + places.length,
+        unique: prev.unique + fresh.length,
+        duplicates: prev.duplicates + dup,
+        apiCalls: prev.apiCalls + 1,
+        target: Math.max(prev.target, prev.unique + fresh.length),
+        finishedAt: Date.now(),
+      } : prev);
+      setGpNextPageToken(data.nextPageToken || null);
+      toast({
+        title: fresh.length > 0
+          ? `+${fresh.length} aur businesses add ho gaye`
+          : "Koi naya business nahi mila (sab duplicate the)",
+        description: data.nextPageToken ? "Aur fetch ke liye dobara dabayein" : "Google ke paas aur results nahi hain",
+      });
+    } catch (err: any) {
+      toast({ title: err?.message || "Add More failed", variant: "destructive" });
+    } finally {
+      setGpFetchingMore(false);
     }
   };
 
@@ -3313,6 +3390,26 @@ export default function AdminDashboardPage() {
                       </button>
                     </div>
                   </div>
+
+                  {/* Add 20 More — appends the next Google page to the
+                      existing list without losing current selection. */}
+                  {!gpSearching && (
+                    <Button
+                      variant="outline"
+                      className="w-full h-10 text-sm gap-2 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30"
+                      onClick={handleGoogleAddMore}
+                      disabled={gpFetchingMore || !gpNextPageToken}
+                      data-testid="button-gp-add-more"
+                    >
+                      {gpFetchingMore ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" />Aur 20 fetch ho rahe hain…</>
+                      ) : gpNextPageToken ? (
+                        <>+ Google se aur 20 add karein</>
+                      ) : (
+                        <>Google ke paas aur results nahi hain</>
+                      )}
+                    </Button>
+                  )}
 
                   {/*
                     Lazy render: 6000 DOM rows with hover transitions would
