@@ -32,9 +32,7 @@ export default function CashfreeCheckoutPage() {
       return;
     }
 
-    const script = document.createElement("script");
-    script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
-    script.onload = () => {
+    const startCheckout = () => {
       try {
         const cashfree = window.Cashfree({
           mode: cfMode as "sandbox" | "production",
@@ -54,16 +52,54 @@ export default function CashfreeCheckoutPage() {
         setLoading(false);
       }
     };
-    script.onerror = () => {
+
+    // SDK is preloaded in index.html; if it's already there, use it directly.
+    if (typeof window.Cashfree === "function") {
+      startCheckout();
+      return;
+    }
+
+    // Fallback: SDK not loaded yet (e.g. preload still in flight or
+    // blocked). Try to load it on demand. We do NOT remove the script on
+    // cleanup because removing a still-loading <script> can fire onerror
+    // in some browsers and breaks the second mount in StrictMode.
+    const SCRIPT_ID = "cashfree-sdk-v3";
+    let script = document.getElementById(SCRIPT_ID) as HTMLScriptElement | null;
+    let cancelled = false;
+
+    const onReady = () => {
+      if (cancelled) return;
+      if (typeof window.Cashfree === "function") startCheckout();
+      else {
+        setError("Failed to load payment SDK");
+        setLoading(false);
+      }
+    };
+    const onFail = () => {
+      if (cancelled) return;
       setError("Failed to load payment SDK");
       setLoading(false);
     };
-    document.body.appendChild(script);
+
+    if (!script) {
+      script = document.createElement("script");
+      script.id = SCRIPT_ID;
+      script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
+      script.async = true;
+      script.addEventListener("load", onReady);
+      script.addEventListener("error", onFail);
+      document.body.appendChild(script);
+    } else {
+      script.addEventListener("load", onReady);
+      script.addEventListener("error", onFail);
+      // If script already finished loading, fire immediately.
+      if (typeof window.Cashfree === "function") onReady();
+    }
 
     return () => {
-      if (document.body.contains(script)) {
-        document.body.removeChild(script);
-      }
+      cancelled = true;
+      script?.removeEventListener("load", onReady);
+      script?.removeEventListener("error", onFail);
     };
   }, [paymentSessionId]);
 

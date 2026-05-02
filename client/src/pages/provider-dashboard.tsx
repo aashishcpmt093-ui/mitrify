@@ -166,6 +166,9 @@ export default function ProviderDashboardPage() {
               <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); window.open(recruitmentLink || "https://forms.gle/C54uAz7pkupe6g136", "_blank"); }} data-testid="button-recruitment">
                 <Briefcase className="w-4 h-4" /> {t("recruitment")}
               </Button>
+              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/subscriptions"); }} data-testid="button-subscriptions-menu">
+                <Sparkles className="w-4 h-4 text-amber-500" /> {t("subscriptions")}
+              </Button>
               <Button variant="ghost" className="w-full justify-start gap-3" onClick={toggleTheme} data-testid="button-theme-toggle">
                 {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
                 {theme === "dark" ? t("lightMode") : t("darkMode")}
