@@ -16,7 +16,7 @@ import {
   LogOut, Zap, Loader2, ChevronRight, Tag, ArrowLeftRight, Wrench,
   Droplets, Plug, Paintbrush, Car, Home, Scissors, Hammer, Laptop,
   UtensilsCrossed, Shirt, Clock, Navigation, MapPinned, Check, Settings, GraduationCap,
-  Info, ScrollText, Briefcase, Plus, AlertCircle, Trash2, LogIn, UserX, Bell
+  Info, ScrollText, Briefcase, Plus, AlertCircle, Trash2, LogIn, UserX, Bell, User
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { usePwaInstall } from "@/hooks/use-pwa-install";
@@ -1017,9 +1017,6 @@ export default function CustomerHomePage() {
               <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setSearching(false); setSearchQuery(""); setLocation("/customer/home"); }} data-testid="link-home">
                 <Home className="w-4 h-4" /> {t("home")}
               </Button>
-              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); if (!isAuthenticated) { setShowLoginPrompt(true); return; } setLocation("/customer/balance"); }} data-testid="link-balance">
-                <Coins className="w-4 h-4" /> {t("myCredits")}
-              </Button>
               {isAuthenticated && (
                 <Button variant="ghost" className="w-full justify-start gap-3 relative" onClick={() => { setMenuOpen(false); setLocation("/notifications"); }} data-testid="link-notifications">
                   <Bell className="w-4 h-4" /> {t("notifications")}
@@ -1030,13 +1027,8 @@ export default function CustomerHomePage() {
                   )}
                 </Button>
               )}
-              {isAuthenticated && (
-                <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/provider/edit-profile"); }} data-testid="link-edit-profile">
-                  <Settings className="w-4 h-4" /> {t("editProfile")}
-                </Button>
-              )}
-              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); if (!isAuthenticated) { setShowLoginPrompt(true); return; } setLocation("/provider/dashboard"); }} data-testid="button-my-profile">
-                <Wrench className="w-4 h-4" /> {t("myProfile")}
+              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); if (!isAuthenticated) { setShowLoginPrompt(true); return; } setLocation("/my-profile"); }} data-testid="button-my-profile">
+                <User className="w-4 h-4" /> {t("myProfile")}
               </Button>
               <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); window.open(recruitmentLink || "https://forms.gle/C54uAz7pkupe6g136", "_blank"); }} data-testid="button-recruitment">
                 <Briefcase className="w-4 h-4" /> {t("recruitment")}

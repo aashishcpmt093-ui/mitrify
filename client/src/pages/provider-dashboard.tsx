@@ -121,9 +121,6 @@ export default function ProviderDashboardPage() {
               <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/customer/home"); }} data-testid="link-home">
                 <Home className="w-4 h-4" /> {t("home")}
               </Button>
-              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/provider/balance"); }} data-testid="link-balance">
-                <Coins className="w-4 h-4" /> {t("myCredits")}
-              </Button>
               <Button variant="ghost" className="w-full justify-start gap-3 relative" onClick={() => { setMenuOpen(false); setLocation("/notifications"); }} data-testid="link-notifications">
                 <Bell className="w-4 h-4" /> {t("notifications")}
                 {(unreadCount?.count ?? 0) > 0 && (
@@ -132,11 +129,8 @@ export default function ProviderDashboardPage() {
                   </span>
                 )}
               </Button>
-              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/provider/dashboard"); setTimeout(() => { document.getElementById("provider-call-history")?.scrollIntoView({ behavior: "smooth" }); }, 100); }} data-testid="link-call-history">
-                <History className="w-4 h-4" /> {t("callHistory")}
-              </Button>
-              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/provider/edit-profile"); }} data-testid="link-edit-profile">
-                <Settings className="w-4 h-4" /> {t("editProfile")}
+              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/my-profile"); }} data-testid="button-my-profile">
+                <User className="w-4 h-4" /> {t("myProfile")}
               </Button>
               <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/customer/home"); }} data-testid="button-search-providers">
                 <Search className="w-4 h-4" /> {t("searchProviders")}

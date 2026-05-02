@@ -346,7 +346,68 @@ export async function registerRoutes(
     }
   });
 
-  // --- Set Username + Password for logged-in user ---
+  // --- Credential-change OTP gate: verify phone OTP for the logged-in user ---
+  // Client must have already completed Firebase phone OTP. We bind the verification
+  // to the authenticated user and to their registered phone, in a separate session
+  // namespace so it cannot be reused by/for the login flow.
+  app.post("/api/local/credential-otp/verify", isLocalAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { phone } = req.body;
+      if (!phone) return res.status(400).json({ message: "Phone required" });
+
+      const localUser = await storage.getLocalUserByUserId(userId);
+      if (!localUser) return res.status(404).json({ message: "User not found" });
+      if (!localUser.phone) {
+        return res.status(400).json({ message: "Aapke account par koi mobile number registered nahi hai" });
+      }
+      if (phone !== localUser.phone) {
+        return res.status(403).json({ message: "OTP only your registered phone par verify ho sakti hai" });
+      }
+
+      (req.session as any).credChangeOtpUserId = userId;
+      (req.session as any).credChangeOtpAt = Date.now();
+      req.session.save(() => res.json({ verified: true }));
+    } catch (err: any) {
+      console.error("Credential OTP verify error:", err);
+      res.status(500).json({ message: "Verification failed" });
+    }
+  });
+
+  // --- Change Username + Password for logged-in user (OTP-gated) ---
+  app.post("/api/local/change-credentials", isLocalAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { username, password } = req.body;
+      if (!username || !password) return res.status(400).json({ message: "Username and password required" });
+      if (/\s/.test(username)) return res.status(400).json({ message: "Username cannot contain spaces" });
+      if (password.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+
+      const credUserId = (req.session as any).credChangeOtpUserId;
+      const credAt = (req.session as any).credChangeOtpAt || 0;
+      if (credUserId !== userId || Date.now() - credAt > 10 * 60 * 1000) {
+        return res.status(400).json({ message: "OTP verification required or expired. Please verify OTP again." });
+      }
+
+      const existing = await storage.getLocalUserByUsername(username);
+      if (existing && existing.userId !== userId) return res.status(409).json({ message: "Username already taken" });
+
+      const hashed = await bcrypt.hash(password, 10);
+      await storage.updateLocalUserCredentials(userId, username, hashed);
+
+      (req.session as any).credChangeOtpUserId = null;
+      (req.session as any).credChangeOtpAt = null;
+
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Change credentials error:", err);
+      res.status(500).json({ message: "Failed to change credentials" });
+    }
+  });
+
+  // --- Set Username + Password for logged-in user (FIRST-TIME ONLY) ---
+  // Once a user already has a username, they must use /api/local/change-credentials
+  // (OTP-gated) to update — this prevents bypass of the OTP requirement.
   app.post("/api/local/set-credentials", isLocalAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
@@ -354,6 +415,12 @@ export async function registerRoutes(
       if (!username || !password) return res.status(400).json({ message: "Username and password required" });
       if (/\s/.test(username)) return res.status(400).json({ message: "Username cannot contain spaces" });
       if (password.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+
+      const currentUser = await storage.getLocalUserByUserId(userId);
+      if (currentUser?.username) {
+        return res.status(409).json({ message: "Credentials already set. Use OTP-based change to update." });
+      }
+
       const existing = await storage.getLocalUserByUsername(username);
       if (existing && existing.userId !== userId) return res.status(409).json({ message: "Username already taken" });
       const hashed = await bcrypt.hash(password, 10);

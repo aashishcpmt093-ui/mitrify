@@ -9,8 +9,9 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { useState, useEffect } from "react";
-import { ArrowLeft, Save, Loader2, Wrench, X, Plus, Phone, Camera, User, EyeOff, Eye } from "lucide-react";
+import { ArrowLeft, Save, Loader2, Wrench, X, Plus, Phone, Camera, User, EyeOff, Eye, Lock } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import ChangeCredentialsDialog from "@/components/ChangeCredentialsDialog";
 
 export default function ProviderEditProfilePage() {
   const { toast } = useToast();
@@ -28,6 +29,7 @@ export default function ProviderEditProfilePage() {
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
   const [photoLoading, setPhotoLoading] = useState(false);
   const [isHidden, setIsHidden] = useState(false);
+  const [credsOpen, setCredsOpen] = useState(false);
 
   const addTag = () => {
     const val = tagInput.trim().replace(/^#/, "");
@@ -406,8 +408,38 @@ export default function ProviderEditProfilePage() {
               <><Save className="w-4 h-4 mr-2" /> Save Changes</>
             )}
           </Button>
+
+          <Card className="border-dashed">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center shrink-0">
+                    <Lock className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-sm">Edit Username/Password</p>
+                    <p className="text-xs text-muted-foreground">OTP verify karke login details badlein</p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCredsOpen(true)}
+                  data-testid="button-open-change-credentials"
+                >
+                  Change
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </form>
       </main>
+
+      <ChangeCredentialsDialog
+        open={credsOpen}
+        onOpenChange={setCredsOpen}
+      />
     </div>
   );
 }
