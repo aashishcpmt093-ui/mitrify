@@ -235,8 +235,8 @@ function AutoGenerateTagsCard() {
   const finalToastFired = useRef(false);
 
   const { data: providerList } = useQuery<any[]>({ queryKey: ["/api/admin/providers"] });
-  const providerCount = providerList?.length ?? 0;
-  const estSeconds = Math.max(2, Math.ceil(providerCount / 4));
+  const providerCount = (providerList || []).filter((p: any) => p?.isActive !== false).length;
+  const estSeconds = Math.max(2, Math.ceil(providerCount / 5));
   const estMinutes = Math.floor(estSeconds / 60);
   const estLabel = estMinutes >= 1
     ? `~${estMinutes} min ${estSeconds % 60}s`
@@ -297,7 +297,7 @@ function AutoGenerateTagsCard() {
       if (!data.geminiAvailable) {
         toast({
           title: "Gemini key nahi mili",
-          description: "Sirf dictionary se tags fill hongi. AI fallback ke liye GOOGLE_API_KEY secret add karein.",
+          description: "Sirf dictionary se tags fill hongi. AI fallback ke liye GOOGLE_API_KEY (ya GEMINI_API_KEY) secret add karein.",
         });
       }
       setJobId(data.jobId);
@@ -395,7 +395,7 @@ function AutoGenerateTagsCard() {
           </div>
           {!status.geminiAvailable && (
             <p className="text-[11px] text-amber-700 dark:text-amber-400">
-              ⚠ GOOGLE_API_KEY missing — sirf dictionary use ho rahi hai. AI fallback ke liye secret add karein.
+              ⚠ GOOGLE_API_KEY (ya GEMINI_API_KEY) missing — sirf dictionary use ho rahi hai. AI fallback ke liye secret add karein.
             </p>
           )}
           {status.errorSample.length > 0 && (
