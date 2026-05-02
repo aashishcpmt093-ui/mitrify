@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -4626,9 +4625,8 @@ export default function AdminDashboardPage() {
 
       {/* ── BACKUP / RESTORE INLINE CARD ── */}
       {activeTab === "backup" && (
-        <div className="px-4 pb-6 -mt-2" data-testid="section-backup">
-          <Card className="shadow-sm">
-            <CardContent className="p-4 space-y-3">
+        <div data-testid="section-backup">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-3 space-y-3 shadow-sm">
               <div className="space-y-1">
                 <h2 className="flex items-center gap-2 text-base font-semibold">
                   <Database className="w-5 h-5 text-amber-600" />
@@ -4640,7 +4638,7 @@ export default function AdminDashboardPage() {
               </div>
 
           {/* Download section */}
-          <div className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/20 p-4 space-y-2">
+          <div className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/20 p-3 space-y-2">
             <div className="flex items-center gap-2">
               <Download className="w-4 h-4 text-amber-700 dark:text-amber-300" />
               <h3 className="font-semibold text-sm">Download backup</h3>
@@ -4664,7 +4662,7 @@ export default function AdminDashboardPage() {
           </div>
 
           {/* Google Cloud Storage section */}
-          <div className="rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-900/20 p-4 space-y-3 mt-3">
+          <div className="rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-900/20 p-3 space-y-3">
             <div className="flex items-center gap-2">
               <CloudUpload className="w-4 h-4 text-blue-700 dark:text-blue-300" />
               <h3 className="font-semibold text-sm">Google Cloud Backup</h3>
@@ -4745,7 +4743,7 @@ export default function AdminDashboardPage() {
           </div>
 
           {/* Alert webhook test */}
-          <div className="rounded-xl border border-violet-200 dark:border-violet-800 bg-violet-50/60 dark:bg-violet-900/20 p-4 space-y-2 mt-3">
+          <div className="rounded-xl border border-violet-200 dark:border-violet-800 bg-violet-50/60 dark:bg-violet-900/20 p-3 space-y-2">
             <div className="flex items-center gap-2">
               <Bell className="w-4 h-4 text-violet-700 dark:text-violet-300" />
               <h3 className="font-semibold text-sm">Alert webhook</h3>
@@ -4890,7 +4888,7 @@ export default function AdminDashboardPage() {
 
           {/* Backup history */}
           {backupStatus && backupStatus.history.length > 0 && (
-            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/30 p-4 space-y-2 mt-3" data-testid="backup-history-section">
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/30 p-3 space-y-2" data-testid="backup-history-section">
               <div className="flex items-center gap-2">
                 <Clock className="w-4 h-4 text-slate-600 dark:text-slate-400" />
                 <h3 className="font-semibold text-sm">Recent backup history</h3>
@@ -4952,7 +4950,7 @@ export default function AdminDashboardPage() {
           )}
 
           {/* Restore section */}
-          <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-900/20 p-4 space-y-3 mt-3">
+          <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-900/20 p-3 space-y-3">
             <div className="flex items-center gap-2">
               <Upload className="w-4 h-4 text-red-700 dark:text-red-300" />
               <h3 className="font-semibold text-sm">Restore from backup</h3>
@@ -5518,24 +5516,7 @@ export default function AdminDashboardPage() {
               );
             })()}
           </div>
-
-              <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t">
-                {restoreMode === "upload" && (
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      const input = document.getElementById("restore-file") as HTMLInputElement | null;
-                      input?.click();
-                    }}
-                    disabled={restoreInProgress}
-                    data-testid="button-backup-restore"
-                  >
-                    Upload backup file
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+          </div>
         </div>
       )}
 
