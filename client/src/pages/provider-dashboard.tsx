@@ -11,7 +11,7 @@ import { useLocation } from "wouter";
 import {
   Phone, BarChart3, Coins, LogOut, Zap, AlertCircle,
   Share2, Copy, Clock, Wrench, Search, User, Plus, Minus,
-  Menu, X, Home, Settings, Moon, Sun, History, Info, ScrollText, Camera, Briefcase
+  Menu, X, Home, Settings, Moon, Sun, History, Info, ScrollText, Camera, Briefcase, Bell
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -49,6 +49,12 @@ export default function ProviderDashboardPage() {
     },
   });
   const { data: callHistory } = useQuery<CallLog[]>({ queryKey: ["/api/calls/provider"] });
+  // Notification badge count for the menu — polled every 60s so newly-
+  // received calls reflect in the menu badge without a manual refresh.
+  const { data: unreadCount } = useQuery<{ count: number }>({
+    queryKey: ["/api/notifications/unread-count"],
+    refetchInterval: 60000,
+  });
   const { data: myPromo } = useQuery({ queryKey: ["/api/promo-codes/mine"] });
   const { data: recruitmentLink } = useQuery<string>({
     queryKey: ["/api/content", "recruitment_link"],
@@ -117,6 +123,14 @@ export default function ProviderDashboardPage() {
               </Button>
               <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/provider/balance"); }} data-testid="link-balance">
                 <Coins className="w-4 h-4" /> {t("myCredits")}
+              </Button>
+              <Button variant="ghost" className="w-full justify-start gap-3 relative" onClick={() => { setMenuOpen(false); setLocation("/notifications"); }} data-testid="link-notifications">
+                <Bell className="w-4 h-4" /> {t("notifications")}
+                {(unreadCount?.count ?? 0) > 0 && (
+                  <span className="ml-auto bg-primary text-primary-foreground text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1.5" data-testid="badge-unread-count">
+                    {unreadCount!.count > 99 ? "99+" : unreadCount!.count}
+                  </span>
+                )}
               </Button>
               <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/provider/dashboard"); setTimeout(() => { document.getElementById("provider-call-history")?.scrollIntoView({ behavior: "smooth" }); }, 100); }} data-testid="link-call-history">
                 <History className="w-4 h-4" /> {t("callHistory")}

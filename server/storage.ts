@@ -51,6 +51,8 @@ export interface IStorage {
   createAppNotification(data: { userId: string; title: string; message: string; type?: string }): Promise<void>;
   listAppNotifications(userId: string): Promise<Array<{ id: number; userId: string; title: string; message: string; type: string; isRead: boolean; createdAt: Date | null }>>;
   markAppNotificationRead(id: number, userId: string): Promise<void>;
+  countUnreadAppNotifications(userId: string): Promise<number>;
+  markAllAppNotificationsRead(userId: string): Promise<void>;
 
   getOrCreateCredits(userId: string, role: string): Promise<Credit>;
   deductCredit(userId: string, role: string): Promise<boolean>;
@@ -939,6 +941,17 @@ export class DatabaseStorage implements IStorage {
 
   async markAppNotificationRead(id: number, userId: string): Promise<void> {
     await db.update(appNotifications).set({ isRead: true }).where(and(eq(appNotifications.id, id), eq(appNotifications.userId, userId)));
+  }
+
+  async countUnreadAppNotifications(userId: string): Promise<number> {
+    const [row] = await db.select({ c: count() }).from(appNotifications)
+      .where(and(eq(appNotifications.userId, userId), eq(appNotifications.isRead, false)));
+    return Number(row?.c ?? 0);
+  }
+
+  async markAllAppNotificationsRead(userId: string): Promise<void> {
+    await db.update(appNotifications).set({ isRead: true })
+      .where(and(eq(appNotifications.userId, userId), eq(appNotifications.isRead, false)));
   }
 
 

@@ -16,7 +16,7 @@ import {
   LogOut, Zap, Loader2, ChevronRight, Tag, ArrowLeftRight, Wrench,
   Droplets, Plug, Paintbrush, Car, Home, Scissors, Hammer, Laptop,
   UtensilsCrossed, Shirt, Clock, Navigation, MapPinned, Check, Settings, GraduationCap,
-  Info, ScrollText, Briefcase, Plus, AlertCircle, Trash2, LogIn, UserX
+  Info, ScrollText, Briefcase, Plus, AlertCircle, Trash2, LogIn, UserX, Bell
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { usePwaInstall } from "@/hooks/use-pwa-install";
@@ -150,6 +150,14 @@ export default function CustomerHomePage() {
   const [selectedProvider, setSelectedProvider] = useState<any | null>(null);
   const [showScrollToTop, setShowScrollToTop] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
+  // Notification badge count — only fetched when logged in. Polled every
+  // 60s so freshly-received calls show a badge without a manual refresh.
+  const { data: unreadCount } = useQuery<{ count: number }>({
+    queryKey: ["/api/notifications/unread-count"],
+    enabled: isAuthenticated,
+    refetchInterval: 60000,
+  });
+
   const handleGoToLogin = async () => {
     try { await fetch("/api/guest-mode", { method: "POST", credentials: "include" }); } catch {}
     setLocation("/login");
@@ -1012,6 +1020,16 @@ export default function CustomerHomePage() {
               <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); if (!isAuthenticated) { setShowLoginPrompt(true); return; } setLocation("/customer/balance"); }} data-testid="link-balance">
                 <Coins className="w-4 h-4" /> {t("myCredits")}
               </Button>
+              {isAuthenticated && (
+                <Button variant="ghost" className="w-full justify-start gap-3 relative" onClick={() => { setMenuOpen(false); setLocation("/notifications"); }} data-testid="link-notifications">
+                  <Bell className="w-4 h-4" /> {t("notifications")}
+                  {(unreadCount?.count ?? 0) > 0 && (
+                    <span className="ml-auto bg-primary text-primary-foreground text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1.5" data-testid="badge-unread-count">
+                      {unreadCount!.count > 99 ? "99+" : unreadCount!.count}
+                    </span>
+                  )}
+                </Button>
+              )}
               {isAuthenticated && (
                 <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/provider/edit-profile"); }} data-testid="link-edit-profile">
                   <Settings className="w-4 h-4" /> {t("editProfile")}

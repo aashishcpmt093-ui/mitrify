@@ -650,6 +650,23 @@ export async function registerRoutes(
           confirmDoubleCharge: confirmDoubleCharge === true,
           duration: Math.floor(Math.random() * 300) + 30,
         });
+        // Fire-and-forget: notify the provider in-app that a customer just
+        // called them. Failure here must NEVER fail the call response (the
+        // call + credit deduction has already been committed).
+        // IMPORTANT: never include the customer's raw mobile number in the
+        // message — that would defeat the call-masking model. Only the
+        // customer's display name is shown.
+        try {
+          const custName = customerProfile?.name || "Koi customer";
+          await storage.createAppNotification({
+            userId: providerId,
+            title: "Naya Call Aaya 📞",
+            message: `${custName} ne aapko abhi call kiya.`,
+            type: "call",
+          });
+        } catch (notifyErr) {
+          console.error("Failed to create call notification:", notifyErr);
+        }
         return res.status(201).json(result);
       } catch (e: any) {
         const reason = e?.message || "call_failed";
@@ -710,6 +727,61 @@ export async function registerRoutes(
       const userId = req.user.claims.sub;
       const history = await storage.getCallsByProvider(userId);
       res.json(history);
+    } catch (error) {
+      res.status(500).json({ message: "Internal error" });
+    }
+  });
+
+  // ── Notifications ───────────────────────────────────────────────────────
+  // Lists all in-app notifications for the logged-in user. Currently the
+  // only producer is the call route (a notification is created on the
+  // provider's account every time a customer dials them), but the
+  // app_notifications table is generic so future events can also use it.
+  app.get("/api/notifications", isLocalAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const list = await storage.listAppNotifications(userId);
+      res.json(list);
+    } catch (error) {
+      res.status(500).json({ message: "Internal error" });
+    }
+  });
+
+  // Lightweight unread-count endpoint for the menu badge — separate from
+  // the full list so the badge can poll cheaply without re-fetching every
+  // notification body.
+  app.get("/api/notifications/unread-count", isLocalAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const c = await storage.countUnreadAppNotifications(userId);
+      res.json({ count: c });
+    } catch (error) {
+      res.status(500).json({ message: "Internal error" });
+    }
+  });
+
+  // Mark every notification of the current user as read. Called when the
+  // notifications page is opened so the badge clears immediately.
+  app.post("/api/notifications/read-all", isLocalAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      await storage.markAllAppNotificationsRead(userId);
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ message: "Internal error" });
+    }
+  });
+
+  // Mark a single notification as read. The storage method scopes the
+  // update by both id AND userId so a user cannot mark someone else's
+  // notification as read.
+  app.post("/api/notifications/:id/read", isLocalAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      await storage.markAppNotificationRead(id, userId);
+      res.json({ ok: true });
     } catch (error) {
       res.status(500).json({ message: "Internal error" });
     }

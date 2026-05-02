@@ -21,6 +21,7 @@ import ProviderSetupPage from "@/pages/provider-setup";
 import ProviderGuidedSetupPage from "@/pages/provider-guided-setup";
 import CustomerHomePage from "@/pages/customer-home";
 import CustomerHistoryPage from "@/pages/customer-history";
+import NotificationsPage from "@/pages/notifications";
 import CustomerBalancePage from "@/pages/customer-balance";
 import ProviderDashboardPage from "@/pages/provider-dashboard";
 import ProviderBalancePage from "@/pages/provider-balance";
@@ -175,6 +176,9 @@ function Router() {
       {/* Protected customer pages — login required */}
       <Route path="/customer/history">
         <LoggedInRoute><CustomerHistoryPage /></LoggedInRoute>
+      </Route>
+      <Route path="/notifications">
+        <LoggedInRoute><NotificationsPage /></LoggedInRoute>
       </Route>
       <Route path="/customer/balance">
         <LoggedInRoute><CustomerBalancePage /></LoggedInRoute>
