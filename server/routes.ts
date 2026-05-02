@@ -746,7 +746,7 @@ export async function registerRoutes(
         const reason = e?.message || "call_failed";
         const map: Record<string, string> = {
           both_no_balance: "Call not possible: both accounts have zero balance.",
-          customer_no_balance_blocked: "You don't have credits and the provider hasn't opted in to receive zero-balance calls.",
+          customer_no_balance_blocked: "You need at least 1 credit to make this call.",
           provider_cannot_absorb: "Provider doesn't have enough credits to absorb the double charge.",
           cap_reached: "Provider has already accepted the daily limit of zero-balance calls.",
           provider_no_balance: "Provider has no balance — confirm double charge to continue.",
@@ -1389,22 +1389,51 @@ export async function registerRoutes(
   });
 
   // --- Cashfree Payment Routes ---
+  // Supports two purposes via the `kind` body field:
+  //   - kind="credits" (default, back-compat) → buy N credits at ₹1 each.
+  //   - kind="subscription" + plan + cycle    → buy a Boost/Pro/Premium plan.
   app.post("/api/cashfree/create-order", isLocalAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const { credits: creditCount } = req.body;
-
-      if (!creditCount || creditCount < 1 || creditCount > 10000) {
-        return res.status(400).json({ message: "Credits must be between 1 and 10000" });
-      }
-
-      const amount = creditCount;
+      const kind = (req.body?.kind === "subscription") ? "subscription" : "credits";
       const baseUrl = `${req.protocol}://${req.get("host")}`;
       const orderId = `${userId.substring(0, 8)}_${Date.now()}`;
-
       const profile = await storage.getProfile(userId);
       const username = req.user?.claims?.username || "User";
       const email = req.user?.claims?.email || "user@mitrify.com";
+
+      let amount: number;
+      let orderNote: string;
+      let returnUrl: string;
+      let orderTags: Record<string, string>;
+
+      if (kind === "subscription") {
+        const plan = String(req.body?.plan || "");
+        const cycle = String(req.body?.cycle || "");
+        if (!["boost", "pro", "premium"].includes(plan)) {
+          return res.status(400).json({ message: "Invalid plan" });
+        }
+        if (!["monthly", "yearly"].includes(cycle)) {
+          return res.status(400).json({ message: "Invalid billing cycle" });
+        }
+        const cfg = await storage.getSubscriptionPlanConfig();
+        amount = (cfg as any)[plan][cycle];
+        if (!amount || amount < 1) {
+          return res.status(400).json({ message: "Plan price not configured" });
+        }
+        orderNote = `Mitrify ${plan[0].toUpperCase() + plan.slice(1)} ${cycle} subscription`;
+        returnUrl = `${baseUrl}/payment/success?kind=subscription&plan=${plan}&cycle=${cycle}&order_id=${orderId}`;
+        orderTags = { userId, kind: "subscription", plan, cycle, amount: String(amount) };
+      } else {
+        const creditCount = Number(req.body?.credits);
+        if (!creditCount || creditCount < 1 || creditCount > 10000) {
+          return res.status(400).json({ message: "Credits must be between 1 and 10000" });
+        }
+        amount = creditCount;
+        orderNote = `Mitrify ${creditCount} Credits @ ₹1/credit`;
+        returnUrl = `${baseUrl}/payment/success?kind=credits&credits=${creditCount}&order_id=${orderId}`;
+        orderTags = { userId, kind: "credits", credits: String(creditCount) };
+      }
 
       const order = await createCashfreeOrder({
         orderId,
@@ -1412,12 +1441,9 @@ export async function registerRoutes(
         customerName: profile?.name || username,
         customerEmail: email,
         customerPhone: profile?.mobile || "9999999999",
-        returnUrl: `${baseUrl}/payment/success?credits=${creditCount}&order_id=${orderId}`,
-        orderNote: `Mitrify ${creditCount} Credits @ ₹1/credit`,
-        orderTags: {
-          userId,
-          credits: String(creditCount),
-        },
+        returnUrl,
+        orderNote,
+        orderTags,
       });
 
       const cfMode = process.env.REPLIT_DEPLOYMENT === "1" ? "production" : "sandbox";
@@ -1426,6 +1452,8 @@ export async function registerRoutes(
         orderId: order.order_id,
         cfOrderId: order.cf_order_id,
         cfMode,
+        amount,
+        kind,
       });
     } catch (error: any) {
       console.error("Cashfree create order error:", error);
@@ -1453,16 +1481,155 @@ export async function registerRoutes(
         return res.status(403).json({ message: "Payment does not belong to this user" });
       }
 
-      const creditCount = parseInt(tags.credits || "0", 10);
+      const kind = tags.kind || (tags.credits ? "credits" : "credits");
 
+      if (kind === "subscription") {
+        const plan = String(tags.plan || "") as "boost" | "pro" | "premium";
+        const cycle = String(tags.cycle || "") as "monthly" | "yearly";
+        if (!["boost", "pro", "premium"].includes(plan) || !["monthly", "yearly"].includes(cycle)) {
+          return res.status(400).json({ message: "Invalid subscription tags" });
+        }
+
+        // Idempotency: if this order_id was already converted into a
+        // subscription row, return that row instead of extending again.
+        const already = await storage.getSubscriptionByPaymentId(order.order_id);
+        if (already) {
+          return res.json({ success: true, kind, subscription: already, alreadyProcessed: true });
+        }
+
+        // Price-integrity: recompute the expected price from the live plan
+        // config and verify it matches the amount Cashfree actually charged.
+        const cfg = await storage.getSubscriptionPlanConfig();
+        const expected = cfg?.[plan]?.[cycle];
+        const paid = Number((order as any).order_amount || 0);
+        if (typeof expected !== "number" || expected <= 0 || Math.abs(paid - expected) > 0.5) {
+          return res.status(400).json({ message: "Payment amount does not match plan price" });
+        }
+
+        const durationDays = cycle === "yearly" ? 365 : 30;
+        const sub = await storage.createOrExtendSubscription({
+          userId,
+          plan,
+          billingCycle: cycle,
+          durationDays,
+          amount: Math.round(paid),
+          paymentId: order.order_id,
+        });
+        return res.json({ success: true, kind, subscription: sub });
+      }
+
+      // Default: credits
+      const creditCount = parseInt(tags.credits || "0", 10);
       if (creditCount > 0) {
         await storage.addPurchasedCredits(userId, "user", creditCount);
       }
-
-      res.json({ success: true, message: "Payment verified and credits added" });
+      res.json({ success: true, kind: "credits", message: "Payment verified and credits added" });
     } catch (error: any) {
       console.error("Payment verification error:", error);
       res.status(500).json({ message: "Payment verification failed" });
+    }
+  });
+
+  // ── Subscription endpoints ───────────────────────────────────────────────
+  // Public price/perk config used by the Subscriptions page.
+  app.get("/api/subscriptions/config", async (_req, res) => {
+    try {
+      const cfg = await storage.getSubscriptionPlanConfig();
+      res.json(cfg);
+    } catch (e: any) {
+      res.status(500).json({ message: "Failed to load config" });
+    }
+  });
+
+  // Current user's active plan (or null) + history list.
+  app.get("/api/subscriptions/me", isLocalAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const [active, history] = await Promise.all([
+        storage.getActiveSubscription(userId),
+        storage.listUserSubscriptions(userId),
+      ]);
+      res.json({ active: active || null, history });
+    } catch (e: any) {
+      res.status(500).json({ message: "Failed to load subscription" });
+    }
+  });
+
+  // Admin: list all subscriptions with optional search/status/plan filters.
+  app.get("/api/admin/subscriptions", adminCheck, async (req, res) => {
+    try {
+      const search = String(req.query.search || "");
+      const status = String(req.query.status || "");
+      const plan = String(req.query.plan || "");
+      const rows = await storage.listAllSubscriptions({ search, status, plan });
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ message: "Failed to list subscriptions" });
+    }
+  });
+
+  // Admin: edit price/perks config.
+  app.put("/api/admin/subscriptions/config", adminCheck, async (req, res) => {
+    try {
+      const cfg = req.body as any;
+      // Light validation — every tier needs monthly + yearly numbers.
+      for (const tier of ["boost", "pro", "premium"]) {
+        if (!cfg?.[tier] || typeof cfg[tier].monthly !== "number" || typeof cfg[tier].yearly !== "number") {
+          return res.status(400).json({ message: `Invalid config for ${tier}` });
+        }
+      }
+      const saved = await storage.setSubscriptionPlanConfig(cfg);
+      res.json(saved);
+    } catch (e: any) {
+      res.status(500).json({ message: "Failed to save config" });
+    }
+  });
+
+  // Admin: grant a subscription manually (no payment).
+  app.post("/api/admin/subscriptions/grant", adminCheck, async (req: any, res) => {
+    try {
+      const { userId, plan, cycle, days } = req.body || {};
+      if (!userId || !["boost", "pro", "premium"].includes(plan)) {
+        return res.status(400).json({ message: "userId and a valid plan are required" });
+      }
+      const billingCycle = cycle === "monthly" || cycle === "yearly" ? cycle : "custom";
+      const durationDays = Number(days) > 0 ? Number(days) : (cycle === "yearly" ? 365 : 30);
+      const sub = await storage.createOrExtendSubscription({
+        userId,
+        plan,
+        billingCycle: billingCycle as any,
+        durationDays,
+        amount: 0,
+        paymentId: null,
+        grantedBy: req.session?.adminUsername || "admin",
+      });
+      res.json(sub);
+    } catch (e: any) {
+      res.status(500).json({ message: "Failed to grant subscription" });
+    }
+  });
+
+  // Admin: cancel a subscription row by id.
+  app.post("/api/admin/subscriptions/:id/cancel", adminCheck, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const sub = await storage.cancelSubscription(id);
+      res.json(sub);
+    } catch (e: any) {
+      res.status(500).json({ message: "Failed to cancel" });
+    }
+  });
+
+  // Admin: extend by N days.
+  app.post("/api/admin/subscriptions/:id/extend", adminCheck, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const days = Number(req.body?.days || 0);
+      if (days <= 0) return res.status(400).json({ message: "days must be > 0" });
+      const sub = await storage.extendSubscription(id, days);
+      res.json(sub);
+    } catch (e: any) {
+      res.status(500).json({ message: "Failed to extend" });
     }
   });
 

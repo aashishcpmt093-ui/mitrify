@@ -24,6 +24,7 @@ import CustomerHistoryPage from "@/pages/customer-history";
 import NotificationsPage from "@/pages/notifications";
 import MyProfilePage from "@/pages/my-profile";
 import CustomerBalancePage from "@/pages/customer-balance";
+import SubscriptionsPage from "@/pages/subscriptions";
 import ProviderDashboardPage from "@/pages/provider-dashboard";
 import ProviderBalancePage from "@/pages/provider-balance";
 import AdminDashboardPage from "@/pages/admin-dashboard";
@@ -202,6 +203,9 @@ function Router() {
         <AuthenticatedRoute><ProviderEditProfilePage /></AuthenticatedRoute>
       </Route>
 
+      <Route path="/subscriptions">
+        <LoggedInRoute><SubscriptionsPage /></LoggedInRoute>
+      </Route>
       <Route path="/payment/checkout" component={CashfreeCheckoutPage} />
       <Route path="/payment/success" component={PaymentSuccessPage} />
       <Route path="/payment/cancel" component={PaymentCancelPage} />

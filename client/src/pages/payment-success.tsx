@@ -5,7 +5,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { useEffect, useState } from "react";
-import { CheckCircle, Loader2 } from "lucide-react";
+import { CheckCircle, Loader2, Sparkles } from "lucide-react";
 
 export default function PaymentSuccessPage() {
   const { toast } = useToast();
@@ -15,7 +15,10 @@ export default function PaymentSuccessPage() {
 
   const params = new URLSearchParams(window.location.search);
   const orderId = params.get("order_id");
+  const kind = params.get("kind") || "credits";
   const creditsParam = params.get("credits") || "0";
+  const planParam = params.get("plan") || "";
+  const cycleParam = params.get("cycle") || "";
 
   const verifyPayment = useMutation({
     mutationFn: async () => {
@@ -25,8 +28,20 @@ export default function PaymentSuccessPage() {
     onSuccess: () => {
       setVerified(true);
       setVerifying(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/credits/me"] });
-      toast({ title: "Payment Successful!", description: `${creditsParam} credits aapke account mein add ho gaye.` });
+      if (kind === "subscription") {
+        queryClient.invalidateQueries({ queryKey: ["/api/subscriptions/me"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/providers/search"] });
+        toast({
+          title: "Subscription Activated!",
+          description: `${planParam.toUpperCase()} ${cycleParam} plan is now active.`,
+        });
+      } else {
+        queryClient.invalidateQueries({ queryKey: ["/api/credits/me"] });
+        toast({
+          title: "Payment Successful!",
+          description: `${creditsParam} credits aapke account mein add ho gaye.`,
+        });
+      }
     },
     onError: () => {
       setVerifying(false);
@@ -42,6 +57,11 @@ export default function PaymentSuccessPage() {
     }
   }, []);
 
+  const goHome = () => {
+    if (kind === "subscription") setLocation("/subscriptions");
+    else setLocation("/customer/home");
+  };
+
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <Card className="max-w-md w-full">
@@ -54,20 +74,26 @@ export default function PaymentSuccessPage() {
             </>
           ) : verified ? (
             <>
-              <CheckCircle className="w-16 h-16 mx-auto text-green-500" />
+              {kind === "subscription" ? (
+                <Sparkles className="w-16 h-16 mx-auto text-amber-500" />
+              ) : (
+                <CheckCircle className="w-16 h-16 mx-auto text-green-500" />
+              )}
               <h2 className="text-xl font-semibold" data-testid="text-success">Payment Successful!</h2>
               <p className="text-sm text-muted-foreground">
-                {creditsParam} credits aapke account mein add ho gaye. Yeh credits kabhi expire nahi hote.
+                {kind === "subscription"
+                  ? `Your ${planParam.toUpperCase()} ${cycleParam} subscription is active.`
+                  : `${creditsParam} credits aapke account mein add ho gaye. Yeh credits kabhi expire nahi hote.`}
               </p>
-              <Button className="w-full" onClick={() => setLocation("/customer/home")} data-testid="button-go-home">
-                Home Par Jao
+              <Button className="w-full" onClick={goHome} data-testid="button-go-home">
+                {kind === "subscription" ? "View My Plan" : "Home Par Jao"}
               </Button>
             </>
           ) : (
             <>
               <h2 className="text-xl font-semibold" data-testid="text-error">Something went wrong</h2>
               <p className="text-sm text-muted-foreground">We couldn't verify your payment. Please try again or contact support.</p>
-              <Button className="w-full" onClick={() => setLocation("/customer/home")} data-testid="button-go-home">
+              <Button className="w-full" onClick={goHome} data-testid="button-go-home">
                 Go Back
               </Button>
             </>

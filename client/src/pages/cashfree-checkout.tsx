@@ -21,6 +21,9 @@ export default function CashfreeCheckoutPage() {
   const role = params.get("role") || "customer";
   const credits = params.get("credits") || "0";
   const cfMode = params.get("mode") || "sandbox";
+  const kind = params.get("kind") || "credits";
+  const plan = params.get("plan") || "";
+  const cycle = params.get("cycle") || "";
 
   useEffect(() => {
     if (!paymentSessionId) {
@@ -37,9 +40,12 @@ export default function CashfreeCheckoutPage() {
           mode: cfMode as "sandbox" | "production",
         });
 
+        const successQuery = kind === "subscription"
+          ? `kind=subscription&plan=${encodeURIComponent(plan)}&cycle=${encodeURIComponent(cycle)}&order_id=${orderId}`
+          : `kind=credits&role=${role}&credits=${credits}&order_id=${orderId}`;
         cashfree.checkout({
           paymentSessionId: paymentSessionId,
-          returnUrl: `${window.location.origin}/payment/success?role=${role}&credits=${credits}&order_id=${orderId}`,
+          returnUrl: `${window.location.origin}/payment/success?${successQuery}`,
         });
         setLoading(false);
       } catch (err: any) {
@@ -62,7 +68,9 @@ export default function CashfreeCheckoutPage() {
   }, [paymentSessionId]);
 
   const goBack = () => {
-    if (role === "provider") {
+    if (kind === "subscription") {
+      setLocation("/subscriptions");
+    } else if (role === "provider") {
       setLocation("/provider/balance");
     } else {
       setLocation("/customer/balance");

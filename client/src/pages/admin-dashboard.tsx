@@ -23,6 +23,7 @@ import {
   Copy, MapPin, Star, Database, Cloud, CloudUpload, Bell, Sparkles, Tag, Mail
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { SubscriptionsAdminPanel } from "@/components/SubscriptionsAdminPanel";
 import { useTheme } from "@/lib/theme";
 import type { AdminStats, Profile, CallLog, PromoCode } from "@shared/schema";
 import { NO_ALERT_NEEDED_MESSAGE } from "@shared/schema";
@@ -1818,6 +1819,7 @@ export default function AdminDashboardPage() {
             { value: "import",    icon: Upload,     label: "Import",     count: undefined,             iconBg: "bg-rose-100 dark:bg-rose-900/60",       iconColor: "text-rose-600 dark:text-rose-400",      activeBg: "bg-rose-600",    border: "border-rose-200 dark:border-rose-800" },
             { value: "creditpurchase", icon: Coins, label: "Credit Buy", count: purchaseCount,         iconBg: "bg-purple-100 dark:bg-purple-900/60",  iconColor: "text-purple-600 dark:text-purple-400",  activeBg: "bg-purple-600",  border: "border-purple-200 dark:border-purple-800" },
             { value: "duplicateentry", icon: Copy,  label: "Duplicate",  count: duplicateData?.length, iconBg: "bg-red-100 dark:bg-red-900/60",         iconColor: "text-red-600 dark:text-red-400",        activeBg: "bg-red-600",     border: "border-red-200 dark:border-red-800" },
+            { value: "subscriptions", icon: Sparkles, label: "Plans",   count: undefined,             iconBg: "bg-amber-100 dark:bg-amber-900/60",     iconColor: "text-amber-600 dark:text-amber-400",    activeBg: "bg-amber-600",   border: "border-amber-200 dark:border-amber-800" },
             { value: "backup",    icon: Database,   label: "Backup",     count: undefined,             iconBg: "bg-amber-100 dark:bg-amber-900/60",     iconColor: "text-amber-600 dark:text-amber-400",    activeBg: "bg-amber-600",   border: "border-amber-200 dark:border-amber-800",
               onClick: () => {
                 setRestoreFile(null);
@@ -3841,6 +3843,11 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
             ))}
+          </TabsContent>
+
+          {/* ── SUBSCRIPTIONS / PLANS TAB ── */}
+          <TabsContent value="subscriptions" className="space-y-3">
+            <SubscriptionsAdminPanel />
           </TabsContent>
         </Tabs>
       </main>

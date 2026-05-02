@@ -11,8 +11,9 @@ import { useLocation } from "wouter";
 import {
   Phone, BarChart3, Coins, LogOut, Zap, AlertCircle,
   Share2, Copy, Clock, Wrench, Search, User, Plus, Minus,
-  Menu, X, Home, Settings, Moon, Sun, History, Info, ScrollText, Camera, Briefcase, Bell, Mail, ChevronRight
+  Menu, X, Home, Settings, Moon, Sun, History, Info, ScrollText, Camera, Briefcase, Bell, Mail, ChevronRight, Sparkles
 } from "lucide-react";
+import { PlanTick } from "@/components/PlanTick";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -59,6 +60,14 @@ export default function ProviderDashboardPage() {
     return res.json();
   }});
   const { data: provider } = useQuery({ queryKey: ["/api/providers/me"] });
+  const { data: mySub } = useQuery<{ active: any | null; history: any[] }>({
+    queryKey: ["/api/subscriptions/me"],
+  });
+  const activeSubPlan = (mySub?.active?.plan as "boost" | "pro" | "premium" | undefined) || "none";
+  const subDays = mySub?.active?.endDate
+    ? Math.max(0, Math.ceil((new Date(mySub.active.endDate).getTime() - Date.now()) / 86400000))
+    : 0;
+
   const { data: credits } = useQuery<{ freeCredits: number; purchasedCredits: number; totalCredits: number }>({
     queryKey: ["/api/credits/me"],
     queryFn: async () => {
@@ -291,6 +300,33 @@ export default function ProviderDashboardPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* My Subscription card */}
+        <Card data-testid="card-my-subscription-provider">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-semibold text-sm">My Subscription</p>
+                  {activeSubPlan !== "none" ? (
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <PlanTick plan={activeSubPlan} size={14} />
+                      <span className="text-[11px] text-muted-foreground capitalize" data-testid="text-provider-active-plan">
+                        {activeSubPlan} · {subDays} day{subDays === 1 ? "" : "s"} left
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground">No active plan</p>
+                  )}
+                </div>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setLocation("/subscriptions")} data-testid="button-provider-subscriptions">
+                {activeSubPlan === "none" ? "Upgrade" : "Manage"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         {credits && credits.totalCredits <= 0 && (
           <Card className="border-red-300 dark:border-red-800 bg-red-50/60 dark:bg-red-950/30">

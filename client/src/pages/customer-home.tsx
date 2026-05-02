@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { PlanTick } from "@/components/PlanTick";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ALL_STATES, getDistricts, DEFAULT_STATE, DEFAULT_DISTRICT } from "@/lib/india-locations";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -176,6 +177,17 @@ export default function CustomerHomePage() {
     enabled: isAuthenticated,
     refetchInterval: 60000,
   });
+
+  // Caller's own subscription. Used to render Free Call labels when the
+  // caller is Premium (free outgoing) and to surface the active plan in
+  // the menu. Skipped for guests.
+  const { data: mySubscription } = useQuery<{ active: { plan: string; endDate: string } | null }>({
+    queryKey: ["/api/subscriptions/me"],
+    enabled: isAuthenticated,
+  });
+  const callerPlan = (mySubscription?.active?.plan as "boost" | "pro" | "premium" | undefined) || "none";
+  const isFreeCall = (providerPlan: string | undefined | null) =>
+    callerPlan === "premium" || providerPlan === "premium" || providerPlan === "pro";
 
   const handleGoToLogin = async () => {
     try { await fetch("/api/guest-mode", { method: "POST", credentials: "include" }); } catch {}
@@ -1387,6 +1399,7 @@ export default function CustomerHomePage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <h3 className="font-semibold truncate">{result.profile.name}</h3>
+                        <PlanTick plan={(result as any).plan} size={14} />
                         <Badge variant="secondary" className="text-[10px] bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">Matched</Badge>
                       </div>
                       <p className="text-sm text-primary font-medium">{result.provider.serviceName}</p>
@@ -1418,7 +1431,11 @@ export default function CustomerHomePage() {
                       >
                         <Phone className="w-5 h-5" />
                       </Button>
-                      {result.providerLowBalance && (
+                      {isFreeCall((result as any).plan) ? (
+                        <Badge className="text-[8px] leading-none px-1 py-0.5 bg-emerald-500 hover:bg-emerald-500 text-white border-0" data-testid={`badge-free-call-phone-${result.provider.id}`}>
+                          Free Call
+                        </Badge>
+                      ) : result.providerLowBalance && (
                         <Badge variant="destructive" className="text-[8px] leading-none px-1 py-0.5">
                           {t("doubleChargeBadge")}
                         </Badge>
@@ -1448,7 +1465,10 @@ export default function CustomerHomePage() {
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold truncate hover:underline">{result.profile.name}</h3>
+                      <div className="flex items-center gap-1.5">
+                        <h3 className="font-semibold truncate hover:underline">{result.profile.name}</h3>
+                        <PlanTick plan={(result as any).plan} size={14} />
+                      </div>
                       <p className="text-sm text-primary font-medium">{result.provider.serviceName}</p>
                       {result.provider.approxCharge && (
                         <p className="text-sm text-muted-foreground mt-1">
@@ -1488,7 +1508,11 @@ export default function CustomerHomePage() {
                       >
                         <Phone className="w-5 h-5" />
                       </Button>
-                      {result.providerLowBalance && (
+                      {isFreeCall((result as any).plan) ? (
+                        <Badge className="text-[8px] leading-none px-1 py-0.5 bg-emerald-500 hover:bg-emerald-500 text-white border-0" data-testid={`badge-free-call-${result.provider.id}`}>
+                          Free Call
+                        </Badge>
+                      ) : result.providerLowBalance && (
                         <Badge variant="destructive" className="text-[8px] leading-none px-1 py-0.5">
                           {t("doubleChargeBadge")}
                         </Badge>
@@ -1523,7 +1547,10 @@ export default function CustomerHomePage() {
             {/* Header: name + quick call */}
             <div className="px-5 pt-5 pb-4 border-b flex items-center justify-between gap-3 shrink-0">
               <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-lg leading-tight">{selectedProvider.profile.name}</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-bold text-lg leading-tight">{selectedProvider.profile.name}</h3>
+                  <PlanTick plan={(selectedProvider as any).plan} size={16} />
+                </div>
                 <p className="text-sm text-primary font-medium">{selectedProvider.provider.serviceName}</p>
                 {selectedProvider.distanceKm !== null && selectedProvider.distanceKm !== undefined && (
                   <span className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5">

@@ -76,13 +76,25 @@ export const calls = pgTable("calls", {
 export const subscriptions = pgTable("subscriptions", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(),
-  type: varchar("type", { length: 20 }).notNull(),
+  // "boost" | "pro" | "premium"
+  plan: varchar("plan", { length: 20 }).notNull(),
+  // "monthly" | "yearly" | "custom" (admin-granted custom durations)
+  billingCycle: varchar("billing_cycle", { length: 20 }).notNull().default("monthly"),
   startDate: timestamp("start_date").defaultNow(),
   endDate: timestamp("end_date").notNull(),
+  // null when admin-granted (no payment), otherwise Cashfree order_id
   paymentId: varchar("payment_id", { length: 255 }),
-  amount: integer("amount").notNull(),
-  status: varchar("status", { length: 20 }).default("active"),
-});
+  // Amount in INR (integer rupees) actually paid; 0 for admin grants.
+  amount: integer("amount").notNull().default(0),
+  // "active" | "expired" | "cancelled"
+  status: varchar("status", { length: 20 }).notNull().default("active"),
+  // userId of the admin who granted this subscription (or null for paid)
+  grantedBy: varchar("granted_by", { length: 100 }),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("subs_user_idx").on(table.userId),
+  index("subs_active_idx").on(table.userId, table.status, table.endDate),
+]);
 
 export const credits = pgTable("credits", {
   id: serial("id").primaryKey(),
@@ -216,7 +228,7 @@ export const providersRelations = relations(providers, ({ one }) => ({}));
 export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true, createdAt: true });
 export const insertProviderSchema = createInsertSchema(providers).omit({ id: true, createdAt: true });
 export const insertCallSchema = createInsertSchema(calls).omit({ id: true, timestamp: true });
-export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({ id: true, startDate: true });
+export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({ id: true, startDate: true, createdAt: true });
 export const insertCreditSchema = createInsertSchema(credits).omit({ id: true, lastFreeReset: true });
 export const insertPromoCodeSchema = createInsertSchema(promoCodes).omit({ id: true, createdAt: true, usageCount: true });
 export const insertCreditPaymentSchema = createInsertSchema(creditPayments).omit({ id: true, createdAt: true });
@@ -248,6 +260,10 @@ export type CallResponse = Call;
 export type SubscriptionResponse = Subscription;
 export type PromoCodeResponse = PromoCode;
 
+// Subscription plan tier — also used to rank search results.
+// "none" means the provider has no active paid plan.
+export type SubscriptionPlan = "none" | "boost" | "pro" | "premium";
+
 export interface ProviderSearchResult {
   provider: Provider;
   profile: Profile;
@@ -264,7 +280,48 @@ export interface ProviderSearchResult {
   // True when this provider has zero credits left. Customer UI uses this to
   // show a red "double charge" call button + warning dialog before dialing.
   providerLowBalance?: boolean;
+  // Active subscription plan of this provider (for tick badges + ranking).
+  plan?: SubscriptionPlan;
 }
+
+// Config row stored in `site_content` under key "subscription_plans".
+// All amounts are integer rupees (₹).
+export interface SubscriptionPlanConfig {
+  boost: { monthly: number; yearly: number; perks: string[] };
+  pro: { monthly: number; yearly: number; perks: string[] };
+  premium: { monthly: number; yearly: number; perks: string[] };
+}
+
+export const DEFAULT_SUBSCRIPTION_PLAN_CONFIG: SubscriptionPlanConfig = {
+  boost: {
+    monthly: 99,
+    yearly: 999,
+    perks: [
+      "Listing pinned above non-subscribers in search",
+      "White verified-style tick badge next to your name",
+    ],
+  },
+  pro: {
+    monthly: 199,
+    yearly: 1999,
+    perks: [
+      "All Boost perks",
+      "0 credits charged when receiving calls",
+      "Yellow verified-style tick badge",
+      "Always reachable, no daily call cap",
+    ],
+  },
+  premium: {
+    monthly: 499,
+    yearly: 4999,
+    perks: [
+      "All Pro perks",
+      "Free Call: customers pay 0 credits to call you",
+      "Free outgoing calls — your side is always 0",
+      "Top of search results, green tick badge",
+    ],
+  },
+};
 
 export interface AdminStats {
   totalCustomers: number;

@@ -1,8 +1,9 @@
 import { db } from "./db";
 import {
-  profiles, providers, calls, promoCodes, localUsers, credits, subscriptions,
+  profiles, providers, calls, promoCodes, localUsers, credits, subscriptions, siteContent,
   coAdmins, pendingProviders, visitorStats, jobs, promoUsageLog, employees, searchLog,
   salaryPayments, creditPayments, appNotifications, tagJobs,
+  DEFAULT_SUBSCRIPTION_PLAN_CONFIG,
   type TagJob,
   type Job,
   type Profile, type InsertProfile,
@@ -15,9 +16,19 @@ import {
   type PendingProvider, type InsertPendingProvider,
   type ProviderSearchResult, type AdminStats, type CallLog,
   type Employee, type InsertEmployee, type SearchLog,
-  type SalaryPayment,
+  type SalaryPayment, type Subscription, type InsertSubscription,
+  type SubscriptionPlan, type SubscriptionPlanConfig,
 } from "@shared/schema";
 import { eq, and, gte, sql, like, or, ilike, count, desc, isNull, lt, inArray, ne } from "drizzle-orm";
+
+// ── Subscription plan ranking ────────────────────────────────────────────────
+// Search results sort by descending plan rank (Premium > Pro > Boost > none).
+export const PLAN_RANK: Record<SubscriptionPlan, number> = {
+  premium: 3,
+  pro: 2,
+  boost: 1,
+  none: 0,
+};
 
 export interface IStorage {
   getLocalUserByPhone(phone: string): Promise<LocalUser | undefined>;
@@ -126,6 +137,37 @@ export interface IStorage {
   getDuplicateProfiles(): Promise<Array<{ mobile: string; count: number; profiles: Array<{ userId: string; role: string; name: string; mobile: string; isBlocked: boolean; totalCredits: number; completenessScore: number; serviceName: string; description: string; address: string; hasLocation: boolean; hashtags: string[]; approxCharge: string; }>; }>>;
   updatePendingProviderFields(id: number, fields: { serviceName?: string; address?: string; district?: string; state?: string; approxCharge?: string }): Promise<PendingProvider>;
 
+  // ── Subscriptions ────────────────────────────────────────────────────────
+  /** Returns the user's currently active subscription plan ("none" if no
+   *  active row, or all rows have expired). Lazily marks expired rows. */
+  getActiveSubscriptionPlan(userId: string): Promise<SubscriptionPlan>;
+  /** Returns the user's most recent active subscription row (or undefined). */
+  getActiveSubscription(userId: string): Promise<Subscription | undefined>;
+  /** Inserts a new subscription row OR extends the active one.
+   *  endDate = max(now, currentActiveEndDate) + durationDays. */
+  createOrExtendSubscription(opts: {
+    userId: string;
+    plan: "boost" | "pro" | "premium";
+    billingCycle: "monthly" | "yearly" | "custom";
+    durationDays: number;
+    amount: number;
+    paymentId?: string | null;
+    grantedBy?: string | null;
+  }): Promise<Subscription>;
+  /** All subscriptions for a single user, newest first. */
+  listUserSubscriptions(userId: string): Promise<Subscription[]>;
+  /** Admin-only: every subscription row, newest first, with profile name. */
+  listAllSubscriptions(opts?: { search?: string; status?: string; plan?: string }): Promise<Array<Subscription & { name: string; mobile: string }>>;
+  /** Admin-only: cancel a subscription (sets status="cancelled" + ends now). */
+  cancelSubscription(id: number): Promise<Subscription>;
+  /** Admin-only: extend a subscription's endDate by N days. */
+  extendSubscription(id: number, extraDays: number): Promise<Subscription>;
+  /** Admin-only: read the editable plan price/perks config. */
+  getSubscriptionByPaymentId(paymentId: string): Promise<Subscription | undefined>;
+  getSubscriptionPlanConfig(): Promise<SubscriptionPlanConfig>;
+  /** Admin-only: write the editable plan price/perks config. */
+  setSubscriptionPlanConfig(cfg: SubscriptionPlanConfig): Promise<SubscriptionPlanConfig>;
+
   createTagJob(data: { jobId: string; total: number; dryRun: boolean; geminiAvailable: boolean }): Promise<void>;
   updateTagJob(jobId: string, patch: Partial<Omit<TagJob, "jobId" | "startedAt">>): Promise<void>;
   getTagJob(jobId: string): Promise<TagJob | undefined>;
@@ -197,6 +239,10 @@ type SearchDataset = {
   // providers who DO have GPS coordinates. Used to approximate distance for
   // providers whose lat/lng is missing.
   cityAnchors: Map<string, { lat: number; lng: number }>;
+  // userId → highest-ranked currently active subscription plan (or "none").
+  // Computed once per cache cycle so search ranking and call-charging can
+  // both consult it without round-trips.
+  planMap: Map<string, SubscriptionPlan>;
 };
 
 function normalizePlace(s: string | null | undefined): string {
@@ -223,10 +269,15 @@ async function getSearchDataset(): Promise<SearchDataset> {
   if (_searchDatasetPromise) return _searchDatasetPromise;
 
   _searchDatasetPromise = (async () => {
-    const [allProviders, allProfiles, allCredits] = await Promise.all([
+    const nowDate = new Date();
+    const [allProviders, allProfiles, allCredits, activeSubs] = await Promise.all([
       db.select().from(providers).where(eq(providers.isActive, true)),
       db.select().from(profiles).where(eq(profiles.role, "provider")),
       db.select().from(credits).where(eq(credits.role, "user")),
+      db.select().from(subscriptions).where(and(
+        eq(subscriptions.status, "active"),
+        gte(subscriptions.endDate, nowDate),
+      )),
     ]);
     const profileMap = new Map<string, Profile>();
     for (const p of allProfiles) {
@@ -238,6 +289,14 @@ async function getSearchDataset(): Promise<SearchDataset> {
       const total = (c.freeCredits ?? 0) + (c.purchasedCredits ?? 0);
       creditMap.set(c.userId, total > 0);
       lowBalanceMap.set(c.userId, total <= 0);
+    }
+    // Collapse a user's many subscription rows into the highest-rank one.
+    const planMap = new Map<string, SubscriptionPlan>();
+    for (const s of activeSubs) {
+      const plan = (s.plan as SubscriptionPlan) || "none";
+      if (!["boost", "pro", "premium"].includes(plan)) continue;
+      const cur = planMap.get(s.userId) || "none";
+      if (PLAN_RANK[plan] > PLAN_RANK[cur]) planMap.set(s.userId, plan);
     }
 
     // Build city/district → averaged coords map from providers that DO have
@@ -263,7 +322,7 @@ async function getSearchDataset(): Promise<SearchDataset> {
       cityAnchors.set(key, { lat: v.sumLat / v.n, lng: v.sumLng / v.n });
     }
 
-    const data: SearchDataset = { providers: allProviders, profileMap, creditMap, lowBalanceMap, cityAnchors };
+    const data: SearchDataset = { providers: allProviders, profileMap, creditMap, lowBalanceMap, cityAnchors, planMap };
     _searchDatasetCache = { data, expiresAt: Date.now() + SEARCH_DATASET_TTL_MS };
     return data;
   })();
@@ -547,7 +606,8 @@ export class DatabaseStorage implements IStorage {
 
     const cityAnchors = ds.cityAnchors;
 
-    const scoredResults: Array<{ provider: Provider; profile: Profile; distanceKm: number | null; distanceApprox: boolean; city: string | null; score: number }> = [];
+    const planMap = ds.planMap;
+    const scoredResults: Array<{ provider: Provider; profile: Profile; distanceKm: number | null; distanceApprox: boolean; city: string | null; score: number; plan: SubscriptionPlan }> = [];
 
     for (const provider of providerList) {
       const profile = profileMap.get(provider.userId);
@@ -565,6 +625,8 @@ export class DatabaseStorage implements IStorage {
         );
         if (score === 0) continue; // No match at all → skip
       }
+
+      const plan = planMap.get(provider.userId) || "none";
 
       // Pull a best-effort city out of the address so the UI can show it
       // even when GPS coordinates are missing.
@@ -595,19 +657,19 @@ export class DatabaseStorage implements IStorage {
         if (radius && distanceKm != null && distanceKm > radius * 1.25) continue;
       }
 
-      scoredResults.push({ provider, profile, distanceKm, distanceApprox, city, score });
+      scoredResults.push({ provider, profile, distanceKm, distanceApprox, city, score, plan });
     }
 
-    // Sort: first by match score (desc), then by distance (asc). Real and
-    // approximate distances sort together by value; providers with no
-    // distance at all sink to the bottom.
+    // Sort by: subscription plan rank desc → match score desc → distance asc.
+    // Real distances win ties over approximate. Providers with no distance
+    // sink to the bottom of their (plan,score) bucket.
     scoredResults.sort((a, b) => {
+      const planDiff = PLAN_RANK[b.plan] - PLAN_RANK[a.plan];
+      if (planDiff !== 0) return planDiff;
       if (b.score !== a.score) return b.score - a.score;
       if (a.distanceKm === null && b.distanceKm === null) return 0;
       if (a.distanceKm === null) return 1;
       if (b.distanceKm === null) return -1;
-      // Tiny tiebreaker so an exact distance wins over an approximate one
-      // when the numeric values are equal.
       if (a.distanceKm === b.distanceKm) {
         return Number(a.distanceApprox) - Number(b.distanceApprox);
       }
@@ -619,7 +681,7 @@ export class DatabaseStorage implements IStorage {
     const top = scoredResults.slice(0, 200);
 
     const lowBalanceMap = ds.lowBalanceMap;
-    return top.map(({ provider, profile, distanceKm, distanceApprox, city }) => {
+    return top.map(({ provider, profile, distanceKm, distanceApprox, city, plan }) => {
       const contactHidden = provider.isHidden ?? false;
       // We no longer block calls just because the provider has 0 credits —
       // the customer can opt into a double-charge. canCall stays gated on
@@ -634,6 +696,7 @@ export class DatabaseStorage implements IStorage {
         canCall: !contactHidden,
         contactHidden,
         providerLowBalance,
+        plan,
       };
     });
   }
@@ -665,18 +728,19 @@ export class DatabaseStorage implements IStorage {
 
       if (matched) {
         const contactHidden = provider.isHidden ?? false;
-        results.push({ provider, profile, distanceKm: null, canCall: !contactHidden, contactHidden, providerLowBalance: false });
+        results.push({ provider, profile, distanceKm: null, canCall: !contactHidden, contactHidden, providerLowBalance: false, plan: "none" });
       }
     }
 
-    // Batch credit check for phone search results — used to flag low balance
+    // Batch credit + subscription check for phone search results — used
+    // to flag low balance and to render the tick badge / Free Call label.
     if (results.length > 0) {
-      const providerCredits = await db.select().from(credits).where(eq(credits.role, "user"));
-      const lowMap = new Map<string, boolean>();
-      for (const c of providerCredits) {
-        lowMap.set(c.userId, (c.freeCredits ?? 0) + (c.purchasedCredits ?? 0) <= 0);
-      }
-      return results.map(r => ({ ...r, providerLowBalance: lowMap.get(r.provider.userId) ?? false }));
+      const ds = await getSearchDataset();
+      return results.map(r => ({
+        ...r,
+        providerLowBalance: ds.lowBalanceMap.get(r.provider.userId) ?? false,
+        plan: ds.planMap.get(r.provider.userId) || "none",
+      }));
     }
 
     return results;
@@ -706,10 +770,20 @@ export class DatabaseStorage implements IStorage {
     duration: number;
   }): Promise<Call & { chargeReason: string; creditsCharged: number }> {
     const { customerId, providerId, providerAcceptsDouble, confirmDoubleCharge, duration } = opts;
+
+    // Resolve subscription plans BEFORE opening the tx (cheap cached read).
+    // Caller side becomes 0 when the customer is Premium; provider side
+    // becomes 0 when the provider is Pro or Premium. Customer also goes 0
+    // when the provider is Premium ("Free Call").
+    const ds = await getSearchDataset();
+    const callerPlan: SubscriptionPlan = ds.planMap.get(customerId) || "none";
+    const providerPlan: SubscriptionPlan = ds.planMap.get(providerId) || "none";
+
+    const customerFree = callerPlan === "premium" || providerPlan === "premium";
+    const providerFree = providerPlan === "pro" || providerPlan === "premium";
+
     return await db.transaction(async (tx) => {
       const decrement = async (userId: string, amount: number) => {
-        // Lock the credits row, validate balance, then decrement free
-        // first then purchased.
         const [row] = await tx.select().from(credits)
           .where(and(eq(credits.userId, userId), eq(credits.role, "user")))
           .for("update");
@@ -725,7 +799,7 @@ export class DatabaseStorage implements IStorage {
         await tx.update(credits)
           .set({ freeCredits: free, purchasedCredits: purchased })
           .where(eq(credits.id, row.id));
-        return free + purchased + amount; // pre-deduction total
+        return free + purchased + amount;
       };
 
       // Read & lock both rows up-front so balance + cap checks are
@@ -742,13 +816,42 @@ export class DatabaseStorage implements IStorage {
       let chargeReason: string;
       let creditsCharged: number;
 
-      if (customerTotal <= 0 && providerTotal <= 0) {
+      // ── Subscription-driven free-call shortcuts ────────────────────────
+      // These bypass the 5/day cap and the provider-acceptsDouble dance
+      // entirely — neither side actually loses credits.
+      if (customerFree && providerFree) {
+        chargeReason = "subscription_free_both";
+        creditsCharged = 0;
+      } else if (customerFree) {
+        // Caller is Premium → caller side is free regardless of provider.
+        // Provider side still pays normally (provider is not Pro/Premium
+        // since providerFree is false here). If provider is at 0 balance,
+        // the call still happens (Premium subscribers bypass the
+        // double-charge cap entirely; we just don't deduct from them).
+        if (providerTotal > 0) {
+          await decrement(providerId, 1);
+        }
+        chargeReason = "subscription_free_outgoing";
+        creditsCharged = 0;
+      } else if (providerFree) {
+        // Provider is Pro/Premium → provider side is free, customer side
+        // pays normally (1 credit). Pro/Premium providers can receive
+        // calls even at 0 balance — no cap_reached.
+        if (customerTotal <= 0) {
+          // Customer has 0 credits AND provider is Pro/Premium AND not
+          // Premium (because customerFree is false): block since the
+          // customer literally cannot pay. The "double charge" cap is
+          // bypassed though — provider absorbs nothing.
+          throw new Error("customer_no_balance_blocked");
+        }
+        await decrement(customerId, 1);
+        chargeReason = "subscription_free_incoming";
+        creditsCharged = 1;
+      } else if (customerTotal <= 0 && providerTotal <= 0) {
         throw new Error("both_no_balance");
-      }
-      if (customerTotal <= 0) {
+      } else if (customerTotal <= 0) {
         if (!providerAcceptsDouble) throw new Error("customer_no_balance_blocked");
         if (providerTotal < 2) throw new Error("provider_cannot_absorb");
-        // Daily cap (calendar-day reset) inside the same tx.
         const start = new Date();
         start.setHours(0, 0, 0, 0);
         const capRows = await tx.select().from(calls).where(and(
@@ -777,7 +880,7 @@ export class DatabaseStorage implements IStorage {
         customerId,
         providerId,
         duration,
-        paymentStatus: "credit",
+        paymentStatus: creditsCharged === 0 ? "free" : "credit",
         chargeReason,
         creditsCharged,
       }).returning();
@@ -1955,6 +2058,197 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(tagJobs.startedAt))
       .limit(1);
     return row;
+  }
+
+  // ── Subscriptions ──────────────────────────────────────────────────────
+  async getActiveSubscriptionPlan(userId: string): Promise<SubscriptionPlan> {
+    const now = new Date();
+    const rows = await db.select().from(subscriptions).where(and(
+      eq(subscriptions.userId, userId),
+      eq(subscriptions.status, "active"),
+      gte(subscriptions.endDate, now),
+    ));
+    let best: SubscriptionPlan = "none";
+    for (const r of rows) {
+      const p = (r.plan as SubscriptionPlan) || "none";
+      if (PLAN_RANK[p] > PLAN_RANK[best]) best = p;
+    }
+    return best;
+  }
+
+  async getActiveSubscription(userId: string): Promise<Subscription | undefined> {
+    const now = new Date();
+    const rows = await db.select().from(subscriptions).where(and(
+      eq(subscriptions.userId, userId),
+      eq(subscriptions.status, "active"),
+      gte(subscriptions.endDate, now),
+    )).orderBy(desc(subscriptions.endDate));
+    // Return the highest-rank one if multiple are active.
+    let best: Subscription | undefined;
+    for (const r of rows) {
+      const p = (r.plan as SubscriptionPlan) || "none";
+      if (!best || PLAN_RANK[p] > PLAN_RANK[(best.plan as SubscriptionPlan) || "none"]) best = r;
+    }
+    return best;
+  }
+
+  async createOrExtendSubscription(opts: {
+    userId: string;
+    plan: "boost" | "pro" | "premium";
+    billingCycle: "monthly" | "yearly" | "custom";
+    durationDays: number;
+    amount: number;
+    paymentId?: string | null;
+    grantedBy?: string | null;
+  }): Promise<Subscription> {
+    const now = new Date();
+    // Same-tier active sub → simply extend.
+    const [existingSame] = await db.select().from(subscriptions).where(and(
+      eq(subscriptions.userId, opts.userId),
+      eq(subscriptions.status, "active"),
+      gte(subscriptions.endDate, now),
+      eq(subscriptions.plan, opts.plan),
+    )).orderBy(desc(subscriptions.endDate)).limit(1);
+
+    let result: Subscription;
+    if (existingSame) {
+      const baseEnd = existingSame.endDate > now ? existingSame.endDate : now;
+      const newEnd = new Date(baseEnd.getTime() + opts.durationDays * 86400_000);
+      const [updated] = await db.update(subscriptions).set({
+        endDate: newEnd,
+        billingCycle: opts.billingCycle,
+        paymentId: opts.paymentId ?? existingSame.paymentId,
+        amount: existingSame.amount + opts.amount,
+        grantedBy: opts.grantedBy ?? existingSame.grantedBy,
+      }).where(eq(subscriptions.id, existingSame.id)).returning();
+      result = updated;
+    } else {
+      // Different-tier active sub: carry remaining time over to new tier so the
+      // user does not forfeit unused days when upgrading/downgrading.
+      const [existingOther] = await db.select().from(subscriptions).where(and(
+        eq(subscriptions.userId, opts.userId),
+        eq(subscriptions.status, "active"),
+        gte(subscriptions.endDate, now),
+      )).orderBy(desc(subscriptions.endDate)).limit(1);
+
+      const baseEnd = existingOther && existingOther.endDate > now ? existingOther.endDate : now;
+      const newEnd = new Date(baseEnd.getTime() + opts.durationDays * 86400_000);
+
+      if (existingOther) {
+        await db.update(subscriptions).set({ status: "cancelled" })
+          .where(eq(subscriptions.id, existingOther.id));
+      }
+      const [created] = await db.insert(subscriptions).values({
+        userId: opts.userId,
+        plan: opts.plan,
+        billingCycle: opts.billingCycle,
+        endDate: newEnd,
+        paymentId: opts.paymentId ?? null,
+        amount: opts.amount,
+        status: "active",
+        grantedBy: opts.grantedBy ?? null,
+      }).returning();
+      result = created;
+    }
+    invalidateSearchDataset();
+    return result;
+  }
+
+  async getSubscriptionByPaymentId(paymentId: string): Promise<Subscription | undefined> {
+    const [row] = await db.select().from(subscriptions)
+      .where(eq(subscriptions.paymentId, paymentId)).limit(1);
+    return row;
+  }
+
+  async listUserSubscriptions(userId: string): Promise<Subscription[]> {
+    return await db.select().from(subscriptions)
+      .where(eq(subscriptions.userId, userId))
+      .orderBy(desc(subscriptions.createdAt));
+  }
+
+  async listAllSubscriptions(opts?: { search?: string; status?: string; plan?: string }): Promise<Array<Subscription & { name: string; mobile: string }>> {
+    const rows = await db.select().from(subscriptions).orderBy(desc(subscriptions.createdAt));
+    const profileRows = await db.select().from(profiles);
+    const luRows = await db.select().from(localUsers);
+    const profileMap = new Map<string, Profile>();
+    for (const p of profileRows) {
+      // Prefer customer profile for the display name; fall back to provider.
+      if (!profileMap.has(p.userId) || p.role === "customer") profileMap.set(p.userId, p);
+    }
+    const phoneMap = new Map<string, string>();
+    for (const u of luRows) if (u.phone) phoneMap.set(u.userId, u.phone);
+
+    const search = (opts?.search || "").trim().toLowerCase();
+    const status = opts?.status || "";
+    const plan = opts?.plan || "";
+
+    return rows
+      .map(r => {
+        const p = profileMap.get(r.userId);
+        const mobile = p?.mobile || phoneMap.get(r.userId) || "";
+        return { ...r, name: p?.name || "Unknown", mobile };
+      })
+      .filter(r => {
+        if (status && r.status !== status) return false;
+        if (plan && r.plan !== plan) return false;
+        if (search) {
+          const hay = `${r.name} ${r.mobile} ${r.userId}`.toLowerCase();
+          if (!hay.includes(search)) return false;
+        }
+        return true;
+      });
+  }
+
+  async cancelSubscription(id: number): Promise<Subscription> {
+    const [updated] = await db.update(subscriptions)
+      .set({ status: "cancelled", endDate: new Date() })
+      .where(eq(subscriptions.id, id))
+      .returning();
+    invalidateSearchDataset();
+    return updated;
+  }
+
+  async extendSubscription(id: number, extraDays: number): Promise<Subscription> {
+    const [existing] = await db.select().from(subscriptions).where(eq(subscriptions.id, id));
+    if (!existing) throw new Error("Subscription not found");
+    const now = new Date();
+    const baseEnd = existing.endDate > now ? existing.endDate : now;
+    const newEnd = new Date(baseEnd.getTime() + extraDays * 86400_000);
+    const [updated] = await db.update(subscriptions)
+      .set({ endDate: newEnd, status: "active" })
+      .where(eq(subscriptions.id, id))
+      .returning();
+    invalidateSearchDataset();
+    return updated;
+  }
+
+  async getSubscriptionPlanConfig(): Promise<SubscriptionPlanConfig> {
+    const [row] = await db.select().from(siteContent).where(eq(siteContent.key, "subscription_plans"));
+    if (!row) return DEFAULT_SUBSCRIPTION_PLAN_CONFIG;
+    try {
+      const cfg = row.value as SubscriptionPlanConfig;
+      // Backfill any missing tier from defaults so partial admin saves are
+      // always safe on read.
+      return {
+        boost: { ...DEFAULT_SUBSCRIPTION_PLAN_CONFIG.boost, ...(cfg?.boost || {}) },
+        pro: { ...DEFAULT_SUBSCRIPTION_PLAN_CONFIG.pro, ...(cfg?.pro || {}) },
+        premium: { ...DEFAULT_SUBSCRIPTION_PLAN_CONFIG.premium, ...(cfg?.premium || {}) },
+      };
+    } catch {
+      return DEFAULT_SUBSCRIPTION_PLAN_CONFIG;
+    }
+  }
+
+  async setSubscriptionPlanConfig(cfg: SubscriptionPlanConfig): Promise<SubscriptionPlanConfig> {
+    const [existing] = await db.select().from(siteContent).where(eq(siteContent.key, "subscription_plans"));
+    if (existing) {
+      await db.update(siteContent)
+        .set({ value: cfg as any, updatedAt: new Date() })
+        .where(eq(siteContent.key, "subscription_plans"));
+    } else {
+      await db.insert(siteContent).values({ key: "subscription_plans", value: cfg as any, updatedAt: new Date() });
+    }
+    return cfg;
   }
 
   async markStaleTagJobsFailed(staleSeconds: number): Promise<number> {

@@ -2,8 +2,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ArrowLeft, Coins, Phone, Settings, Plus, History, ChevronRight } from "lucide-react";
+import { ArrowLeft, Coins, Phone, Settings, Plus, History, ChevronRight, Sparkles } from "lucide-react";
 import { useLanguage } from "@/lib/language";
+import { PlanTick } from "@/components/PlanTick";
+import type { SubscriptionResponse, SubscriptionPlan } from "@shared/schema";
 
 export default function MyProfilePage() {
   const [, setLocation] = useLocation();
@@ -46,7 +48,16 @@ export default function MyProfilePage() {
     enabled: !!providerProfile,
   });
 
+  const { data: mySub } = useQuery<{ active: SubscriptionResponse | null; history: SubscriptionResponse[] }>({
+    queryKey: ["/api/subscriptions/me"],
+  });
+
   const editProfileRoute = providerProfile ? "/provider/edit-profile" : "/customer/edit-profile";
+  const activeSub = mySub?.active || null;
+  const activePlan: SubscriptionPlan = (activeSub?.plan as SubscriptionPlan) || "none";
+  const subDays = activeSub?.endDate
+    ? Math.max(0, Math.ceil((new Date(activeSub.endDate).getTime() - Date.now()) / 86400000))
+    : 0;
 
   const allCalls: Array<{
     id: string;
@@ -122,6 +133,41 @@ export default function MyProfilePage() {
             >
               <Plus className="w-4 h-4 mr-2" /> Buy More Credits
             </Button>
+          </CardContent>
+        </Card>
+
+        {/* My Subscription */}
+        <Card data-testid="card-my-subscription">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="w-4 h-4 text-amber-500" />
+              <h3 className="font-semibold">My Subscription</h3>
+            </div>
+            {activePlan !== "none" && activeSub ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <PlanTick plan={activePlan} size={20} />
+                    <div className="min-w-0">
+                      <p className="font-semibold text-sm capitalize truncate" data-testid="text-active-plan-name">{activePlan}</p>
+                      <p className="text-[11px] text-muted-foreground" data-testid="text-active-plan-days">
+                        {subDays} day{subDays === 1 ? "" : "s"} left · {activeSub.billingCycle}
+                      </p>
+                    </div>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => setLocation("/subscriptions")} data-testid="button-manage-subscription">
+                    Manage
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center space-y-3 py-2">
+                <p className="text-sm text-muted-foreground">No active plan. Subscribe to unlock free calls and search-result pinning.</p>
+                <Button className="w-full" onClick={() => setLocation("/subscriptions")} data-testid="button-view-plans">
+                  <Sparkles className="w-4 h-4 mr-2" /> View Plans
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
 
