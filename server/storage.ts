@@ -119,6 +119,7 @@ export interface IStorage {
 
   bulkCreatePendingProviders(records: Array<{ name: string; mobile: string; addedBy: string }>, allowDuplicate?: boolean): Promise<{ imported: number; skipped: number; total: number }>;
   bulkCreateMetaLeads(records: Array<{ name: string; mobile: string; serviceName?: string; address?: string; description?: string }>, assignedTo: string, allowDuplicate?: boolean): Promise<{ imported: number; skipped: number; total: number }>;
+  bulkCreateGooglePlaces(records: Array<{ name: string; mobile?: string; serviceName: string; address?: string; latitude?: number; longitude?: number; description?: string }>, assignedTo: string, allowDuplicate?: boolean): Promise<{ imported: number; skipped: number; total: number; skippedNoMobile: number }>;
   getDuplicateProfiles(): Promise<Array<{ mobile: string; count: number; profiles: Array<{ userId: string; role: string; name: string; mobile: string; isBlocked: boolean; totalCredits: number; completenessScore: number; serviceName: string; description: string; address: string; hasLocation: boolean; hashtags: string[]; approxCharge: string; }>; }>>;
   updatePendingProviderFields(id: number, fields: { serviceName?: string; address?: string; district?: string; state?: string; approxCharge?: string }): Promise<PendingProvider>;
 }
@@ -1658,6 +1659,66 @@ export class DatabaseStorage implements IStorage {
       }
     }
     return { imported, skipped, total };
+  }
+
+  async bulkCreateGooglePlaces(records: Array<{ name: string; mobile?: string; serviceName: string; address?: string; latitude?: number; longitude?: number; description?: string }>, assignedTo: string, allowDuplicate = false): Promise<{ imported: number; skipped: number; total: number; skippedNoMobile: number }> {
+    const total = records.length;
+    let skippedNoMobile = 0;
+
+    let pendingMobiles = new Set<string>();
+    let userPhones = new Set<string>();
+    if (!allowDuplicate) {
+      const existingPending = await db.select({ mobile: pendingProviders.mobile }).from(pendingProviders);
+      pendingMobiles = new Set(existingPending.map(r => r.mobile).filter(Boolean) as string[]);
+      const existingUsers = await db.select({ phone: localUsers.phone }).from(localUsers);
+      userPhones = new Set(existingUsers.map(r => r.phone).filter(Boolean) as string[]);
+    }
+
+    const seen = new Set<string>();
+    const toInsert: typeof records = [];
+    for (const rec of records) {
+      const mob = (rec.mobile || "").replace(/\D/g, "");
+      const cleanMob = mob.length >= 10 ? mob.slice(-10) : mob;
+      if (!cleanMob) {
+        skippedNoMobile++;
+        if (!allowDuplicate) continue;
+        toInsert.push({ ...rec, mobile: "" });
+        continue;
+      }
+      if (!allowDuplicate) {
+        if (seen.has(cleanMob)) continue;
+        if (pendingMobiles.has(cleanMob) || userPhones.has(cleanMob)) continue;
+        seen.add(cleanMob);
+      }
+      toInsert.push({ ...rec, mobile: cleanMob });
+    }
+
+    const skipped = total - toInsert.length - skippedNoMobile;
+    let imported = 0;
+    const BATCH = 500;
+    for (let i = 0; i < toInsert.length; i += BATCH) {
+      const chunk = toInsert.slice(i, i + BATCH).map(rec => ({
+        name: rec.name,
+        mobile: rec.mobile || "",
+        serviceName: rec.serviceName || "",
+        address: rec.address || "",
+        description: rec.description || null,
+        latitude: rec.latitude ?? null,
+        longitude: rec.longitude ?? null,
+        addedBy: assignedTo,
+        source: "google" as const,
+        status: "pending" as const,
+      }));
+      try {
+        await db.insert(pendingProviders).values(chunk);
+        imported += chunk.length;
+      } catch {
+        for (const row of chunk) {
+          try { await db.insert(pendingProviders).values(row); imported++; } catch {}
+        }
+      }
+    }
+    return { imported, skipped, total, skippedNoMobile };
   }
 
   async bulkCreateMetaLeads(records: Array<{ name: string; mobile: string; serviceName?: string; address?: string; description?: string }>, assignedTo: string, allowDuplicate = false): Promise<{ imported: number; skipped: number; total: number }> {

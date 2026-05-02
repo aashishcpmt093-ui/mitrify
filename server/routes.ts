@@ -1690,6 +1690,101 @@ export async function registerRoutes(
     }
   });
 
+  // Google Places API (New) — Text Search for businesses by city + service
+  app.post("/api/admin/google-places-search", adminCheck, async (req, res) => {
+    try {
+      const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+      if (!apiKey) return res.status(500).json({ message: "GOOGLE_PLACES_API_KEY not configured" });
+      const { city, service, pageToken } = req.body || {};
+      const cityStr = String(city || "").trim();
+      const serviceStr = String(service || "").trim();
+      if (!cityStr || !serviceStr) return res.status(400).json({ message: "city aur service dono required hain" });
+
+      const textQuery = `${serviceStr} in ${cityStr}`;
+      const body: any = { textQuery, regionCode: "IN", maxResultCount: 20 };
+      if (pageToken) body.pageToken = String(pageToken);
+
+      const fieldMask = [
+        "places.id",
+        "places.displayName",
+        "places.formattedAddress",
+        "places.shortFormattedAddress",
+        "places.location",
+        "places.nationalPhoneNumber",
+        "places.internationalPhoneNumber",
+        "places.websiteUri",
+        "places.types",
+        "places.rating",
+        "places.userRatingCount",
+        "nextPageToken",
+      ].join(",");
+
+      const gRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": apiKey,
+          "X-Goog-FieldMask": fieldMask,
+        },
+        body: JSON.stringify(body),
+      });
+      const data: any = await gRes.json();
+      if (!gRes.ok) {
+        return res.status(gRes.status).json({
+          message: data?.error?.message || "Google Places API call failed",
+          details: data?.error,
+        });
+      }
+
+      const places = (data.places || []).map((p: any) => ({
+        placeId: p.id,
+        name: p.displayName?.text || "",
+        address: p.formattedAddress || p.shortFormattedAddress || "",
+        latitude: p.location?.latitude ?? null,
+        longitude: p.location?.longitude ?? null,
+        phone: p.nationalPhoneNumber || p.internationalPhoneNumber || "",
+        website: p.websiteUri || "",
+        rating: p.rating ?? null,
+        ratingCount: p.userRatingCount ?? null,
+        types: p.types || [],
+      }));
+      res.json({ ok: true, places, nextPageToken: data.nextPageToken || null, query: textQuery });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Google Places search failed" });
+    }
+  });
+
+  // Google Places — Bulk import selected places to pending_providers
+  app.post("/api/admin/google-places-import", adminCheck, async (req, res) => {
+    try {
+      const { places, assignTo, serviceName, allowDuplicate } = req.body || {};
+      if (!Array.isArray(places) || places.length === 0) {
+        return res.status(400).json({ message: "Koi place select nahi hua" });
+      }
+      const assignToStr = String(assignTo || "").trim();
+      if (!assignToStr) return res.status(400).json({ message: "Co-admin select karein" });
+      const coAdmins = await storage.listCoAdmins();
+      if (!coAdmins.some(ca => ca.username === assignToStr)) {
+        return res.status(400).json({ message: `Co-admin '${assignToStr}' not found` });
+      }
+
+      const records = places.map((p: any) => ({
+        name: String(p.name || "").trim() || "Unnamed Business",
+        mobile: String(p.phone || "").trim(),
+        serviceName: String(p.serviceName || serviceName || "").trim() || "Service",
+        address: String(p.address || "").trim(),
+        latitude: typeof p.latitude === "number" ? p.latitude : undefined,
+        longitude: typeof p.longitude === "number" ? p.longitude : undefined,
+        description: p.website ? `Website: ${p.website}` : undefined,
+      }));
+
+      const result = await storage.bulkCreateGooglePlaces(records, assignToStr, allowDuplicate === true);
+      res.json({ ok: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Google Places import failed" });
+    }
+  });
+
   // Delete pending providers with no/invalid mobile number
   app.delete("/api/admin/cleanup-no-mobile", adminCheck, async (req, res) => {
     try {

@@ -584,6 +584,18 @@ export default function AdminDashboardPage() {
   const [assignGroupsLoading, setAssignGroupsLoading] = useState(false);
   const [assignGroupsResult, setAssignGroupsResult] = useState<{ assigned: number; groups: Record<string, number> } | null>(null);
 
+  // Google Places fetch state
+  const [gpCity, setGpCity] = useState("");
+  const [gpService, setGpService] = useState("");
+  const [gpAssignTo, setGpAssignTo] = useState("_default");
+  const [gpAllowDuplicate, setGpAllowDuplicate] = useState(false);
+  const [gpSearching, setGpSearching] = useState(false);
+  const [gpImporting, setGpImporting] = useState(false);
+  const [gpResults, setGpResults] = useState<Array<{ placeId: string; name: string; address: string; latitude: number | null; longitude: number | null; phone: string; website: string; rating: number | null; ratingCount: number | null }>>([]);
+  const [gpSelected, setGpSelected] = useState<Set<string>>(new Set());
+  const [gpNextPageToken, setGpNextPageToken] = useState<string | null>(null);
+  const [gpImportResult, setGpImportResult] = useState<{ imported: number; skipped: number; total: number; skippedNoMobile: number } | null>(null);
+
   // Meta import state
   const [metaFile, setMetaFile] = useState<File | null>(null);
   const [metaPreview, setMetaPreview] = useState<string[]>([]);
@@ -990,6 +1002,86 @@ export default function AdminDashboardPage() {
     } catch {
       setMetaPreview([]);
     }
+  };
+
+  const handleGooglePlacesSearch = async (loadMore = false) => {
+    if (!gpCity.trim() || !gpService.trim()) {
+      toast({ title: "City aur Service / Work dono fill karein", variant: "destructive" });
+      return;
+    }
+    setGpSearching(true);
+    if (!loadMore) {
+      setGpResults([]);
+      setGpSelected(new Set());
+      setGpImportResult(null);
+      setGpNextPageToken(null);
+    }
+    try {
+      const res = await apiRequest("POST", "/api/admin/google-places-search", {
+        city: gpCity.trim(),
+        service: gpService.trim(),
+        pageToken: loadMore ? gpNextPageToken : undefined,
+      });
+      const data = await res.json();
+      const newPlaces = data.places || [];
+      setGpResults(prev => loadMore ? [...prev, ...newPlaces] : newPlaces);
+      setGpNextPageToken(data.nextPageToken || null);
+      // Auto-select all newly fetched places (with phone)
+      setGpSelected(prev => {
+        const next = new Set(prev);
+        for (const p of newPlaces) {
+          if (p.phone) next.add(p.placeId);
+        }
+        return next;
+      });
+      if (newPlaces.length === 0 && !loadMore) {
+        toast({ title: "Koi business nahi mila", description: "Different city ya service try karein" });
+      } else if (!loadMore) {
+        toast({ title: `${newPlaces.length} businesses mile`, description: "Phone number wale auto-selected hain" });
+      }
+    } catch (err: any) {
+      toast({ title: err.message || "Search failed", variant: "destructive" });
+    } finally {
+      setGpSearching(false);
+    }
+  };
+
+  const handleGooglePlacesImport = async () => {
+    if (gpSelected.size === 0) {
+      toast({ title: "Pehle businesses select karein", variant: "destructive" });
+      return;
+    }
+    if (!gpAssignTo || gpAssignTo === "_default") {
+      toast({ title: "Co-admin select karein", variant: "destructive" });
+      return;
+    }
+    setGpImporting(true);
+    setGpImportResult(null);
+    try {
+      const selectedPlaces = gpResults.filter(p => gpSelected.has(p.placeId));
+      const res = await apiRequest("POST", "/api/admin/google-places-import", {
+        places: selectedPlaces,
+        assignTo: gpAssignTo,
+        serviceName: gpService.trim(),
+        allowDuplicate: gpAllowDuplicate,
+      });
+      const data = await res.json();
+      setGpImportResult(data);
+      toast({ title: `Import complete! ${data.imported} businesses added` });
+    } catch (err: any) {
+      toast({ title: err.message || "Import failed", variant: "destructive" });
+    } finally {
+      setGpImporting(false);
+    }
+  };
+
+  const toggleGpPlace = (placeId: string) => {
+    setGpSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(placeId)) next.delete(placeId);
+      else next.add(placeId);
+      return next;
+    });
   };
 
   const handleMetaImport = async () => {
