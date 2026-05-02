@@ -135,8 +135,11 @@ export default function CustomerHomePage() {
     },
     staleTime: 5 * 60 * 1000,
   });
-  const contactEmailsList = (Array.isArray(contactEmailsData) && contactEmailsData.length > 0)
+  const validFetchedContactEmails = Array.isArray(contactEmailsData)
     ? contactEmailsData.filter(x => x && typeof x.email === "string" && x.email.trim().length > 0)
+    : [];
+  const contactEmailsList = validFetchedContactEmails.length > 0
+    ? validFetchedContactEmails
     : [
         { label: t("mailHelp"), email: "help@mitrify.com" },
         { label: t("mailContact"), email: "contact@mitrify.in" },
