@@ -537,9 +537,11 @@ export default function CustomerHomePage() {
             <img src={logoImg} alt="Mitrify" className="h-6 w-6 shrink-0" />
             <span className="truncate text-sm font-semibold">Mitrify</span>
           </div>
-          <Button size="sm" onClick={handleGoToLogin} data-testid="button-top-login-signup">
-            Login / Sign Up
-          </Button>
+          {!isAuthenticated && (
+            <Button size="sm" onClick={handleGoToLogin} data-testid="button-top-login-signup">
+              {t("loginSignup")}
+            </Button>
+          )}
         </div>
       </div>
       {phoneSheet.open && (
