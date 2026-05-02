@@ -931,19 +931,28 @@ export async function registerRoutes(
     }
   });
 
-  // Used by the admin UI on mount to resume polling. Returns the most recent
-  // job within the last 30 min — active OR terminal — so an admin who
-  // refreshes after a server restart still sees the final state of their
-  // last run (e.g. "marked failed: server restart"), not a blank slate. The
-  // UI uses `status.done` to decide whether to keep polling.
+  // Used by the admin UI on mount to resume polling. Returns:
+  //   1. ANY currently-running job (no age limit — long backfills must
+  //      remain resumable even if they've been going for hours), OR
+  //   2. The most recent terminal job from the last 30 min — so an admin
+  //      who refreshes after a server restart still sees the final state
+  //      of their last run (e.g. "marked failed: server restart") instead
+  //      of a blank slate.
+  // The UI inspects `status.done` to decide whether to keep polling.
   app.get("/api/admin/auto-generate-tags/active", adminCheck, async (_req, res) => {
     try {
-      const status = await getLatestJob(30 * 60);
-      if (!status) return res.json({ jobId: null });
-      res.json({ jobId: status.jobId, status });
-    } catch (err: any) {
+      const activeId = await getActiveJobId();
+      if (activeId) {
+        const status = await getJobStatus(activeId);
+        if (status) return res.json({ jobId: activeId, status });
+      }
+      const recent = await getLatestJob(30 * 60);
+      if (!recent) return res.json({ jobId: null });
+      res.json({ jobId: recent.jobId, status: recent });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to fetch active job";
       console.error("auto-generate-tags active fetch error:", err);
-      res.status(500).json({ message: err?.message || "Failed to fetch active job" });
+      res.status(500).json({ message: msg });
     }
   });
 

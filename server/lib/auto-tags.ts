@@ -1,6 +1,13 @@
 import { lookupDictionary } from "./tag-dictionary";
 import { storage } from "../storage";
+import type { TagJob } from "@shared/schema";
 import crypto from "crypto";
+
+function errMsg(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  try { return JSON.stringify(err); } catch { return String(err); }
+}
 
 const MAX_TAGS = 10;
 const MIN_TAGS_BEFORE_AI = 5;
@@ -205,21 +212,21 @@ const DB_WRITE_EVERY = 5; // processed-count interval to flush to DB
 // `done=true`/`processed=N` getting stomped by an earlier `done=false` write.
 const FLUSH_CHAIN = new Map<string, Promise<void>>();
 
-function rowToStatus(row: any): JobStatus {
+function rowToStatus(row: TagJob): JobStatus {
   return {
     jobId: row.jobId,
-    total: row.total ?? 0,
-    processed: row.processed ?? 0,
-    fromDict: row.fromDict ?? 0,
-    fromAi: row.fromAi ?? 0,
-    fromHybrid: row.fromHybrid ?? 0,
-    skipped: row.skipped ?? 0,
-    failed: row.failed ?? 0,
-    done: !!row.done,
-    startedAt: row.startedAt ? new Date(row.startedAt).getTime() : Date.now(),
-    finishedAt: row.finishedAt ? new Date(row.finishedAt).getTime() : undefined,
-    geminiAvailable: !!row.geminiAvailable,
-    dryRun: !!row.dryRun,
+    total: row.total,
+    processed: row.processed,
+    fromDict: row.fromDict,
+    fromAi: row.fromAi,
+    fromHybrid: row.fromHybrid,
+    skipped: row.skipped,
+    failed: row.failed,
+    done: row.done,
+    startedAt: row.startedAt.getTime(),
+    finishedAt: row.finishedAt ? row.finishedAt.getTime() : undefined,
+    geminiAvailable: row.geminiAvailable,
+    dryRun: row.dryRun,
     errorSample: Array.isArray(row.errorSample) ? row.errorSample : [],
   };
 }
@@ -243,8 +250,8 @@ function queueFlush(status: JobStatus): Promise<void> {
   const next = prev.catch(() => {}).then(async () => {
     try {
       await storage.updateTagJob(status.jobId, snap);
-    } catch (err: any) {
-      console.warn("[auto-tags] DB flush failed:", err?.message || err);
+    } catch (err: unknown) {
+      console.warn("[auto-tags] DB flush failed:", errMsg(err));
     }
   });
   FLUSH_CHAIN.set(status.jobId, next);
@@ -288,7 +295,7 @@ export async function getLatestJob(maxAgeSeconds: number): Promise<JobStatus | n
   }
   const row = await storage.getLatestTagJob(maxAgeSeconds);
   if (!row) return bestMem;
-  if (bestMem && bestMem.startedAt >= new Date(row.startedAt as any).getTime()) return bestMem;
+  if (bestMem && bestMem.startedAt >= row.startedAt.getTime()) return bestMem;
   return rowToStatus(row);
 }
 
@@ -306,8 +313,8 @@ async function sweepStaleJobs(): Promise<void> {
     if (n > 0) {
       console.log(`[auto-tags] swept ${n} stale tag job(s) (heartbeat > ${STALE_HEARTBEAT_SECONDS}s, marked failed)`);
     }
-  } catch (err: any) {
-    console.warn("[auto-tags] sweepStaleJobs failed:", err?.message || err);
+  } catch (err: unknown) {
+    console.warn("[auto-tags] sweepStaleJobs failed:", errMsg(err));
   }
 }
 
@@ -359,8 +366,8 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
       dryRun: !!opts.dryRun,
       geminiAvailable: !!getGeminiKey(),
     });
-  } catch (err: any) {
-    console.error("[auto-tags] failed to persist new job:", err?.message || err);
+  } catch (err: unknown) {
+    console.error("[auto-tags] failed to persist new job:", errMsg(err));
     throw err;
   }
   JOBS.set(jobId, status);
