@@ -167,7 +167,11 @@ export async function generateTagsForProvider(
   } else if (getGeminiKey()) {
     try {
       aiTags = await callGemini(cleanService, description);
-      source = dict.length > 0 ? "hybrid" : "ai";
+      if (aiTags.length > 0) {
+        source = dict.length > 0 ? "hybrid" : "ai";
+      } else {
+        source = dict.length > 0 ? "dictionary" : "skipped";
+      }
     } catch (err: any) {
       console.warn("[auto-tags] Gemini call failed:", err?.message || err);
       source = dict.length > 0 ? "dictionary" : "skipped";
@@ -206,7 +210,7 @@ export interface JobStatus {
 }
 
 const JOBS = new Map<string, JobStatus>();
-const CONCURRENCY = 4;
+const CONCURRENCY = 5;
 
 export function getJobStatus(jobId: string): JobStatus | null {
   return JOBS.get(jobId) || null;
@@ -216,7 +220,8 @@ export function getJobStatus(jobId: string): JobStatus | null {
 export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }): Promise<string> {
   const jobId = crypto.randomBytes(6).toString("hex");
   const all = await storage.getAllProviders();
-  const slice = typeof opts.limit === "number" && opts.limit > 0 ? all.slice(0, opts.limit) : all;
+  const active = all.filter((p: any) => p?.isActive !== false);
+  const slice = typeof opts.limit === "number" && opts.limit > 0 ? active.slice(0, opts.limit) : active;
 
   const status: JobStatus = {
     jobId,
