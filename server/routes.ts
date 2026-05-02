@@ -1524,12 +1524,25 @@ export async function registerRoutes(
         return res.json({ success: true, kind, subscription: sub });
       }
 
-      // Default: credits
+      // Default: credits. Idempotent on order_id via the creditPayments
+      // unique constraint — only credit on the first successful verify.
       const creditCount = parseInt(tags.credits || "0", 10);
-      if (creditCount > 0) {
+      const paidAmt = Math.round(Number(order.order_amount || creditCount));
+      const recorded = await storage.recordCreditPayment({
+        userId,
+        orderId: order.order_id,
+        credits: creditCount,
+        amount: paidAmt,
+      });
+      if (recorded.firstTime && creditCount > 0) {
         await storage.addPurchasedCredits(userId, "user", creditCount);
       }
-      res.json({ success: true, kind: "credits", message: "Payment verified and credits added" });
+      res.json({
+        success: true,
+        kind: "credits",
+        alreadyProcessed: !recorded.firstTime,
+        message: "Payment verified and credits added",
+      });
     } catch (error: any) {
       console.error("Payment verification error:", error);
       res.status(500).json({ message: "Payment verification failed" });
@@ -1558,6 +1571,58 @@ export async function registerRoutes(
       res.json({ active: active || null, history });
     } catch (e: any) {
       res.status(500).json({ message: "Failed to load subscription" });
+    }
+  });
+
+  // Unified payment timeline: credit purchases + subscription purchases
+  // merged and sorted newest-first so the user sees one cohesive history.
+  app.get("/api/payments/me", isLocalAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const [creditRows, subRows] = await Promise.all([
+        storage.listUserCreditPayments(userId),
+        storage.listUserSubscriptions(userId),
+      ]);
+      type Item = {
+        kind: "credits" | "subscription";
+        id: string;
+        amount: number;
+        createdAt: string;
+        label: string;
+        meta: Record<string, unknown>;
+      };
+      const items: Item[] = [];
+      for (const c of creditRows) {
+        items.push({
+          kind: "credits",
+          id: `credit-${c.id}`,
+          amount: c.amount,
+          createdAt: (c.paidAt || c.createdAt || new Date()).toISOString(),
+          label: `${c.credits} Credits`,
+          meta: { orderId: c.orderId, credits: c.credits },
+        });
+      }
+      for (const s of subRows) {
+        items.push({
+          kind: "subscription",
+          id: `sub-${s.id}`,
+          amount: s.amount,
+          createdAt: (s.createdAt || new Date()).toISOString(),
+          label: `${s.plan} · ${s.billingCycle}`,
+          meta: {
+            plan: s.plan,
+            billingCycle: s.billingCycle,
+            status: s.status,
+            endDate: s.endDate,
+            grantedBy: s.grantedBy,
+            paymentId: s.paymentId,
+          },
+        });
+      }
+      items.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+      res.json({ items });
+    } catch (e: any) {
+      res.status(500).json({ message: "Failed to load payment history" });
     }
   });
 

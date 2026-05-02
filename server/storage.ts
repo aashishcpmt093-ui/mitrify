@@ -16,7 +16,7 @@ import {
   type PendingProvider, type InsertPendingProvider,
   type ProviderSearchResult, type AdminStats, type CallLog,
   type Employee, type InsertEmployee, type SearchLog,
-  type SalaryPayment, type Subscription, type InsertSubscription,
+  type SalaryPayment, type CreditPayment, type Subscription, type InsertSubscription,
   type SubscriptionPlan, type SubscriptionPlanConfig,
 } from "@shared/schema";
 import { eq, and, gte, sql, like, or, ilike, count, desc, isNull, lt, inArray, ne } from "drizzle-orm";
@@ -156,6 +156,15 @@ export interface IStorage {
   }): Promise<Subscription>;
   /** All subscriptions for a single user, newest first. */
   listUserSubscriptions(userId: string): Promise<Subscription[]>;
+  /** Idempotently record a Cashfree credit purchase (unique on order_id). */
+  recordCreditPayment(opts: {
+    userId: string;
+    orderId: string;
+    credits: number;
+    amount: number;
+  }): Promise<{ payment: CreditPayment; firstTime: boolean }>;
+  /** All credit purchases for a user, newest first. */
+  listUserCreditPayments(userId: string): Promise<CreditPayment[]>;
   /** Admin-only: every subscription row, newest first, with profile name. */
   listAllSubscriptions(opts?: { search?: string; status?: string; plan?: string }): Promise<Array<Subscription & { name: string; mobile: string }>>;
   /** Admin-only: cancel a subscription (sets status="cancelled" + ends now). */
@@ -2252,6 +2261,32 @@ export class DatabaseStorage implements IStorage {
     const [row] = await db.select().from(subscriptions)
       .where(eq(subscriptions.paymentId, paymentId)).limit(1);
     return row;
+  }
+
+  async recordCreditPayment(opts: {
+    userId: string;
+    orderId: string;
+    credits: number;
+    amount: number;
+  }): Promise<{ payment: CreditPayment; firstTime: boolean }> {
+    const inserted = await db.insert(creditPayments).values({
+      userId: opts.userId,
+      orderId: opts.orderId,
+      credits: opts.credits,
+      amount: opts.amount,
+      status: "paid",
+      paidAt: new Date(),
+    }).onConflictDoNothing({ target: creditPayments.orderId }).returning();
+    if (inserted.length > 0) return { payment: inserted[0], firstTime: true };
+    const [existing] = await db.select().from(creditPayments)
+      .where(eq(creditPayments.orderId, opts.orderId)).limit(1);
+    return { payment: existing, firstTime: false };
+  }
+
+  async listUserCreditPayments(userId: string): Promise<CreditPayment[]> {
+    return await db.select().from(creditPayments)
+      .where(and(eq(creditPayments.userId, userId), eq(creditPayments.status, "paid")))
+      .orderBy(desc(creditPayments.createdAt));
   }
 
   async listUserSubscriptions(userId: string): Promise<Subscription[]> {

@@ -1,20 +1,38 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Phone, Clock, Sparkles } from "lucide-react";
+import { ArrowLeft, Phone, Clock, Sparkles, CreditCard } from "lucide-react";
 import { useLocation } from "wouter";
-import type { CallLog, SubscriptionResponse, SubscriptionPlan } from "@shared/schema";
+import type { CallLog, SubscriptionPlan } from "@shared/schema";
 import { useLanguage } from "@/lib/language";
 import { PlanTick } from "@/components/PlanTick";
+
+type PaymentItem = {
+  kind: "credits" | "subscription";
+  id: string;
+  amount: number;
+  createdAt: string;
+  label: string;
+  meta: {
+    plan?: SubscriptionPlan;
+    billingCycle?: "monthly" | "yearly";
+    status?: string;
+    endDate?: string | null;
+    grantedBy?: string | null;
+    paymentId?: string | null;
+    orderId?: string;
+    credits?: number;
+  };
+};
 
 export default function CustomerHistoryPage() {
   const [, setLocation] = useLocation();
   const { t } = useLanguage();
   const { data: history, isLoading } = useQuery<CallLog[]>({ queryKey: ["/api/calls/customer"] });
-  const { data: mySub } = useQuery<{ active: SubscriptionResponse | null; history: SubscriptionResponse[] }>({
-    queryKey: ["/api/subscriptions/me"],
+  const { data: payments } = useQuery<{ items: PaymentItem[] }>({
+    queryKey: ["/api/payments/me"],
   });
-  const subs = mySub?.history || [];
+  const items = payments?.items || [];
 
   // Reason label map: includes new subscription-driven reasons.
   const reasonLabel = (r: string | null | undefined) => {
@@ -38,31 +56,52 @@ export default function CustomerHistoryPage() {
       </header>
 
       <main className="p-4 max-w-2xl mx-auto space-y-3">
-        {/* Subscription purchases */}
-        {subs.length > 0 && (
+        {/* Unified payment timeline: credit purchases + subscription purchases */}
+        {items.length > 0 && (
           <div className="space-y-2">
-            <h2 className="text-xs font-semibold uppercase text-muted-foreground tracking-wide">Subscriptions</h2>
-            {subs.map((s) => (
-              <Card key={`sub-${s.id}`} data-testid={`card-sub-${s.id}`} className="border-amber-200 dark:border-amber-800">
+            <h2 className="text-xs font-semibold uppercase text-muted-foreground tracking-wide">Payments</h2>
+            {items.map((it) => (
+              <Card
+                key={it.id}
+                data-testid={`card-payment-${it.id}`}
+                className={
+                  it.kind === "subscription"
+                    ? "border-amber-200 dark:border-amber-800"
+                    : "border-emerald-200 dark:border-emerald-800"
+                }
+              >
                 <CardContent className="p-3 flex items-start justify-between gap-3">
                   <div className="flex items-start gap-2 min-w-0">
-                    <Sparkles className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                    {it.kind === "subscription" ? (
+                      <Sparkles className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                    ) : (
+                      <CreditCard className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+                    )}
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <PlanTick plan={s.plan as SubscriptionPlan} size={14} />
-                        <p className="font-medium text-sm capitalize truncate">{s.plan} · {s.billingCycle}</p>
+                        {it.kind === "subscription" && it.meta.plan && (
+                          <PlanTick plan={it.meta.plan} size={14} />
+                        )}
+                        <p className="font-medium text-sm capitalize truncate" data-testid={`text-payment-label-${it.id}`}>
+                          {it.kind === "subscription" ? `Subscription · ${it.label}` : `Credits · ${it.label}`}
+                        </p>
                       </div>
                       <p className="text-[11px] text-muted-foreground mt-0.5">
-                        {s.createdAt ? new Date(s.createdAt).toLocaleDateString() : ""}
-                        {" · ends "}
-                        {s.endDate ? new Date(s.endDate).toLocaleDateString() : "?"}
-                        {" · "}{s.status}
-                        {s.grantedBy ? " · admin granted" : ""}
+                        {new Date(it.createdAt).toLocaleDateString()}
+                        {it.kind === "subscription" && it.meta.endDate && (
+                          <> · ends {new Date(it.meta.endDate).toLocaleDateString()}</>
+                        )}
+                        {it.kind === "subscription" && it.meta.status && (
+                          <> · {it.meta.status}</>
+                        )}
+                        {it.kind === "subscription" && it.meta.grantedBy && (
+                          <> · admin granted</>
+                        )}
                       </p>
                     </div>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="font-semibold text-sm" data-testid={`text-sub-amount-${s.id}`}>₹{s.amount}</p>
+                    <p className="font-semibold text-sm" data-testid={`text-payment-amount-${it.id}`}>₹{it.amount}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -71,11 +110,11 @@ export default function CustomerHistoryPage() {
         )}
 
         {/* Calls */}
-        {(history?.length || subs.length > 0) ? (
+        {(history?.length || items.length > 0) ? (
           <h2 className="text-xs font-semibold uppercase text-muted-foreground tracking-wide pt-2">Calls</h2>
         ) : null}
         {isLoading && <p className="text-center text-muted-foreground py-8">Loading...</p>}
-        {history && history.length === 0 && subs.length === 0 && (
+        {history && history.length === 0 && items.length === 0 && (
           <div className="text-center py-12 text-muted-foreground">
             <Phone className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p>No activity yet</p>
