@@ -1450,11 +1450,34 @@ export class DatabaseStorage implements IStorage {
 
     const existingProvider = forceFresh ? null : await this.getProvider(userId);
     if (!existingProvider) {
+      // Auto-suggest hashtags when the source row is sparse (< 5 tags). The
+      // dictionary + Gemini hybrid in `generateTagsForProvider` merges with
+      // existing tags (never overwrites) and falls back to dictionary-only
+      // when Gemini errors / isn't configured. Wrapped in try/catch so any
+      // unexpected failure (network, etc.) cannot block the approval.
+      // Dynamic import avoids the circular dep between storage.ts and
+      // server/lib/auto-tags.ts (which already imports `storage`).
+      let hashtags: string[] = (pp.hashtags as string[]) || [];
+      if (hashtags.length < 5) {
+        try {
+          const { generateTagsForProvider } = await import("./lib/auto-tags");
+          const result = await generateTagsForProvider(
+            pp.serviceName,
+            pp.description || null,
+            hashtags,
+          );
+          hashtags = result.finalTags;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[auto-tags] approval-time enrichment failed for pending #${id}: ${msg}`);
+        }
+      }
+
       await this.createProvider({
         userId,
         serviceName: pp.serviceName,
         description: pp.description || null,
-        hashtags: (pp.hashtags as string[]) || [],
+        hashtags,
         radiusKm: pp.radiusKm || 10,
         approxCharge: pp.approxCharge || null,
         mobileNumbers: (pp.mobileNumbers as string[]) || [],
