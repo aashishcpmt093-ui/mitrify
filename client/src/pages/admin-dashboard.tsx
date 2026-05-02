@@ -2448,6 +2448,224 @@ export default function AdminDashboardPage() {
               </div>
             </div>
 
+            {/* ── FETCH FROM GOOGLE PLACES ── */}
+            <div className="bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800/40 rounded-2xl p-5 space-y-5 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center shrink-0">
+                  <span className="text-lg">🌐</span>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-base text-slate-900 dark:text-white">Fetch from Google Places</h3>
+                  <p className="text-xs text-muted-foreground">City + Work daalo → Google se businesses fetch hokar pending providers mein add ho jayenge</p>
+                </div>
+              </div>
+
+              {/* Step 1: Co-admin */}
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Step 1: Co-Admin Choose Karein</Label>
+                <Select value={gpAssignTo} onValueChange={setGpAssignTo}>
+                  <SelectTrigger className="h-9 text-sm" data-testid="select-gp-assign-to">
+                    <SelectValue placeholder="Co-admin select karein..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_default">— Co-admin select karein —</SelectItem>
+                    {coAdminsList.map(ca => (
+                      <SelectItem key={ca.id} value={ca.username}>{ca.username} ({ca.role})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Step 2: City + Service */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium">Step 2: City <span className="text-destructive">*</span></Label>
+                  <Input
+                    value={gpCity}
+                    onChange={e => setGpCity(e.target.value)}
+                    placeholder="e.g. Jaipur, Mumbai, Delhi"
+                    className="h-9 text-sm"
+                    data-testid="input-gp-city"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium">Step 3: Work / Service <span className="text-destructive">*</span></Label>
+                  <Input
+                    value={gpService}
+                    onChange={e => setGpService(e.target.value)}
+                    placeholder="e.g. plumber, electrician, AC repair"
+                    className="h-9 text-sm"
+                    data-testid="input-gp-service"
+                  />
+                </div>
+              </div>
+
+              {/* Search Button */}
+              <Button
+                className="w-full h-11 text-sm font-semibold gap-2 bg-blue-500 hover:bg-blue-600 text-white"
+                onClick={() => handleGooglePlacesSearch(false)}
+                disabled={gpSearching || !gpCity.trim() || !gpService.trim()}
+                data-testid="button-gp-search"
+              >
+                {gpSearching ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" />Google se fetch ho raha hai...</>
+                ) : (
+                  <><Search className="w-4 h-4" />Fetch from Google</>
+                )}
+              </Button>
+
+              {/* Empty state */}
+              {!gpSearching && gpResults.length === 0 && (gpCity || gpService) && gpImportResult === null && (
+                <p className="text-xs text-center text-muted-foreground py-4" data-testid="text-gp-empty-hint">
+                  Search dabakar businesses fetch karein
+                </p>
+              )}
+
+              {/* Results */}
+              {gpResults.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-foreground">
+                      {gpResults.length} businesses mile — {gpSelected.size} selected
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setGpSelected(new Set(gpResults.map(p => p.placeId)))}
+                        className="text-xs text-blue-600 hover:underline"
+                        data-testid="button-gp-select-all"
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setGpSelected(new Set())}
+                        className="text-xs text-slate-600 hover:underline"
+                        data-testid="button-gp-deselect-all"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="max-h-96 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-xl divide-y divide-slate-100 dark:divide-slate-800">
+                    {gpResults.map(p => (
+                      <label
+                        key={p.placeId}
+                        className={`flex items-start gap-3 p-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${gpSelected.has(p.placeId) ? "bg-blue-50/50 dark:bg-blue-950/20" : ""}`}
+                        data-testid={`row-gp-place-${p.placeId}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={gpSelected.has(p.placeId)}
+                          onChange={() => toggleGpPlace(p.placeId)}
+                          className="mt-1 w-4 h-4 accent-blue-500"
+                          data-testid={`checkbox-gp-place-${p.placeId}`}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{p.name}</p>
+                            {p.rating !== null && (
+                              <span className="text-xs text-amber-600 dark:text-amber-400 font-medium shrink-0">
+                                ⭐ {p.rating.toFixed(1)} {p.ratingCount ? `(${p.ratingCount})` : ""}
+                              </span>
+                            )}
+                          </div>
+                          {p.phone ? (
+                            <p className="text-xs text-emerald-700 dark:text-emerald-400 font-mono mt-0.5">📞 {p.phone}</p>
+                          ) : (
+                            <p className="text-xs text-red-600 dark:text-red-400 mt-0.5">⚠ No phone number</p>
+                          )}
+                          {p.address && (
+                            <p className="text-xs text-muted-foreground mt-0.5 truncate">📍 {p.address}</p>
+                          )}
+                          {p.latitude !== null && p.longitude !== null && (
+                            <p className="text-[10px] text-muted-foreground mt-0.5 font-mono">
+                              {p.latitude.toFixed(4)}, {p.longitude.toFixed(4)}
+                            </p>
+                          )}
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+
+                  {gpNextPageToken && (
+                    <Button
+                      variant="outline"
+                      className="w-full h-9 text-sm gap-2"
+                      onClick={() => handleGooglePlacesSearch(true)}
+                      disabled={gpSearching}
+                      data-testid="button-gp-load-more"
+                    >
+                      {gpSearching ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" />Loading...</>
+                      ) : (
+                        <>+ Aur businesses load karein</>
+                      )}
+                    </Button>
+                  )}
+
+                  {/* Allow Duplicate */}
+                  <div className="flex items-center justify-between rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 px-4 py-3">
+                    <div>
+                      <p className="text-sm font-semibold text-blue-800 dark:text-blue-200">Duplicate Allow Karein</p>
+                      <p className="text-xs text-blue-600 dark:text-blue-400 mt-0.5">ON hone par already existing mobile numbers bhi import ho jayenge</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setGpAllowDuplicate(v => !v)}
+                      data-testid="toggle-gp-allow-duplicate"
+                      className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${gpAllowDuplicate ? "bg-blue-500" : "bg-slate-300 dark:bg-slate-600"}`}
+                    >
+                      <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${gpAllowDuplicate ? "translate-x-5" : "translate-x-0.5"}`} />
+                    </button>
+                  </div>
+
+                  {/* Import Button */}
+                  <Button
+                    className="w-full h-11 text-sm font-semibold gap-2 bg-emerald-500 hover:bg-emerald-600 text-white"
+                    onClick={handleGooglePlacesImport}
+                    disabled={gpImporting || gpSelected.size === 0 || !gpAssignTo || gpAssignTo === "_default"}
+                    data-testid="button-gp-import"
+                  >
+                    {gpImporting ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" />Import ho raha hai...</>
+                    ) : (
+                      <><Upload className="w-4 h-4" />{gpSelected.size} Businesses Import Karein</>
+                    )}
+                  </Button>
+                </div>
+              )}
+
+              {/* Import Result */}
+              {gpImportResult && (
+                <div className="bg-emerald-50 dark:bg-emerald-950/30 rounded-xl p-4 border border-emerald-100 dark:border-emerald-900/50">
+                  <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300 mb-3">🌐 Google Places Import Result:</p>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div className="bg-white dark:bg-slate-800 rounded-lg p-2.5 text-center">
+                      <p className="text-xs text-muted-foreground">Total</p>
+                      <p className="text-xl font-extrabold text-foreground">{gpImportResult.total}</p>
+                    </div>
+                    <div className="bg-white dark:bg-slate-800 rounded-lg p-2.5 text-center">
+                      <p className="text-xs text-muted-foreground">Imported</p>
+                      <p className="text-xl font-extrabold text-emerald-700 dark:text-emerald-300">{gpImportResult.imported}</p>
+                    </div>
+                    <div className="bg-white dark:bg-slate-800 rounded-lg p-2.5 text-center">
+                      <p className="text-xs text-muted-foreground">Skipped (dup)</p>
+                      <p className="text-xl font-extrabold text-orange-700 dark:text-orange-300">{gpImportResult.skipped}</p>
+                    </div>
+                    <div className="bg-white dark:bg-slate-800 rounded-lg p-2.5 text-center">
+                      <p className="text-xs text-muted-foreground">No Phone</p>
+                      <p className="text-xl font-extrabold text-red-700 dark:text-red-300">{gpImportResult.skippedNoMobile}</p>
+                    </div>
+                  </div>
+                  {gpAssignTo !== "_default" && (
+                    <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-2.5">Assigned to: <strong>{gpAssignTo}</strong> — verify dashboard mein "Google" badge ke saath dikhenge</p>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* ── META ADS LEAD IMPORT ── */}
             <div className="bg-white dark:bg-slate-900 border border-orange-200 dark:border-orange-800/40 rounded-2xl p-5 space-y-5 shadow-sm">
               <div className="flex items-center gap-3">

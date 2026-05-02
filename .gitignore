@@ -5,3 +5,7 @@ build
 .replit
 backups
 .env.hostinger
+backup.sql
+database_export.sql
+railway_data_import.sql
+*.sql.bak
