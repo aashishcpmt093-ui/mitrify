@@ -483,6 +483,13 @@ export const tagJobs = pgTable("tag_jobs", {
     networkError: 0,
     other: 0,
   }),
+  // Provider userIds that failed during the run, split by failure source so
+  // a "retry failed only" pass can re-run just the AI-error and
+  // worker-error buckets without re-hitting Gemini for the providers that
+  // already succeeded. Both default to [] for backward-compat with rows
+  // written before this column existed.
+  aiFailedUserIds: jsonb("ai_failed_user_ids").$type<string[]>().default([]),
+  workerFailedUserIds: jsonb("worker_failed_user_ids").$type<string[]>().default([]),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   finishedAt: timestamp("finished_at"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

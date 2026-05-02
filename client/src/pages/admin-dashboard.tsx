@@ -234,6 +234,8 @@ interface TagJobStatus {
     networkError: number;
     other: number;
   };
+  aiFailedUserIds?: string[];
+  workerFailedUserIds?: string[];
 }
 
 function AutoGenerateTagsCard() {
@@ -379,7 +381,37 @@ function AutoGenerateTagsCard() {
     }
   };
 
+  const [retrying, setRetrying] = useState(false);
+  const retryFailed = async (sourceJobId: string) => {
+    setRetrying(true);
+    finalToastFired.current = false;
+    setResumed(false);
+    try {
+      const res = await fetch("/api/admin/auto-generate-tags/retry-failed", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceJobId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+      setStatus(null);
+      setJobId(data.jobId);
+      toast({
+        title: "Retry shuru ho gaya",
+        description: `${data.retriedCount} failed providers ko dobara try kar rahe hain.`,
+      });
+    } catch (err: any) {
+      toast({ title: "Retry failed", description: err?.message || "Could not start retry", variant: "destructive" });
+    } finally {
+      setRetrying(false);
+    }
+  };
+
   const running = !!jobId && !status?.done;
+  const failedRetryCount =
+    (status?.aiFailedUserIds?.length || 0) + (status?.workerFailedUserIds?.length || 0);
+  const canRetryFailed = !!status?.done && !running && !starting && !retrying && failedRetryCount > 0;
   const pct = status && status.total > 0 ? Math.round((status.processed / status.total) * 100) : 0;
 
   return (
@@ -528,6 +560,21 @@ function AutoGenerateTagsCard() {
                 </ul>
               )}
             </details>
+          )}
+          {canRetryFailed && (
+            <Button
+              variant="outline"
+              className="w-full h-10 text-sm font-semibold gap-2 border-amber-300 dark:border-amber-700/60 text-amber-800 dark:text-amber-200 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+              onClick={() => retryFailed(status.jobId)}
+              disabled={retrying}
+              data-testid="button-retry-failed-tags"
+            >
+              {retrying ? (
+                <><Loader2 className="w-4 h-4 animate-spin" />Retry shuru kar rahe hain…</>
+              ) : (
+                <><Sparkles className="w-4 h-4" />Retry failed only ({failedRetryCount} provider{failedRetryCount === 1 ? "" : "s"})</>
+              )}
+            </Button>
           )}
         </div>
       )}

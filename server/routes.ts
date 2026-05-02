@@ -975,6 +975,44 @@ export async function registerRoutes(
     }
   });
 
+  // Retry just the providers that failed in a previous run (AI-error +
+  // worker-error buckets). Reads `aiFailedUserIds` + `workerFailedUserIds`
+  // off the prior job row and starts a new scoped tag job. Avoids
+  // re-hitting Gemini quota for the providers that already succeeded.
+  app.post("/api/admin/auto-generate-tags/retry-failed", adminCheck, async (req, res) => {
+    try {
+      const activeId = await getActiveJobId();
+      if (activeId) {
+        return res.status(409).json({ message: "Ek job already chal raha hai", activeJobId: activeId });
+      }
+      const sourceJobId = typeof req.body?.sourceJobId === "string" ? req.body.sourceJobId : null;
+      const source = sourceJobId
+        ? await getJobStatus(sourceJobId)
+        : await getLatestJob(24 * 60 * 60); // fall back to most recent job in last 24h
+      if (!source) {
+        return res.status(404).json({ message: "Pichla job nahi mila — pehle ek normal run chalayein" });
+      }
+      const ids = Array.from(new Set([...(source.aiFailedUserIds || []), ...(source.workerFailedUserIds || [])]));
+      if (ids.length === 0) {
+        return res.status(400).json({ message: "Pichle run mein koi failed provider nahi tha" });
+      }
+      const dryRun = req.body?.dryRun === true;
+      const jobId = await startAutoTagJob({ dryRun, userIds: ids });
+      const status = await getJobStatus(jobId);
+      res.json({
+        jobId,
+        total: status?.total ?? 0,
+        geminiAvailable: status?.geminiAvailable ?? false,
+        dryRun,
+        sourceJobId: source.jobId,
+        retriedCount: ids.length,
+      });
+    } catch (err: any) {
+      console.error("auto-generate-tags retry-failed error:", err);
+      res.status(500).json({ message: err?.message || "Failed to start retry job" });
+    }
+  });
+
   app.get("/api/admin/auto-generate-tags/status/:jobId", adminCheck, async (req, res) => {
     const status = await getJobStatus(req.params.jobId);
     if (!status) return res.status(404).json({ message: "Job not found or expired" });

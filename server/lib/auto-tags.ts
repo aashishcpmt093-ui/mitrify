@@ -268,6 +268,13 @@ export interface JobStatus {
    *  failures are quota-driven (rateLimited / httpError 5xx), model-thinking
    *  (maxTokens), or content/parse issues. UI only renders categories > 0. */
   aiErrorBreakdown: AiErrorBreakdown;
+  /** Provider userIds that hit a Gemini-side failure during this run. Used
+   *  by the admin "Retry failed only" pass so we don't re-hit quota for
+   *  providers that already succeeded. */
+  aiFailedUserIds: string[];
+  /** Provider userIds that hit a generic worker / DB exception. Combined
+   *  with `aiFailedUserIds` for the retry-failed scope. */
+  workerFailedUserIds: string[];
 }
 
 const JOBS = new Map<string, JobStatus>();
@@ -364,6 +371,8 @@ function rowToStatus(row: TagJob): JobStatus {
     errorSample: Array.isArray(row.errorSample) ? row.errorSample : [],
     aiErrorSample: Array.isArray(row.aiErrorSample) ? row.aiErrorSample : [],
     aiErrorBreakdown: { ...EMPTY_AI_ERROR_BREAKDOWN, ...(row.aiErrorBreakdown ?? {}) },
+    aiFailedUserIds: Array.isArray(row.aiFailedUserIds) ? row.aiFailedUserIds : [],
+    workerFailedUserIds: Array.isArray(row.workerFailedUserIds) ? row.workerFailedUserIds : [],
   };
 }
 
@@ -384,6 +393,8 @@ function queueFlush(status: JobStatus): Promise<void> {
     errorSample: [...status.errorSample],
     aiErrorSample: [...status.aiErrorSample],
     aiErrorBreakdown: { ...status.aiErrorBreakdown },
+    aiFailedUserIds: [...status.aiFailedUserIds],
+    workerFailedUserIds: [...status.workerFailedUserIds],
   };
   const prev = FLUSH_CHAIN.get(status.jobId) || Promise.resolve();
   const next = prev.catch(() => {}).then(async () => {
@@ -475,11 +486,21 @@ export async function recoverStaleJobs(): Promise<void> {
 
 /** Start a backfill job. Returns the jobId immediately and runs in the
  *  background. Persists to DB so progress survives a server restart. */
-export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }): Promise<string> {
+export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number; userIds?: string[] }): Promise<string> {
   const jobId = crypto.randomBytes(6).toString("hex");
   const all = await storage.getAllProviders();
   const active = all.filter((p: any) => p?.isActive !== false);
-  const slice = typeof opts.limit === "number" && opts.limit > 0 ? active.slice(0, opts.limit) : active;
+  let slice = active;
+  if (opts.userIds && opts.userIds.length > 0) {
+    // Scope to a specific set of providers (used by "retry failed only").
+    // Preserve only userIds that still exist + are active so a deleted /
+    // deactivated provider from the prior run doesn't inflate the total.
+    const wanted = new Set(opts.userIds);
+    slice = active.filter((p: any) => wanted.has(p.userId));
+  }
+  if (typeof opts.limit === "number" && opts.limit > 0) {
+    slice = slice.slice(0, opts.limit);
+  }
 
   const status: JobStatus = {
     jobId,
@@ -498,6 +519,8 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
     errorSample: [],
     aiErrorSample: [],
     aiErrorBreakdown: { ...EMPTY_AI_ERROR_BREAKDOWN },
+    aiFailedUserIds: [],
+    workerFailedUserIds: [],
   };
   // Persist FIRST so a DB failure doesn't leave a phantom in-memory job that
   // blocks future starts (since `getActiveJobId` checks the in-memory map).
@@ -554,12 +577,16 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
             if (status.aiErrorSample.length < 5) {
               status.aiErrorSample.push(`${p.serviceName}: ${result.aiError.slice(0, 120)}`);
             }
+            // Persist the userId so the admin can retry just this provider
+            // without re-running the whole bulk job.
+            status.aiFailedUserIds.push(p.userId);
           }
         } catch (err: any) {
           status.failed++;
           if (status.errorSample.length < 5) {
             status.errorSample.push(`${p.serviceName}: ${(err?.message || "error").slice(0, 100)}`);
           }
+          status.workerFailedUserIds.push(p.userId);
         } finally {
           status.processed++;
           // Throttled DB flush via per-job serialized chain — see queueFlush.
