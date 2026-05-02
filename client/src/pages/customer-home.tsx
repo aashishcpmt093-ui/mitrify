@@ -469,6 +469,34 @@ export default function CustomerHomePage() {
     }
   };
 
+  const handleApplyClick = (job: any) => {
+    const url = job.googleFormUrl;
+    let beaconSent = false;
+    try {
+      if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+        beaconSent = navigator.sendBeacon(
+          `/api/jobs/${job.id}/apply-click`,
+          new Blob(["{}"], { type: "application/json" })
+        );
+      }
+    } catch {}
+    const openForm = () => {
+      const win = window.open(url, "_blank", "noopener,noreferrer");
+      if (!win) window.location.href = url;
+    };
+    queryClient.invalidateQueries({ queryKey: ["/api/jobs/my"] });
+    if (beaconSent) {
+      openForm();
+    } else {
+      apiRequest("POST", `/api/jobs/${job.id}/apply-click`, {})
+        .catch(() => {})
+        .finally(() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/jobs/my"] });
+          openForm();
+        });
+    }
+  };
+
   const handleJobCall = async (job: any) => {
     if (!isAuthenticated) {
       setShowLoginPrompt(true);
@@ -1053,7 +1081,7 @@ export default function CustomerHomePage() {
                 {selectedJob.postType === "google_form" ? (
                   <Button
                     className="h-10 px-4 rounded-xl bg-blue-500 hover:bg-blue-600 text-white shadow-md gap-2"
-                    onClick={() => window.open(selectedJob.googleFormUrl, "_blank", "noopener,noreferrer")}
+                    onClick={() => handleApplyClick(selectedJob)}
                     data-testid="button-job-apply-gf-top"
                   >
                     <ScrollText className="w-4 h-4" /> Apply
@@ -1107,7 +1135,7 @@ export default function CustomerHomePage() {
               {selectedJob.postType === "google_form" ? (
                 <Button
                   className="w-full h-12 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-base font-semibold gap-2"
-                  onClick={() => window.open(selectedJob.googleFormUrl, "_blank", "noopener,noreferrer")}
+                  onClick={() => handleApplyClick(selectedJob)}
                   data-testid="button-job-apply-gf-bottom"
                 >
                   <ScrollText className="w-5 h-5" /> Apply (Google Form)
@@ -1171,6 +1199,11 @@ export default function CustomerHomePage() {
                           <span className="flex items-center gap-1 text-xs text-muted-foreground"><MapPin className="w-3 h-3" />{job.location}</span>
                           {job.salary && <span className="flex items-center gap-1 text-xs text-green-600 font-medium"><Coins className="w-3 h-3" />{job.salary}</span>}
                           {job.workHours && <span className="flex items-center gap-1 text-xs text-muted-foreground"><Clock className="w-3 h-3" />{job.workHours}</span>}
+                          {job.postType === "google_form" && (
+                            <span className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 font-medium" data-testid={`text-apply-clicks-${job.id}`}>
+                              <ScrollText className="w-3 h-3" />{job.applyClicks ?? 0} clicks
+                            </span>
+                          )}
                         </div>
                       </div>
                       <Button

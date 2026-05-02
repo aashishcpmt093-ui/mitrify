@@ -378,6 +378,7 @@ export const jobs = pgTable("jobs", {
   googleFormUrl: text("google_form_url"),
   isActive: boolean("is_active").default(true).notNull(),
   lowCredit: boolean("low_credit").default(false).notNull(),
+  applyClicks: integer("apply_clicks").default(0).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

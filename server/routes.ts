@@ -1157,6 +1157,22 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/jobs/:id/apply-click", async (req, res) => {
+    try {
+      const jobId = parseInt(req.params.id);
+      if (!jobId || isNaN(jobId)) return res.status(400).json({ message: "Invalid job id" });
+      const job = await storage.getJob(jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+      if (job.postType !== "google_form") {
+        return res.status(400).json({ message: "Apply click tracking sirf Google Form jobs ke liye hai" });
+      }
+      const applyClicks = await storage.incrementJobApplyClicks(jobId);
+      res.json({ ok: true, applyClicks });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to track click" });
+    }
+  });
+
   app.delete("/api/jobs/:id", isLocalAuthenticated, async (req, res) => {
     try {
       const userId = (req.user as any)?.claims?.sub || (req.session as any)?.localUserId;

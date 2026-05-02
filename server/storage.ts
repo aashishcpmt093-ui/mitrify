@@ -115,6 +115,7 @@ export interface IStorage {
   getJobsByUser(userId: string): Promise<Job[]>;
   getJob(jobId: number): Promise<Job | undefined>;
   updateJobLowCredit(userId: string, lowCredit: boolean): Promise<void>;
+  incrementJobApplyClicks(jobId: number): Promise<number>;
   deleteJob(jobId: number, userId: string): Promise<void>;
   adminUpdateJob(jobId: number, updates: { jobName?: string; description?: string; location?: string; salary?: string; workHours?: string; contactPhone?: string | null; isActive?: boolean; googleFormUrl?: string | null; postType?: string }): Promise<Job | undefined>;
 
@@ -1679,6 +1680,14 @@ export class DatabaseStorage implements IStorage {
 
   async updateJobLowCredit(userId: string, lowCredit: boolean): Promise<void> {
     await db.update(jobs).set({ lowCredit }).where(eq(jobs.userId, userId));
+  }
+
+  async incrementJobApplyClicks(jobId: number): Promise<number> {
+    const [updated] = await db.update(jobs)
+      .set({ applyClicks: sql`${jobs.applyClicks} + 1` })
+      .where(eq(jobs.id, jobId))
+      .returning({ applyClicks: jobs.applyClicks });
+    return updated?.applyClicks ?? 0;
   }
 
   async deleteJob(jobId: number, userId: string): Promise<void> {
