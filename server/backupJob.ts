@@ -700,6 +700,45 @@ export async function getBackupStatus(): Promise<BackupStatus> {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Test alert history — record every "Send test alert" attempt
+// from the admin dashboard so admins have an audit trail of
+// when tests were fired and whether they succeeded.
+// ─────────────────────────────────────────────────────────────
+
+const TEST_ALERT_HISTORY_KEY = "backup_test_alert_history";
+const TEST_ALERT_HISTORY_LIMIT = 20;
+
+export interface TestAlertEntry {
+  at: string; // ISO timestamp
+  sent: boolean;
+  message: string;
+  triggeredBy?: string;
+}
+
+export async function getTestAlertHistory(): Promise<TestAlertEntry[]> {
+  const [row] = await db.select().from(siteContent).where(eq(siteContent.key, TEST_ALERT_HISTORY_KEY));
+  if (!row) return [];
+  const v = row.value as any;
+  if (Array.isArray(v?.entries)) return v.entries as TestAlertEntry[];
+  return [];
+}
+
+export async function recordTestAlert(entry: TestAlertEntry): Promise<TestAlertEntry[]> {
+  const existing = await getTestAlertHistory();
+  const next = [entry, ...existing].slice(0, TEST_ALERT_HISTORY_LIMIT);
+  const payload = { entries: next } as any;
+  const found = await db.select().from(siteContent).where(eq(siteContent.key, TEST_ALERT_HISTORY_KEY));
+  if (found.length > 0) {
+    await db.update(siteContent)
+      .set({ value: payload, updatedAt: new Date() })
+      .where(eq(siteContent.key, TEST_ALERT_HISTORY_KEY));
+  } else {
+    await db.insert(siteContent).values({ key: TEST_ALERT_HISTORY_KEY, value: payload, updatedAt: new Date() });
+  }
+  return next;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Run-now rate-limit timestamp — persisted so restarts don't
 // reset the 5-minute cooldown.
 //

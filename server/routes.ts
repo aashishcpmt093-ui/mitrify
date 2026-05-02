@@ -15,7 +15,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory } from "./backupJob";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -1947,11 +1947,31 @@ export async function registerRoutes(
 
   // POST /api/admin/backup/test-alert — send a test alert to the configured webhook
   app.post("/api/admin/backup/test-alert", adminCheck, async (_req, res) => {
+    let sent = false;
+    let message = "";
     try {
       const result = await sendBackupAlert({ errorMessage: "This is a test alert from the Mitrify admin dashboard." });
-      res.json({ ok: result.sent, message: result.sent ? "Test alert sent successfully." : (result.error ?? "Failed to send test alert.") });
+      sent = result.sent;
+      message = result.sent ? "Test alert sent successfully." : (result.error ?? "Failed to send test alert.");
     } catch (err: any) {
-      res.json({ ok: false, message: err?.message || "Unexpected error." });
+      sent = false;
+      message = err?.message || "Unexpected error.";
+    }
+    try {
+      await recordTestAlert({ at: new Date().toISOString(), sent, message, triggeredBy: "admin" });
+    } catch (logErr) {
+      console.error("[backup] failed to record test alert history:", logErr);
+    }
+    res.json({ ok: sent, message });
+  });
+
+  // GET /api/admin/backup/test-alert-history — recent test alert audit log
+  app.get("/api/admin/backup/test-alert-history", adminCheck, async (_req, res) => {
+    try {
+      const entries = await getTestAlertHistory();
+      res.json({ entries });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to load test alert history" });
     }
   });
 

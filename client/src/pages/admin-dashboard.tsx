@@ -721,6 +721,12 @@ export default function AdminDashboardPage() {
     staleTime: 60 * 1000,
   });
 
+  const { data: testAlertHistory } = useQuery<{ entries: Array<{ at: string; sent: boolean; message: string; triggeredBy?: string }> }>({
+    queryKey: ["/api/admin/backup/test-alert-history"],
+    enabled: !!isAdmin,
+    staleTime: 30 * 1000,
+  });
+
   const gcsListQuery = useQuery<{ files: Array<{ name: string; size: number; updated: string }> }>({
     queryKey: ["/api/admin/backup/gcs-list"],
     enabled: !!isAdmin && backupDialogOpen && restoreMode === "gcs" && gcsStatus?.configured === true,
@@ -3887,6 +3893,7 @@ export default function AdminDashboardPage() {
                   toast({ title: "Alert failed", description: err?.message || "Unexpected error", variant: "destructive" });
                 } finally {
                   setTestAlertPending(false);
+                  queryClient.invalidateQueries({ queryKey: ["/api/admin/backup/test-alert-history"] });
                 }
               }}
             >
@@ -3896,6 +3903,84 @@ export default function AdminDashboardPage() {
                 <><Bell className="w-4 h-4 mr-2" />Send test alert</>
               )}
             </Button>
+
+            {/* Test alert history */}
+            {testAlertHistory && testAlertHistory.entries.length > 0 && (
+              <div
+                className="rounded-lg border border-violet-200 dark:border-violet-700 bg-white dark:bg-slate-900 p-2 space-y-1"
+                data-testid="test-alert-history-section"
+              >
+                <div className="flex items-center gap-1.5 px-1">
+                  <Clock className="w-3 h-3 text-violet-700 dark:text-violet-300" />
+                  <span className="text-[11px] font-semibold text-violet-700 dark:text-violet-300">
+                    Recent test alerts
+                  </span>
+                </div>
+                <div className="overflow-x-auto rounded border border-violet-100 dark:border-violet-800">
+                  <table className="w-full text-[11px]">
+                    <thead className="bg-violet-50/80 dark:bg-violet-900/30">
+                      <tr>
+                        <th className="text-left px-2 py-1 font-semibold">When</th>
+                        <th className="text-center px-2 py-1 font-semibold">Result</th>
+                        <th className="text-left px-2 py-1 font-semibold">Detail</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {testAlertHistory.entries.map((entry, idx) => (
+                        <tr
+                          key={`${entry.at}-${idx}`}
+                          className="border-t border-violet-100 dark:border-violet-800"
+                          data-testid={`row-test-alert-history-${idx}`}
+                        >
+                          <td className="px-2 py-1 align-top">
+                            <span className="block" data-testid={`text-test-alert-time-${idx}`}>
+                              {formatRelative(entry.at)}
+                            </span>
+                            <span
+                              className="block text-[10px] text-muted-foreground"
+                              title={new Date(entry.at).toLocaleString()}
+                            >
+                              {new Date(entry.at).toLocaleString()}
+                            </span>
+                          </td>
+                          <td
+                            className="px-2 py-1 text-center align-top"
+                            data-testid={`status-test-alert-${idx}`}
+                          >
+                            {entry.sent ? (
+                              <span
+                                className="inline-flex items-center gap-0.5 text-emerald-700 dark:text-emerald-400 font-semibold"
+                                title="Test alert delivered"
+                              >
+                                <CheckCircle className="w-3 h-3" /> sent
+                              </span>
+                            ) : (
+                              <span
+                                className="inline-flex items-center gap-0.5 text-red-600 dark:text-red-400 font-semibold"
+                                title={entry.message}
+                              >
+                                <XCircle className="w-3 h-3" /> failed
+                              </span>
+                            )}
+                          </td>
+                          <td
+                            className="px-2 py-1 align-top text-muted-foreground"
+                            data-testid={`text-test-alert-message-${idx}`}
+                          >
+                            <span
+                              className="block truncate max-w-[260px]"
+                              title={entry.message}
+                            >
+                              {entry.message}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Backup history */}
