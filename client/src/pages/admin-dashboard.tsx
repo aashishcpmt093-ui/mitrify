@@ -3278,7 +3278,7 @@ export default function AdminDashboardPage() {
               </div>
 
               <p className="text-[11px] text-muted-foreground">
-                Har click pe ~40 businesses milte hain • Daily limit: 100 runs/admin
+                Har click pe ~40 businesses milte hain • Daily limit: 2000 runs/admin
                 {gpRateInfo && ` • Aaj: ${gpRateInfo.runsToday}/${gpRateInfo.max} use ho chuke`}
               </p>
 

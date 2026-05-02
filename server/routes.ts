@@ -21,7 +21,7 @@ import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverSta
 // `{ adminKey -> [timestampMs] }`. Resets on process restart (acceptable —
 // the safety cap is to prevent accidental cost spikes from rapid clicks).
 const GP_ADMIN_RUNS = new Map<string, number[]>();
-const GP_RUNS_PER_DAY = 100;
+const GP_RUNS_PER_DAY = 2000;
 const GP_DAY_MS = 24 * 60 * 60 * 1000;
 
 function checkGpBulkRateLimit(adminKey: string): { ok: boolean; runsToday: number; max: number } {
