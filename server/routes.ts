@@ -87,6 +87,11 @@ export async function registerRoutes(
     }
   }).catch(() => {});
 
+  // Recover any tag-generation jobs that were running when the server died
+  // (e.g. deploy/restart mid-run). Marks stale not-done jobs as failed so the
+  // UI shows a final state instead of polling forever.
+  void recoverStaleJobs();
+
   // --- Local Auth: ID/Password Register (requires OTP verification first) ---
   app.post("/api/local/register", async (req, res) => {
     try {

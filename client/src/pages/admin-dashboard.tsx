@@ -232,6 +232,7 @@ function AutoGenerateTagsCard() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [status, setStatus] = useState<TagJobStatus | null>(null);
   const [starting, setStarting] = useState(false);
+  const [resumed, setResumed] = useState(false);
   const finalToastFired = useRef(false);
 
   const { data: providerList } = useQuery<any[]>({ queryKey: ["/api/admin/providers"] });
@@ -241,6 +242,28 @@ function AutoGenerateTagsCard() {
   const estLabel = estMinutes >= 1
     ? `~${estMinutes} min ${estSeconds % 60}s`
     : `~${estSeconds}s`;
+
+  // On mount, ask the backend if there's an in-flight job (started by this
+  // admin in a previous tab/session, or surviving a server restart). If so,
+  // auto-resume polling — the existing useEffect on `jobId` handles the rest.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/admin/auto-generate-tags/active", { credentials: "include" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled || !data?.jobId) return;
+        finalToastFired.current = false;
+        if (data.status) setStatus(data.status as TagJobStatus);
+        setJobId(data.jobId as string);
+        setResumed(true);
+      } catch {
+        // Silent — admin can still start a fresh job.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!jobId) return;
@@ -310,6 +333,7 @@ function AutoGenerateTagsCard() {
     setStarting(true);
     finalToastFired.current = false;
     setStatus(null);
+    setResumed(false); // a fresh user-initiated start is never a resume
     try {
       const res = await fetch("/api/admin/auto-generate-tags", {
         method: "POST",
@@ -386,6 +410,11 @@ function AutoGenerateTagsCard() {
 
       {status && (
         <div className="bg-slate-50 dark:bg-slate-800/40 rounded-xl p-4 space-y-3 border border-slate-200 dark:border-slate-700/40" data-testid="status-tag-job">
+          {resumed && (
+            <p className="text-[11px] text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/40 rounded-md px-2 py-1.5" data-testid="text-tag-resumed">
+              ⟳ Pehle se chal raha job resume kiya gaya — page refresh ya server restart ke baad bhi progress safe hai.
+            </p>
+          )}
           <div className="space-y-1">
             <div className="flex items-center justify-between text-xs">
               <span className="font-semibold">{status.done ? (status.dryRun ? "Dry run complete" : "Done") : "Processing…"}</span>

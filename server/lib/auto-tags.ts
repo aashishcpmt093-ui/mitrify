@@ -198,7 +198,12 @@ export interface JobStatus {
 const JOBS = new Map<string, JobStatus>();
 const CONCURRENCY = 5;
 const DB_WRITE_EVERY = 5; // processed-count interval to flush to DB
-const STALE_RECOVERY_SECONDS = 5 * 60; // any "not done" job not touched in 5 min on boot is failed
+
+// Per-job promise chain so throttled flushes never overwrite a later
+// (more-progressed) write with an earlier one. Without this, two concurrent
+// `void flushToDb(status)` calls could land out of order and leave
+// `done=true`/`processed=N` getting stomped by an earlier `done=false` write.
+const FLUSH_CHAIN = new Map<string, Promise<void>>();
 
 function rowToStatus(row: any): JobStatus {
   return {
@@ -219,28 +224,42 @@ function rowToStatus(row: any): JobStatus {
   };
 }
 
-async function flushToDb(status: JobStatus): Promise<void> {
-  try {
-    await storage.updateTagJob(status.jobId, {
-      processed: status.processed,
-      fromDict: status.fromDict,
-      fromAi: status.fromAi,
-      fromHybrid: status.fromHybrid,
-      skipped: status.skipped,
-      failed: status.failed,
-      done: status.done,
-      finishedAt: status.finishedAt ? new Date(status.finishedAt) : null,
-      errorSample: status.errorSample,
-    });
-  } catch (err: any) {
-    console.warn("[auto-tags] DB flush failed:", err?.message || err);
-  }
+function queueFlush(status: JobStatus): Promise<void> {
+  // Snapshot counters at enqueue time so the actual write reflects the state
+  // when the flush was requested, even if more updates have happened by the
+  // time this link in the chain runs.
+  const snap = {
+    processed: status.processed,
+    fromDict: status.fromDict,
+    fromAi: status.fromAi,
+    fromHybrid: status.fromHybrid,
+    skipped: status.skipped,
+    failed: status.failed,
+    done: status.done,
+    finishedAt: status.finishedAt ? new Date(status.finishedAt) : null,
+    errorSample: [...status.errorSample],
+  };
+  const prev = FLUSH_CHAIN.get(status.jobId) || Promise.resolve();
+  const next = prev.catch(() => {}).then(async () => {
+    try {
+      await storage.updateTagJob(status.jobId, snap);
+    } catch (err: any) {
+      console.warn("[auto-tags] DB flush failed:", err?.message || err);
+    }
+  });
+  FLUSH_CHAIN.set(status.jobId, next);
+  // Best-effort cleanup so the map doesn't grow unbounded.
+  next.finally(() => {
+    if (FLUSH_CHAIN.get(status.jobId) === next) FLUSH_CHAIN.delete(status.jobId);
+  });
+  return next;
 }
 
 /** Returns the jobId of any currently-running (not done) job, or null.
  *  Reads from DB so it survives a server restart. */
 export async function getActiveJobId(): Promise<string | null> {
-  for (const [id, s] of JOBS.entries()) {
+  const memEntries = Array.from(JOBS.entries());
+  for (const [id, s] of memEntries) {
     if (!s.done) return id;
   }
   const row = await storage.getActiveTagJob();
@@ -257,13 +276,14 @@ export async function getJobStatus(jobId: string): Promise<JobStatus | null> {
   return row ? rowToStatus(row) : null;
 }
 
-/** Boot-time recovery: any job rows still marked not-done whose updatedAt is
- *  older than STALE_RECOVERY_SECONDS were almost certainly killed by a
- *  server restart or crash mid-run. Mark them failed so the UI can show a
- *  final state instead of polling forever. Called once on app startup. */
+/** Boot-time recovery: at startup the in-memory worker pool is empty, so any
+ *  `done=false` row in the DB necessarily belongs to a dead process and will
+ *  never advance. Mark them all failed (cutoff=0 → matches every not-done
+ *  row) so the UI can render a terminal state instead of polling forever.
+ *  Called once on app startup. */
 export async function recoverStaleJobs(): Promise<void> {
   try {
-    const n = await storage.markStaleTagJobsFailed(STALE_RECOVERY_SECONDS);
+    const n = await storage.markStaleTagJobsFailed(0);
     if (n > 0) {
       console.log(`[auto-tags] recovered ${n} stale tag job(s) (marked failed)`);
     }
@@ -295,15 +315,20 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
     dryRun: !!opts.dryRun,
     errorSample: [],
   };
+  // Persist FIRST so a DB failure doesn't leave a phantom in-memory job that
+  // blocks future starts (since `getActiveJobId` checks the in-memory map).
+  try {
+    await storage.createTagJob({
+      jobId,
+      total: slice.length,
+      dryRun: !!opts.dryRun,
+      geminiAvailable: !!getGeminiKey(),
+    });
+  } catch (err: any) {
+    console.error("[auto-tags] failed to persist new job:", err?.message || err);
+    throw err;
+  }
   JOBS.set(jobId, status);
-
-  // Persist initial row so it's discoverable across restarts.
-  await storage.createTagJob({
-    jobId,
-    total: slice.length,
-    dryRun: !!opts.dryRun,
-    geminiAvailable: !!getGeminiKey(),
-  });
 
   // Background runner.
   (async () => {
@@ -335,10 +360,10 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
           }
         } finally {
           status.processed++;
-          // Throttled DB flush: every DB_WRITE_EVERY processed records.
+          // Throttled DB flush via per-job serialized chain — see queueFlush.
           if (status.processed - lastFlushed >= DB_WRITE_EVERY) {
             lastFlushed = status.processed;
-            void flushToDb(status);
+            void queueFlush(status);
           }
         }
       }
@@ -347,7 +372,7 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
     await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
     status.done = true;
     status.finishedAt = Date.now();
-    await flushToDb(status); // final write, awaited so caller sees done
+    await queueFlush(status); // awaits prior flushes too, so final state wins
 
     // GC in-memory slot after 30 min — DB row stays for resume-after-restart.
     setTimeout(() => JOBS.delete(jobId), 30 * 60 * 1000);
@@ -358,7 +383,7 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
     if (status.errorSample.length < 5) {
       status.errorSample.push(`runner crash: ${String(err?.message || err).slice(0, 100)}`);
     }
-    await flushToDb(status);
+    await queueFlush(status);
   });
 
   return jobId;

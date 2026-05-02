@@ -1923,9 +1923,13 @@ export class DatabaseStorage implements IStorage {
 
   async markStaleTagJobsFailed(staleSeconds: number): Promise<number> {
     const cutoff = new Date(Date.now() - staleSeconds * 1000);
+    // Bumps `failed += 1` and appends a marker to errorSample so the UI shows
+    // a final state. `staleSeconds = 0` effectively matches every not-done row
+    // (used at boot — any not-done row from a previous process is orphaned).
     const result = await db.update(tagJobs)
       .set({
         done: true,
+        failed: sql`${tagJobs.failed} + 1`,
         finishedAt: new Date(),
         updatedAt: new Date(),
         errorSample: sql`COALESCE(${tagJobs.errorSample}, '[]'::jsonb) || '["job marked failed: server restart or stalled before completion"]'::jsonb`,
