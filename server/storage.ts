@@ -119,7 +119,7 @@ export interface IStorage {
 
   bulkCreatePendingProviders(records: Array<{ name: string; mobile: string; addedBy: string }>, allowDuplicate?: boolean): Promise<{ imported: number; skipped: number; total: number }>;
   bulkCreateMetaLeads(records: Array<{ name: string; mobile: string; serviceName?: string; address?: string; description?: string }>, assignedTo: string, allowDuplicate?: boolean): Promise<{ imported: number; skipped: number; total: number }>;
-  bulkCreateGooglePlaces(records: Array<{ name: string; mobile?: string; serviceName: string; address?: string; latitude?: number; longitude?: number; description?: string }>, assignedTo: string, allowDuplicate?: boolean): Promise<{ imported: number; skipped: number; total: number; skippedNoMobile: number }>;
+  bulkCreateGooglePlaces(records: Array<{ name: string; mobile?: string; serviceName: string; address?: string; latitude?: number; longitude?: number; description?: string }>, assignedTo: string, allowDuplicate?: boolean): Promise<{ imported: number; skipped: number; total: number; skippedNoMobile: number; insertedIds: number[] }>;
   getDuplicateProfiles(): Promise<Array<{ mobile: string; count: number; profiles: Array<{ userId: string; role: string; name: string; mobile: string; isBlocked: boolean; totalCredits: number; completenessScore: number; serviceName: string; description: string; address: string; hasLocation: boolean; hashtags: string[]; approxCharge: string; }>; }>>;
   updatePendingProviderFields(id: number, fields: { serviceName?: string; address?: string; district?: string; state?: string; approxCharge?: string }): Promise<PendingProvider>;
 }
@@ -1661,7 +1661,7 @@ export class DatabaseStorage implements IStorage {
     return { imported, skipped, total };
   }
 
-  async bulkCreateGooglePlaces(records: Array<{ name: string; mobile?: string; serviceName: string; address?: string; latitude?: number; longitude?: number; description?: string }>, assignedTo: string, allowDuplicate = false): Promise<{ imported: number; skipped: number; total: number; skippedNoMobile: number }> {
+  async bulkCreateGooglePlaces(records: Array<{ name: string; mobile?: string; serviceName: string; address?: string; latitude?: number; longitude?: number; description?: string }>, assignedTo: string, allowDuplicate = false): Promise<{ imported: number; skipped: number; total: number; skippedNoMobile: number; insertedIds: number[] }> {
     const total = records.length;
     let skippedNoMobile = 0;
 
@@ -1695,6 +1695,7 @@ export class DatabaseStorage implements IStorage {
 
     const skipped = total - toInsert.length - skippedNoMobile;
     let imported = 0;
+    const insertedIds: number[] = [];
     const BATCH = 500;
     for (let i = 0; i < toInsert.length; i += BATCH) {
       const chunk = toInsert.slice(i, i + BATCH).map(rec => ({
@@ -1710,15 +1711,19 @@ export class DatabaseStorage implements IStorage {
         status: "pending" as const,
       }));
       try {
-        await db.insert(pendingProviders).values(chunk);
-        imported += chunk.length;
+        const rows = await db.insert(pendingProviders).values(chunk).returning({ id: pendingProviders.id });
+        imported += rows.length;
+        for (const r of rows) insertedIds.push(r.id);
       } catch {
         for (const row of chunk) {
-          try { await db.insert(pendingProviders).values(row); imported++; } catch {}
+          try {
+            const rows = await db.insert(pendingProviders).values(row).returning({ id: pendingProviders.id });
+            if (rows[0]) { insertedIds.push(rows[0].id); imported++; }
+          } catch {}
         }
       }
     }
-    return { imported, skipped, total, skippedNoMobile };
+    return { imported, skipped, total, skippedNoMobile, insertedIds };
   }
 
   async bulkCreateMetaLeads(records: Array<{ name: string; mobile: string; serviceName?: string; address?: string; description?: string }>, assignedTo: string, allowDuplicate = false): Promise<{ imported: number; skipped: number; total: number }> {

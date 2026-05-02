@@ -589,12 +589,15 @@ export default function AdminDashboardPage() {
   const [gpService, setGpService] = useState("");
   const [gpAssignTo, setGpAssignTo] = useState("_default");
   const [gpAllowDuplicate, setGpAllowDuplicate] = useState(false);
+  const [gpAutoApprove, setGpAutoApprove] = useState(true);
   const [gpSearching, setGpSearching] = useState(false);
   const [gpImporting, setGpImporting] = useState(false);
   const [gpResults, setGpResults] = useState<Array<{ placeId: string; name: string; address: string; latitude: number | null; longitude: number | null; phone: string; website: string; rating: number | null; ratingCount: number | null }>>([]);
   const [gpSelected, setGpSelected] = useState<Set<string>>(new Set());
   const [gpNextPageToken, setGpNextPageToken] = useState<string | null>(null);
-  const [gpImportResult, setGpImportResult] = useState<{ imported: number; skipped: number; total: number; skippedNoMobile: number } | null>(null);
+  const [gpImportResult, setGpImportResult] = useState<{ imported: number; skipped: number; total: number; skippedNoMobile: number; approved?: number } | null>(null);
+  const [gpBulkApproving, setGpBulkApproving] = useState(false);
+  const [gpBulkResult, setGpBulkResult] = useState<{ approved: number; total: number; errors: string[] } | null>(null);
 
   // Meta import state
   const [metaFile, setMetaFile] = useState<File | null>(null);
@@ -1070,10 +1073,12 @@ export default function AdminDashboardPage() {
         assignTo: gpAssignTo,
         serviceName: gpService.trim(),
         allowDuplicate: gpAllowDuplicate,
+        autoApprove: gpAutoApprove,
       });
       const data = await res.json();
       setGpImportResult(data);
-      toast({ title: `Import complete! ${data.imported} businesses added` });
+      const liveMsg = gpAutoApprove && data.approved > 0 ? ` — ${data.approved} live ho gaye!` : "";
+      toast({ title: `Import complete! ${data.imported} businesses added${liveMsg}` });
     } catch (err: any) {
       toast({ title: err.message || "Import failed", variant: "destructive" });
     } finally {
@@ -1170,6 +1175,22 @@ export default function AdminDashboardPage() {
       toast({ title: err.message || "Delete failed", variant: "destructive" });
     } finally {
       setDeletingDuplicates(false);
+    }
+  };
+
+  const handleGoogleBulkApprove = async () => {
+    if (!confirm("Kya aap confirm karte hain? Saare pending Google Places leads approve ho jayenge aur live providers ban jayenge.")) return;
+    setGpBulkApproving(true);
+    setGpBulkResult(null);
+    try {
+      const res = await apiRequest("POST", "/api/admin/approve-google-bulk");
+      const data = await res.json();
+      setGpBulkResult(data);
+      toast({ title: `✅ ${data.approved} Google leads live ho gaye!` });
+    } catch (err: any) {
+      toast({ title: err.message || "Bulk approve failed", variant: "destructive" });
+    } finally {
+      setGpBulkApproving(false);
     }
   };
 
@@ -2627,6 +2648,22 @@ export default function AdminDashboardPage() {
                     </button>
                   </div>
 
+                  {/* Auto-Approve (Direct Live) */}
+                  <div className="flex items-center justify-between rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-4 py-3">
+                    <div>
+                      <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-200">Direct Live Karein ⚡</p>
+                      <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-0.5">ON hone par import ke saath hi providers live ho jayenge — verify dashboard skip</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setGpAutoApprove(v => !v)}
+                      data-testid="toggle-gp-auto-approve"
+                      className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${gpAutoApprove ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`}
+                    >
+                      <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${gpAutoApprove ? "translate-x-5" : "translate-x-0.5"}`} />
+                    </button>
+                  </div>
+
                   {/* Import Button */}
                   <Button
                     className="w-full h-11 text-sm font-semibold gap-2 bg-emerald-500 hover:bg-emerald-600 text-white"
@@ -2665,8 +2702,56 @@ export default function AdminDashboardPage() {
                       <p className="text-xl font-extrabold text-red-700 dark:text-red-300">{gpImportResult.skippedNoMobile}</p>
                     </div>
                   </div>
-                  {gpAssignTo !== "_default" && (
+                  {gpImportResult.approved !== undefined && gpImportResult.approved > 0 && (
+                    <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300 mt-2.5">⚡ {gpImportResult.approved} providers directly LIVE ho gaye!</p>
+                  )}
+                  {gpAssignTo !== "_default" && gpImportResult.approved === 0 && (
                     <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-2.5">Assigned to: <strong>{gpAssignTo}</strong> — verify dashboard mein "Google" badge ke saath dikhenge</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* ── BULK APPROVE GOOGLE LEADS ── */}
+            <div className="bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/40 rounded-2xl p-5 space-y-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
+                  <span className="text-lg">🌐</span>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-base text-slate-900 dark:text-white">Google Leads — Bulk Approve</h3>
+                  <p className="text-xs text-muted-foreground">Saare pending Google Places leads ek saath live karein — Google se verified businesses hain</p>
+                </div>
+              </div>
+
+              <Button
+                className="w-full h-11 text-sm font-semibold gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
+                onClick={handleGoogleBulkApprove}
+                disabled={gpBulkApproving}
+                data-testid="button-google-bulk-approve"
+              >
+                {gpBulkApproving ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" />Approve ho rahe hain...</>
+                ) : (
+                  <><CheckCircle className="w-4 h-4" />Saare Google Leads Live Karein</>
+                )}
+              </Button>
+
+              {gpBulkResult && (
+                <div className="bg-emerald-50 dark:bg-emerald-950/30 rounded-xl p-4 border border-emerald-100 dark:border-emerald-900/50 space-y-2">
+                  <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">✅ Bulk Approve Result:</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-white dark:bg-slate-800 rounded-lg p-2.5 text-center">
+                      <p className="text-xs text-muted-foreground">Total Found</p>
+                      <p className="text-xl font-extrabold text-foreground">{gpBulkResult.total}</p>
+                    </div>
+                    <div className="bg-white dark:bg-slate-800 rounded-lg p-2.5 text-center">
+                      <p className="text-xs text-muted-foreground">Live Hue</p>
+                      <p className="text-xl font-extrabold text-emerald-700 dark:text-emerald-300">{gpBulkResult.approved}</p>
+                    </div>
+                  </div>
+                  {gpBulkResult.errors.length > 0 && (
+                    <p className="text-xs text-red-600 dark:text-red-400">{gpBulkResult.errors.length} errors huye — baaki live ho gaye</p>
                   )}
                 </div>
               )}

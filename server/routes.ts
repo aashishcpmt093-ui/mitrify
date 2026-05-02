@@ -1757,7 +1757,7 @@ export async function registerRoutes(
   // Google Places — Bulk import selected places to pending_providers
   app.post("/api/admin/google-places-import", adminCheck, async (req, res) => {
     try {
-      const { places, assignTo, serviceName, allowDuplicate } = req.body || {};
+      const { places, assignTo, serviceName, allowDuplicate, autoApprove } = req.body || {};
       if (!Array.isArray(places) || places.length === 0) {
         return res.status(400).json({ message: "Koi place select nahi hua" });
       }
@@ -1779,9 +1779,52 @@ export async function registerRoutes(
       }));
 
       const result = await storage.bulkCreateGooglePlaces(records, assignToStr, allowDuplicate === true);
-      res.json({ ok: true, ...result });
+
+      let approved = 0;
+      const approveErrors: string[] = [];
+      if (autoApprove === true && result.insertedIds.length > 0) {
+        // Approve EXACTLY the rows we just inserted (deterministic — uses
+        // returned IDs so concurrent imports/approvals can't collide).
+        for (const id of result.insertedIds) {
+          try {
+            await storage.approvePendingProvider(id, "admin");
+            await storage.updatePendingProviderStatus(id, "approved", undefined, "admin");
+            approved++;
+          } catch (e: any) {
+            approveErrors.push(`ID ${id}: ${e.message}`);
+          }
+        }
+      }
+
+      const { insertedIds, ...publicResult } = result;
+      res.json({ ok: true, ...publicResult, approved, approveErrors });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Google Places import failed" });
+    }
+  });
+
+  // ── BULK APPROVE GOOGLE PLACES LEADS ──
+  app.post("/api/admin/approve-google-bulk", adminCheck, async (req, res) => {
+    try {
+      const pending = await db
+        .select()
+        .from(pendingProviders)
+        .where(and(eq(pendingProviders.status, "pending"), eq(pendingProviders.source, "google")));
+
+      let approved = 0;
+      const errors: string[] = [];
+      for (const pp of pending) {
+        try {
+          await storage.approvePendingProvider(pp.id, "admin");
+          await storage.updatePendingProviderStatus(pp.id, "approved", undefined, "admin");
+          approved++;
+        } catch (e: any) {
+          errors.push(`ID ${pp.id}: ${e.message}`);
+        }
+      }
+      res.json({ approved, total: pending.length, errors });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Bulk approve failed" });
     }
   });
 
