@@ -68,21 +68,12 @@ async function callGemini(serviceName: string, description: string | null): Prom
     "- No emojis, no '#' prefix, no duplicates.",
   ].filter(Boolean).join("\n");
 
-  // gemini-flash-latest = Gemini 2.5 Flash, which has "thinking mode" ON by
-  // default. With thinking on, the model spends part (often ALL) of its
-  // output budget on internal `thoughtsTokenCount` and the actual reply
-  // text comes back empty / truncated with `finishReason: MAX_TOKENS`.
-  // We disable thinking explicitly (thinkingBudget: 0) so the full output
-  // budget is available for the actual JSON. Also bump maxOutputTokens to
-  // 512 defensively — 8-10 hyphenated tags fit easily but the API counts
-  // JSON syntax tokens too.
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
       temperature: 0.4,
-      maxOutputTokens: 512,
+      maxOutputTokens: 256,
       responseMimeType: "application/json",
-      thinkingConfig: { thinkingBudget: 0 },
     },
   };
 
@@ -119,19 +110,9 @@ async function callGemini(serviceName: string, description: string | null): Prom
     }
   }
 
-  const finishReason: string = data?.candidates?.[0]?.finishReason || "";
   const text: string =
     data?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("").trim() || "";
-  if (!text) {
-    // Distinguish "model returned literally nothing" from the common
-    // thinking-mode failure mode where MAX_TOKENS is hit before any reply
-    // text is emitted. Throw so the caller can record it as an AI error
-    // instead of silently falling back to dictionary.
-    if (finishReason === "MAX_TOKENS") {
-      throw new Error("empty response (MAX_TOKENS — likely thinking-mode budget exhausted)");
-    }
-    throw new Error(`empty response${finishReason ? ` (finishReason: ${finishReason})` : ""}`);
-  }
+  if (!text) return [];
 
   let arr: any;
   try {
@@ -142,14 +123,8 @@ async function callGemini(serviceName: string, description: string | null): Prom
       try { arr = JSON.parse(m[0]); } catch { arr = null; }
     }
   }
-  if (!Array.isArray(arr)) {
-    throw new Error(`parse failed (text starts: "${text.slice(0, 60).replace(/\s+/g, " ")}")`);
-  }
-  const tags = arr.filter((x: any) => typeof x === "string");
-  if (tags.length === 0) {
-    throw new Error("model returned an empty array");
-  }
-  return tags;
+  if (!Array.isArray(arr)) return [];
+  return arr.filter((x: any) => typeof x === "string");
 }
 
 export type TagSource = "dictionary" | "ai" | "hybrid" | "skipped";
@@ -158,12 +133,6 @@ export interface TagResult {
   finalTags: string[];
   newTagsAdded: number;
   source: TagSource;
-  /** Set when a Gemini API call was attempted and failed (network error,
-   *  HTTP error, MAX_TOKENS, parse failure, empty array). The job runner
-   *  uses this to count AI-specific failures (vs. generic worker errors)
-   *  and surface a banner to the admin so silent Gemini outages don't
-   *  silently fall back to dictionary forever. */
-  aiError?: string;
 }
 
 export async function generateTagsForProvider(
@@ -179,19 +148,19 @@ export async function generateTagsForProvider(
   const dict = lookupDictionary(cleanService, description || undefined);
   let aiTags: string[] = [];
   let source: TagSource = "skipped";
-  let aiError: string | undefined;
 
   if (dict.length >= MIN_TAGS_BEFORE_AI) {
     source = "dictionary";
   } else if (getGeminiKey()) {
     try {
       aiTags = await callGemini(cleanService, description);
-      // callGemini now throws on every empty/parse-fail path, so reaching
-      // here means we have a non-empty array.
-      source = dict.length > 0 ? "hybrid" : "ai";
+      if (aiTags.length > 0) {
+        source = dict.length > 0 ? "hybrid" : "ai";
+      } else {
+        source = dict.length > 0 ? "dictionary" : "skipped";
+      }
     } catch (err: any) {
-      aiError = err?.message || String(err);
-      console.warn("[auto-tags] Gemini call failed:", aiError);
+      console.warn("[auto-tags] Gemini call failed:", err?.message || err);
       source = dict.length > 0 ? "dictionary" : "skipped";
     }
   } else if (dict.length > 0) {
@@ -205,7 +174,7 @@ export async function generateTagsForProvider(
     if (!existingNorm.has(normaliseTag(t))) added++;
   }
   if (added === 0 && source !== "skipped") source = "skipped";
-  return { finalTags: merged, newTagsAdded: added, source, aiError };
+  return { finalTags: merged, newTagsAdded: added, source };
 }
 
 // ─── Job runner ──────────────────────────────────────────────────────────
@@ -225,17 +194,12 @@ export interface JobStatus {
   fromHybrid: number;
   skipped: number;
   failed: number;
-  /** Counts providers where the Gemini API call failed (network, HTTP,
-   *  MAX_TOKENS, parse failure). Distinct from `failed` (generic worker
-   *  exceptions) and `skipped` (no useful tags but no error either). */
-  aiErrors: number;
   done: boolean;
   startedAt: number;
   finishedAt?: number;
   geminiAvailable: boolean;
   dryRun: boolean;
   errorSample: string[];
-  aiErrorSample: string[];
 }
 
 const JOBS = new Map<string, JobStatus>();
@@ -258,14 +222,12 @@ function rowToStatus(row: TagJob): JobStatus {
     fromHybrid: row.fromHybrid,
     skipped: row.skipped,
     failed: row.failed,
-    aiErrors: row.aiErrors ?? 0,
     done: row.done,
     startedAt: row.startedAt.getTime(),
     finishedAt: row.finishedAt ? row.finishedAt.getTime() : undefined,
     geminiAvailable: row.geminiAvailable,
     dryRun: row.dryRun,
     errorSample: Array.isArray(row.errorSample) ? row.errorSample : [],
-    aiErrorSample: Array.isArray(row.aiErrorSample) ? row.aiErrorSample : [],
   };
 }
 
@@ -280,11 +242,9 @@ function queueFlush(status: JobStatus): Promise<void> {
     fromHybrid: status.fromHybrid,
     skipped: status.skipped,
     failed: status.failed,
-    aiErrors: status.aiErrors,
     done: status.done,
     finishedAt: status.finishedAt ? new Date(status.finishedAt) : null,
     errorSample: [...status.errorSample],
-    aiErrorSample: [...status.aiErrorSample],
   };
   const prev = FLUSH_CHAIN.get(status.jobId) || Promise.resolve();
   const next = prev.catch(() => {}).then(async () => {
@@ -391,13 +351,11 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
     fromHybrid: 0,
     skipped: 0,
     failed: 0,
-    aiErrors: 0,
     done: false,
     startedAt: Date.now(),
     geminiAvailable: !!getGeminiKey(),
     dryRun: !!opts.dryRun,
     errorSample: [],
-    aiErrorSample: [],
   };
   // Persist FIRST so a DB failure doesn't leave a phantom in-memory job that
   // blocks future starts (since `getActiveJobId` checks the in-memory map).
@@ -437,16 +395,6 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
           else if (result.source === "ai") status.fromAi++;
           else if (result.source === "hybrid") status.fromHybrid++;
           else status.skipped++;
-          // Track Gemini-side failures separately. Even when we recovered
-          // gracefully (dict fallback), we want the admin to see that AI
-          // is broken instead of assuming everything's fine because the
-          // overall job ran.
-          if (result.aiError) {
-            status.aiErrors++;
-            if (status.aiErrorSample.length < 5) {
-              status.aiErrorSample.push(`${p.serviceName}: ${result.aiError.slice(0, 120)}`);
-            }
-          }
         } catch (err: any) {
           status.failed++;
           if (status.errorSample.length < 5) {
