@@ -19,7 +19,7 @@ import {
   type SalaryPayment, type CreditPayment, type Subscription, type InsertSubscription,
   type SubscriptionPlan, type SubscriptionPlanConfig,
 } from "@shared/schema";
-import { eq, and, gte, sql, like, or, ilike, count, desc, isNull, lt, inArray, ne } from "drizzle-orm";
+import { eq, and, gte, sql, like, or, ilike, count, desc, asc, isNull, lt, inArray, ne } from "drizzle-orm";
 
 // ── Subscription plan ranking ────────────────────────────────────────────────
 // Search results sort by descending plan rank (Premium > Pro > Boost > none).

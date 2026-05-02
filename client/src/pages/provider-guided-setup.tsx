@@ -203,7 +203,7 @@ export default function ProviderGuidedSetupPage() {
         await submitForm();
         return;
       }
-      const isValid = await verifyFirebaseOtp(mobile, otpValue);
+      const isValid = await verifyFirebaseOtp(otpValue);
       if (!isValid) {
         toast({ title: "गलत OTP!", variant: "destructive" });
         return;
@@ -473,7 +473,7 @@ export default function ProviderGuidedSetupPage() {
                   {isHidden && (
                     <div className="flex items-start gap-2.5 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
                       <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
-                      <p className="text-sm font-medium text-red-700 dark:text-red-300">{t.hiddenWarning}</p>
+                      <p className="text-sm font-medium text-red-700 dark:text-red-300">⚠️ छिपी हुई प्रोफाइल खोज में नहीं दिखेगी</p>
                     </div>
                   )}
                 </div>

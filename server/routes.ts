@@ -1880,7 +1880,7 @@ export async function registerRoutes(
     if (isAdmin(req)) {
       return res.json({ id: 0, username: "mainadmin", role: "mainadmin" });
     }
-    if (!req.session?.coAdminId) return res.status(401).json({ message: "Not authenticated" });
+    if (!(req.session as any)?.coAdminId) return res.status(401).json({ message: "Not authenticated" });
     res.json({
       id: (req.session as any).coAdminId,
       username: (req.session as any).coAdminUsername,
@@ -2215,7 +2215,7 @@ export async function registerRoutes(
       const rows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: "" });
       if (rows.length === 0) return res.status(400).json({ message: "File is empty or unreadable" });
 
-      const records: Array<{ name: string; mobile: string; serviceName?: string; address?: string }> = [];
+      const records: Array<{ name: string; mobile: string; serviceName?: string; address?: string; description?: string }> = [];
       let skippedNoMobile = 0;
       for (const row of rows) {
         const name = String(row[nameCol] || "").trim();
