@@ -1,6 +1,7 @@
 import { lookupDictionary } from "./tag-dictionary";
 import { storage } from "../storage";
-import type { TagJob } from "@shared/schema";
+import type { TagJob, AiErrorBreakdown } from "@shared/schema";
+import { EMPTY_AI_ERROR_BREAKDOWN } from "@shared/schema";
 import crypto from "crypto";
 
 function errMsg(err: unknown): string {
@@ -98,6 +99,13 @@ async function callGemini(serviceName: string, description: string | null): Prom
     if (resp.status === 429) {
       const err: any = new Error("rate-limited");
       err.rateLimited = true;
+      err.transient = true;
+      throw err;
+    }
+    if (resp.status >= 500 && resp.status < 600) {
+      const txt = await resp.text().catch(() => "");
+      const err: any = new Error(`Gemini ${resp.status}: ${txt.slice(0, 200)}`);
+      err.transient = true;
       throw err;
     }
     if (!resp.ok) {
@@ -107,17 +115,37 @@ async function callGemini(serviceName: string, description: string | null): Prom
     return resp.json();
   };
 
+  // Exponential backoff with jitter for 429 / 5xx — free-tier Gemini Flash
+  // hits per-minute quotas easily under N parallel workers, so a single
+  // 1.5s retry is not enough. Up to 4 attempts (3 retries) with delays
+  // ~1.5s → 4s → 10s plus ±20% jitter so the 3-5 workers don't all retry
+  // in lockstep.
+  const RETRY_DELAYS_MS = [1500, 4000, 10000];
+  const MAX_ATTEMPTS = RETRY_DELAYS_MS.length + 1;
   let data: any;
-  try {
-    data = await doFetch();
-  } catch (err: any) {
-    if (err?.rateLimited) {
-      await new Promise(r => setTimeout(r, 1500));
+  let lastErr: any;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
       data = await doFetch();
-    } else {
-      throw err;
+      lastErr = undefined;
+      break;
+    } catch (err: any) {
+      lastErr = err;
+      const isLast = attempt === MAX_ATTEMPTS - 1;
+      if (!err?.transient || isLast) {
+        if (err?.rateLimited && isLast) {
+          // Surface a stable, parseable category prefix so the worker can
+          // bucket this in `aiErrorBreakdown.rateLimited`.
+          throw new Error("rate-limited (after retries)");
+        }
+        throw err;
+      }
+      const base = RETRY_DELAYS_MS[attempt];
+      const jitter = base * 0.2 * (Math.random() * 2 - 1);
+      await new Promise(r => setTimeout(r, Math.max(100, Math.round(base + jitter))));
     }
   }
+  if (!data && lastErr) throw lastErr;
 
   const finishReason: string = data?.candidates?.[0]?.finishReason || "";
   const text: string =
@@ -236,11 +264,80 @@ export interface JobStatus {
   dryRun: boolean;
   errorSample: string[];
   aiErrorSample: string[];
+  /** Per-category breakdown of `aiErrors` so the admin can tell whether
+   *  failures are quota-driven (rateLimited / httpError 5xx), model-thinking
+   *  (maxTokens), or content/parse issues. UI only renders categories > 0. */
+  aiErrorBreakdown: AiErrorBreakdown;
 }
 
 const JOBS = new Map<string, JobStatus>();
-const CONCURRENCY = 5;
+// Free-tier Gemini Flash chokes at 5 parallel workers (frequent 429s). Default
+// to 3 which empirically keeps quota errors near zero; override via
+// AUTO_TAG_CONCURRENCY env var if a larger paid quota is in use.
+const CONCURRENCY = (() => {
+  const raw = parseInt(process.env.AUTO_TAG_CONCURRENCY || "", 10);
+  if (Number.isFinite(raw) && raw >= 1 && raw <= 20) return raw;
+  return 3;
+})();
 const DB_WRITE_EVERY = 5; // processed-count interval to flush to DB
+
+/** Bucket a Gemini error message into one of the breakdown categories.
+ *  Substring match is intentional — `callGemini` produces stable prefixes
+ *  ("rate-limited", "Gemini <status>", "parse failed", "MAX_TOKENS"). */
+function categoriseAiError(msg: string | undefined | null): keyof AiErrorBreakdown {
+  const s = (msg || "").toLowerCase();
+  if (s.includes("rate-limited") || s.includes("429")) return "rateLimited";
+  if (s.includes("max_tokens")) return "maxTokens";
+  if (s.includes("parse failed")) return "parseFail";
+  // Match `Gemini 4xx`/`Gemini 5xx` HTTP errors emitted by callGemini.
+  if (/gemini\s+\d{3}/.test(s)) return "httpError";
+  if (s.includes("empty response") || s.includes("empty array")) return "parseFail";
+  if (s.includes("fetch") || s.includes("network") || s.includes("econn") || s.includes("timeout") || s.includes("socket")) return "networkError";
+  return "other";
+}
+
+/** True if a thrown DB error looks like a transient connection drop / network
+ *  blip rather than a validation/constraint violation. Neon Postgres routinely
+ *  cuts pool connections after long idle periods (10–20s Gemini calls), and
+ *  the resulting `Connection terminated due to connection timeout` is safe to
+ *  retry. Constraint errors (`duplicate key`, `null value in column`, etc.)
+ *  must NOT retry. */
+function isTransientDbError(err: any): boolean {
+  const msg = (err?.message || String(err || "")).toLowerCase();
+  const code = (err?.code || "").toString().toUpperCase();
+  if (code && /^(08|57P)/.test(code)) return true; // connection / admin shutdown
+  return (
+    msg.includes("connection terminated") ||
+    msg.includes("connection timeout") ||
+    msg.includes("connection reset") ||
+    msg.includes("econnreset") ||
+    msg.includes("econnrefused") ||
+    msg.includes("etimedout") ||
+    msg.includes("socket hang up") ||
+    msg.includes("write after end") ||
+    msg.includes("server closed the connection")
+  );
+}
+
+/** Retry wrapper around a single DB call. Used to absorb Neon idle-pool
+ *  drops that happen because the worker held the connection across a 10–20s
+ *  Gemini call. Max 2 retries, short backoff (300ms → 800ms). Validation /
+ *  constraint errors short-circuit on first attempt. */
+async function withDbRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  const delays = [300, 800];
+  let lastErr: any;
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastErr = err;
+      if (attempt === delays.length || !isTransientDbError(err)) throw err;
+      console.warn(`[auto-tags] ${label} transient DB error (attempt ${attempt + 1}, retrying): ${errMsg(err)}`);
+      await new Promise(r => setTimeout(r, delays[attempt]));
+    }
+  }
+  throw lastErr;
+}
 
 // Per-job promise chain so throttled flushes never overwrite a later
 // (more-progressed) write with an earlier one. Without this, two concurrent
@@ -266,6 +363,7 @@ function rowToStatus(row: TagJob): JobStatus {
     dryRun: row.dryRun,
     errorSample: Array.isArray(row.errorSample) ? row.errorSample : [],
     aiErrorSample: Array.isArray(row.aiErrorSample) ? row.aiErrorSample : [],
+    aiErrorBreakdown: { ...EMPTY_AI_ERROR_BREAKDOWN, ...(row.aiErrorBreakdown ?? {}) },
   };
 }
 
@@ -285,6 +383,7 @@ function queueFlush(status: JobStatus): Promise<void> {
     finishedAt: status.finishedAt ? new Date(status.finishedAt) : null,
     errorSample: [...status.errorSample],
     aiErrorSample: [...status.aiErrorSample],
+    aiErrorBreakdown: { ...status.aiErrorBreakdown },
   };
   const prev = FLUSH_CHAIN.get(status.jobId) || Promise.resolve();
   const next = prev.catch(() => {}).then(async () => {
@@ -398,6 +497,7 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
     dryRun: !!opts.dryRun,
     errorSample: [],
     aiErrorSample: [],
+    aiErrorBreakdown: { ...EMPTY_AI_ERROR_BREAKDOWN },
   };
   // Persist FIRST so a DB failure doesn't leave a phantom in-memory job that
   // blocks future starts (since `getActiveJobId` checks the in-memory map).
@@ -431,7 +531,13 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
             (p.hashtags as string[]) || [],
           );
           if (!opts.dryRun && result.newTagsAdded > 0) {
-            await storage.updateProvider(p.userId, { hashtags: result.finalTags });
+            // Wrap in DB retry — Neon often drops the pool connection while
+            // it sat idle during the 10–20s Gemini call, so the first save
+            // attempt frequently fails with "Connection terminated due to
+            // connection timeout". Retry helper recovers transparently.
+            await withDbRetry("updateProvider", () =>
+              storage.updateProvider(p.userId, { hashtags: result.finalTags })
+            );
           }
           if (result.source === "dictionary") status.fromDict++;
           else if (result.source === "ai") status.fromAi++;
@@ -443,6 +549,8 @@ export async function startAutoTagJob(opts: { dryRun?: boolean; limit?: number }
           // overall job ran.
           if (result.aiError) {
             status.aiErrors++;
+            const cat = categoriseAiError(result.aiError);
+            status.aiErrorBreakdown[cat] = (status.aiErrorBreakdown[cat] || 0) + 1;
             if (status.aiErrorSample.length < 5) {
               status.aiErrorSample.push(`${p.serviceName}: ${result.aiError.slice(0, 120)}`);
             }

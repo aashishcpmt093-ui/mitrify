@@ -226,6 +226,14 @@ interface TagJobStatus {
   dryRun: boolean;
   errorSample: string[];
   aiErrorSample: string[];
+  aiErrorBreakdown?: {
+    rateLimited: number;
+    maxTokens: number;
+    parseFail: number;
+    httpError: number;
+    networkError: number;
+    other: number;
+  };
 }
 
 function AutoGenerateTagsCard() {
@@ -467,28 +475,58 @@ function AutoGenerateTagsCard() {
           )}
           {status.geminiAvailable && status.aiErrors > 0 && (
             <div
-              className="text-[11px] bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 rounded-md px-2 py-2 text-amber-800 dark:text-amber-300"
+              className="text-[11px] bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 rounded-md px-2 py-2 text-amber-800 dark:text-amber-300 space-y-2"
               data-testid="warning-tag-ai-errors"
             >
               <p className="font-semibold">
                 ⚠ AI ne {status.aiErrors} provider{status.aiErrors === 1 ? "" : "s"} par fail kiya — dictionary fallback chal raha hai, lekin Gemini side check karein.
               </p>
+              {status.aiErrorBreakdown && (() => {
+                const b = status.aiErrorBreakdown!;
+                const rows: Array<{ key: string; label: string; count: number; testid: string }> = [
+                  { key: "rateLimited", label: "Rate limit (429)", count: b.rateLimited || 0, testid: "text-ai-error-rate-limited" },
+                  { key: "maxTokens", label: "Empty / MAX_TOKENS", count: b.maxTokens || 0, testid: "text-ai-error-max-tokens" },
+                  { key: "parseFail", label: "Parse failed", count: b.parseFail || 0, testid: "text-ai-error-parse-fail" },
+                  { key: "httpError", label: "HTTP error", count: b.httpError || 0, testid: "text-ai-error-http" },
+                  { key: "networkError", label: "Network", count: b.networkError || 0, testid: "text-ai-error-network" },
+                  { key: "other", label: "Other", count: b.other || 0, testid: "text-ai-error-other" },
+                ].filter(r => r.count > 0);
+                if (rows.length === 0) return null;
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5" data-testid="grid-ai-error-breakdown">
+                    {rows.map(r => (
+                      <div
+                        key={r.key}
+                        className="bg-white/60 dark:bg-slate-900/40 rounded px-2 py-1 flex items-center justify-between gap-2"
+                        data-testid={r.testid}
+                      >
+                        <span className="truncate">{r.label}</span>
+                        <span className="font-bold tabular-nums">{r.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
               {status.aiErrorSample.length > 0 && (
                 <details className="mt-1">
-                  <summary className="cursor-pointer">Sample errors ({status.aiErrorSample.length})</summary>
-                  <ul className="list-disc list-inside mt-1 space-y-0.5" data-testid="list-tag-ai-errors">
+                  <summary className="cursor-pointer">AI errors (sample {status.aiErrorSample.length})</summary>
+                  <ul className="list-disc list-inside mt-1 space-y-0.5" data-testid="list-ai-error-sample">
                     {status.aiErrorSample.map((e, i) => <li key={i}>{e}</li>)}
                   </ul>
                 </details>
               )}
             </div>
           )}
-          {status.errorSample.length > 0 && (
-            <details className="text-[11px] text-red-700 dark:text-red-400">
-              <summary className="cursor-pointer">{status.failed} failed — details</summary>
-              <ul className="list-disc list-inside mt-1 space-y-0.5">
-                {status.errorSample.map((e, i) => <li key={i}>{e}</li>)}
-              </ul>
+          {(status.failed > 0 || status.errorSample.length > 0) && (
+            <details className="text-[11px] text-red-700 dark:text-red-400" data-testid="details-worker-errors">
+              <summary className="cursor-pointer">
+                Worker / DB errors ({status.failed}){status.errorSample.length > 0 ? ` — sample ${status.errorSample.length}` : ""}
+              </summary>
+              {status.errorSample.length > 0 && (
+                <ul className="list-disc list-inside mt-1 space-y-0.5" data-testid="list-worker-error-sample">
+                  {status.errorSample.map((e, i) => <li key={i}>{e}</li>)}
+                </ul>
+              )}
             </details>
           )}
         </div>

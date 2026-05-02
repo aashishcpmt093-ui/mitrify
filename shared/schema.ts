@@ -442,6 +442,24 @@ export type SearchLog = typeof searchLog.$inferSelect;
 export const insertSearchLogSchema = createInsertSchema(searchLog).omit({ id: true, lastSearched: true });
 export type InsertSearchLog = z.infer<typeof insertSearchLogSchema>;
 
+export interface AiErrorBreakdown {
+  rateLimited: number;
+  maxTokens: number;
+  parseFail: number;
+  httpError: number;
+  networkError: number;
+  other: number;
+}
+
+export const EMPTY_AI_ERROR_BREAKDOWN: AiErrorBreakdown = {
+  rateLimited: 0,
+  maxTokens: 0,
+  parseFail: 0,
+  httpError: 0,
+  networkError: 0,
+  other: 0,
+};
+
 export const tagJobs = pgTable("tag_jobs", {
   jobId: varchar("job_id", { length: 32 }).primaryKey(),
   total: integer("total").notNull().default(0),
@@ -457,6 +475,14 @@ export const tagJobs = pgTable("tag_jobs", {
   geminiAvailable: boolean("gemini_available").notNull().default(false),
   errorSample: jsonb("error_sample").$type<string[]>().default([]),
   aiErrorSample: jsonb("ai_error_sample").$type<string[]>().default([]),
+  aiErrorBreakdown: jsonb("ai_error_breakdown").$type<AiErrorBreakdown>().default({
+    rateLimited: 0,
+    maxTokens: 0,
+    parseFail: 0,
+    httpError: 0,
+    networkError: 0,
+    other: 0,
+  }),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   finishedAt: timestamp("finished_at"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
