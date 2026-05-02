@@ -32,7 +32,10 @@ export default function CashfreeCheckoutPage() {
       return;
     }
 
+    let cancelled = false;
+
     const startCheckout = () => {
+      if (cancelled) return;
       try {
         const cashfree = window.Cashfree({
           mode: cfMode as "sandbox" | "production",
@@ -41,65 +44,62 @@ export default function CashfreeCheckoutPage() {
         const successQuery = kind === "subscription"
           ? `kind=subscription&plan=${encodeURIComponent(plan)}&cycle=${encodeURIComponent(cycle)}&order_id=${orderId}`
           : `kind=credits&role=${role}&credits=${credits}&order_id=${orderId}`;
+
+        // redirectTarget "_self" = same tab full-page redirect to Cashfree
+        // hosted checkout. This avoids popup blockers and the
+        // overlay/iframe modes that some browsers (esp. installed PWAs)
+        // fail to render, leaving the user staring at our spinner forever.
         cashfree.checkout({
           paymentSessionId: paymentSessionId,
           returnUrl: `${window.location.origin}/payment/success?${successQuery}`,
+          redirectTarget: "_self",
         });
         setLoading(false);
       } catch (err: any) {
         console.error("Cashfree checkout error:", err);
-        setError("Failed to load payment page");
+        setError("Failed to load payment page. Please try again.");
         setLoading(false);
       }
     };
 
-    // SDK is preloaded in index.html; if it's already there, use it directly.
-    if (typeof window.Cashfree === "function") {
-      startCheckout();
-      return;
-    }
-
-    // Fallback: SDK not loaded yet (e.g. preload still in flight or
-    // blocked). Try to load it on demand. We do NOT remove the script on
-    // cleanup because removing a still-loading <script> can fire onerror
-    // in some browsers and breaks the second mount in StrictMode.
+    // Ensure the SDK <script> tag exists. It is also preloaded in
+    // index.html, but if that ever gets stripped (cached old build, CSP,
+    // adblocker) we re-inject here so the checkout can still proceed.
+    const SDK_URL = "https://sdk.cashfree.com/js/v3/cashfree.js";
     const SCRIPT_ID = "cashfree-sdk-v3";
-    let script = document.getElementById(SCRIPT_ID) as HTMLScriptElement | null;
-    let cancelled = false;
+    if (
+      typeof window.Cashfree !== "function" &&
+      !document.querySelector(`script[src="${SDK_URL}"]`)
+    ) {
+      const s = document.createElement("script");
+      s.id = SCRIPT_ID;
+      s.src = SDK_URL;
+      s.async = true;
+      document.head.appendChild(s);
+    }
 
-    const onReady = () => {
+    // Poll for window.Cashfree instead of relying on script load events,
+    // which can be missed when the script is already cached or when the
+    // tag was injected by index.html before this component mounted.
+    const startedAt = Date.now();
+    const TIMEOUT_MS = 15000;
+    const pollId = window.setInterval(() => {
       if (cancelled) return;
-      if (typeof window.Cashfree === "function") startCheckout();
-      else {
-        setError("Failed to load payment SDK");
+      if (typeof window.Cashfree === "function") {
+        window.clearInterval(pollId);
+        startCheckout();
+      } else if (Date.now() - startedAt > TIMEOUT_MS) {
+        window.clearInterval(pollId);
+        setError(
+          "Payment service load nahi ho saka. Internet check karke dobara try karein. (Adblocker / VPN band rakhein)"
+        );
         setLoading(false);
       }
-    };
-    const onFail = () => {
-      if (cancelled) return;
-      setError("Failed to load payment SDK");
-      setLoading(false);
-    };
-
-    if (!script) {
-      script = document.createElement("script");
-      script.id = SCRIPT_ID;
-      script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
-      script.async = true;
-      script.addEventListener("load", onReady);
-      script.addEventListener("error", onFail);
-      document.body.appendChild(script);
-    } else {
-      script.addEventListener("load", onReady);
-      script.addEventListener("error", onFail);
-      // If script already finished loading, fire immediately.
-      if (typeof window.Cashfree === "function") onReady();
-    }
+    }, 100);
 
     return () => {
       cancelled = true;
-      script?.removeEventListener("load", onReady);
-      script?.removeEventListener("error", onFail);
+      window.clearInterval(pollId);
     };
   }, [paymentSessionId]);
 
