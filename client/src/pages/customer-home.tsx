@@ -16,7 +16,7 @@ import {
   LogOut, Zap, Loader2, ChevronRight, Tag, ArrowLeftRight, Wrench,
   Droplets, Plug, Paintbrush, Car, Home, Scissors, Hammer, Laptop,
   UtensilsCrossed, Shirt, Clock, Navigation, MapPinned, Check, Settings, GraduationCap,
-  Info, ScrollText, Briefcase, Plus, AlertCircle, Trash2, LogIn, UserX, Bell, User
+  Info, ScrollText, Briefcase, Plus, AlertCircle, Trash2, LogIn, UserX, Bell, User, Mail
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { usePwaInstall } from "@/hooks/use-pwa-install";
@@ -125,6 +125,7 @@ export default function CustomerHomePage() {
   const [geocoding, setGeocoding] = useState(false);
   const [locationLabel, setLocationLabel] = useState("Current Location");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [contactSheetOpen, setContactSheetOpen] = useState(false);
   const [searching, setSearching] = useState(false);
   const [phoneQuery, setPhoneQuery] = useState("");
   const [phoneSearching, setPhoneSearching] = useState(false);
@@ -1063,6 +1064,9 @@ export default function CustomerHomePage() {
               <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setLocation("/terms"); }} data-testid="link-terms">
                 <ScrollText className="w-4 h-4" /> {t("terms")}
               </Button>
+              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); setContactSheetOpen(true); }} data-testid="link-contact">
+                <Mail className="w-4 h-4" /> {t("contactUs")}
+              </Button>
               {isAuthenticated ? (
                 <Button variant="ghost" className="w-full justify-start gap-3 text-destructive" onClick={() => logout()} data-testid="button-logout">
                   <LogOut className="w-4 h-4" /> {t("logout")}
@@ -1075,6 +1079,46 @@ export default function CustomerHomePage() {
             </div>
           </div>
           <div className="flex-1 bg-black/30" onClick={() => setMenuOpen(false)} />
+        </div>
+      )}
+
+      {contactSheetOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40" onClick={() => setContactSheetOpen(false)} data-testid="sheet-contact-us">
+          <div className="w-full sm:max-w-md bg-card border-t sm:border sm:rounded-2xl rounded-t-2xl shadow-2xl p-5 space-y-4 animate-in slide-in-from-bottom" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <h3 className="font-semibold text-lg" data-testid="text-contact-title">{t("contactUsTitle")}</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">{t("contactUsSubtitle")}</p>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setContactSheetOpen(false)} data-testid="button-close-contact-sheet">
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
+            <div className="space-y-2">
+              <a
+                href="mailto:help@mitrify.com"
+                className="flex items-center gap-3 p-3 rounded-xl border bg-background hover:bg-muted active:scale-[0.98] transition"
+                data-testid="link-email-help"
+              >
+                <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                  <Mail className="w-4 h-4 text-primary" />
+                </div>
+                <span className="flex-1 font-mono text-sm break-all">help@mitrify.com</span>
+                <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+              </a>
+              <a
+                href="mailto:contact@mitrify.in"
+                className="flex items-center gap-3 p-3 rounded-xl border bg-background hover:bg-muted active:scale-[0.98] transition"
+                data-testid="link-email-contact"
+              >
+                <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                  <Mail className="w-4 h-4 text-primary" />
+                </div>
+                <span className="flex-1 font-mono text-sm break-all">contact@mitrify.in</span>
+                <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+              </a>
+            </div>
+          </div>
         </div>
       )}
 
