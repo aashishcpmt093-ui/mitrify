@@ -17,7 +17,7 @@ import multer from "multer";
 import * as XLSX from "xlsx";
 import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory } from "./backupJob";
 import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverStaleJobs } from "./lib/auto-tags";
-import { startGoogleBulkSearch, getBulkJobStatus, cancelBulkJob, checkRateLimit as checkGpBulkRateLimit } from "./lib/google-places-bulk";
+import { startGoogleBulkSearch, getBulkJobStatus, cancelBulkJob, checkRateLimit as checkGpBulkRateLimit, recordGpBulkRun } from "./lib/google-places-bulk";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
@@ -1971,20 +1971,28 @@ export async function registerRoutes(
           max: rate.max,
         });
       }
+      // Charge against quota up-front so the count we return is truthful.
+      // (Previously charged inside background runner after anchor success,
+      //  which made `runsToday + 1` a guess.)
+      recordGpBulkRun(adminKey);
+      const post = checkGpBulkRateLimit(adminKey);
       const jobId = await startGoogleBulkSearch({
         adminKey,
         city: cityStr,
         service: serviceStr,
         target: targetNum,
       });
-      const status = getBulkJobStatus(jobId);
+      // Strip places from the start response — they are always empty here
+      // and including the field needlessly hints at unbounded payload.
+      const full = getBulkJobStatus(jobId);
+      const { places: _omit, ...statusMeta } = full || ({} as any);
       res.json({
         ok: true,
         jobId,
         target: targetNum,
-        runsToday: rate.runsToday + 1,
-        max: rate.max,
-        status,
+        runsToday: post.runsToday,
+        max: post.max,
+        status: { ...statusMeta, places: [], totalPlaces: 0 },
       });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Bulk search start failed" });
@@ -1994,7 +2002,23 @@ export async function registerRoutes(
   app.get("/api/admin/google-places-bulk-search/:jobId", adminCheck, (req, res) => {
     const status = getBulkJobStatus(req.params.jobId);
     if (!status) return res.status(404).json({ message: "Job not found or expired" });
-    res.json(status);
+    // Incremental delivery: client passes `?since=<idx>` and we return only
+    // the slice of `places` it hasn't seen yet, plus `totalPlaces` so the
+    // client can update its high-water mark. Default `since=0` returns all
+    // (back-compat for one-shot consumers). Without this the server was
+    // re-sending the full 6,000-row array every 1.2s, blowing up CPU,
+    // bandwidth, AND request-logging memory.
+    const sinceRaw = Number(req.query.since);
+    const since = Number.isFinite(sinceRaw) && sinceRaw >= 0
+      ? Math.min(Math.floor(sinceRaw), status.places.length)
+      : 0;
+    const { places, ...meta } = status;
+    res.json({
+      ...meta,
+      places: places.slice(since),
+      totalPlaces: places.length,
+      since,
+    });
   });
 
   app.post("/api/admin/google-places-bulk-search/:jobId/cancel", adminCheck, (req, res) => {

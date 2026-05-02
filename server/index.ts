@@ -47,8 +47,17 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      // Don't log response bodies for known-large/poll endpoints — they
+      // include phone numbers, can be multi-MB, and are hit every ~1s.
+      // (Bulk Google Places polling is the worst offender.)
+      const skipBody =
+        path.startsWith("/api/admin/google-places-bulk-search") ||
+        path.startsWith("/api/admin/auto-tags");
+      if (capturedJsonResponse && !skipBody) {
+        const body = JSON.stringify(capturedJsonResponse);
+        // Cap length defensively — even endpoints we don't explicitly skip
+        // shouldn't be allowed to flood logs with multi-KB blobs.
+        logLine += ` :: ${body.length > 500 ? body.slice(0, 500) + `… [+${body.length - 500} chars]` : body}`;
       }
 
       log(logLine);

@@ -1031,10 +1031,16 @@ export default function AdminDashboardPage() {
   // done (cancelled / target reached / grid exhausted / error). Also bails
   // out after MAX_POLL_FAILURES consecutive failures so a server crash or
   // network outage can't leave the UI stuck "fetching forever".
+  //
+  // Incremental delta: we send `?since=<received>` and the server returns
+  // only the new slice of places since our last poll. This prevents the
+  // server from re-stringifying & re-sending a 6,000-row array every 1.2s.
   useEffect(() => {
     if (!gpJobId) return;
     let cancelled = false;
     let consecutiveFailures = 0;
+    let receivedCount = 0; // local high-water mark — # of places ingested so far
+    let accumulated: any[] = []; // running list, mirrors server `places[0..totalPlaces]`
     const MAX_POLL_FAILURES = 8; // ~10s of failed polls
     const giveUp = (reason: string) => {
       if (cancelled) return;
@@ -1044,7 +1050,10 @@ export default function AdminDashboardPage() {
     };
     const tick = async () => {
       try {
-        const res = await fetch(`/api/admin/google-places-bulk-search/${gpJobId}`, { credentials: "include" });
+        const res = await fetch(
+          `/api/admin/google-places-bulk-search/${gpJobId}?since=${receivedCount}`,
+          { credentials: "include" }
+        );
         if (!res.ok) {
           if (res.status === 404) {
             // Job GC'd or expired — stop polling cleanly.
@@ -1058,17 +1067,27 @@ export default function AdminDashboardPage() {
           return;
         }
         consecutiveFailures = 0;
-        const status = await res.json();
+        const payload = await res.json();
         if (cancelled) return;
+        // payload.places is the *delta* (only new rows since `since`), and
+        // payload.totalPlaces is the cumulative count on the server.
+        const delta: any[] = payload.places || [];
+        if (delta.length > 0) {
+          accumulated = accumulated.concat(delta);
+          receivedCount = typeof payload.totalPlaces === "number"
+            ? payload.totalPlaces
+            : accumulated.length;
+        }
+        // Reconstruct full status with accumulated places for downstream UI
+        // (summary card, list renderer, import flow all read .places).
+        const status = { ...payload, places: accumulated };
         setGpJobStatus(status);
-        // Mirror status.places into gpResults so the existing list renderer
-        // and the import flow keep working without additional plumbing.
-        setGpResults(status.places || []);
-        // Auto-select newly-seen places that have a phone number. Tracked via
-        // a ref so unticking a place is "sticky" (we don't re-add it on the
-        // next poll just because it's still in status.places).
+        setGpResults(accumulated);
+        // Auto-select newly-arrived places that have a phone number. Tracked
+        // via a ref so unticking a place is "sticky" — we don't re-add it on
+        // a later poll just because it shows up again.
         const fresh: string[] = [];
-        for (const p of status.places || []) {
+        for (const p of delta) {
           if (!gpAutoSeenRef.current.has(p.placeId)) {
             gpAutoSeenRef.current.add(p.placeId);
             if (p.phone) fresh.push(p.placeId);

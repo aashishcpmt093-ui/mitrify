@@ -83,8 +83,11 @@ const EMPTY_RATIO_STOP = 0.85;
 const HEARTBEAT_TTL_MS = 60 * 1000;
 const HEARTBEAT_CHECK_INTERVAL_MS = 15 * 1000;
 // Google API status codes that mean "stop the entire run, not just this cell".
-// 401 (bad/missing key), 403 (PERMISSION_DENIED), 429 (RESOURCE_EXHAUSTED quota).
-const TERMINAL_HTTP_STATUSES = new Set([401, 403, 429]);
+// 401 (bad/missing key), 403 (PERMISSION_DENIED). 429 is handled separately:
+// it gets the same retry/backoff treatment as 5xx (transient throttling)
+// and is only escalated to terminal after MAX_TRANSIENT_RETRIES exhausted.
+const TERMINAL_HTTP_STATUSES = new Set([401, 403]);
+const MAX_TRANSIENT_RETRIES = 3;
 // Terminal error class used by callPlacesText to signal "abort the whole job".
 class TerminalPlacesError extends Error {
   status: number;
@@ -109,7 +112,11 @@ export function checkRateLimit(adminKey: string): { ok: boolean; runsToday: numb
   return { ok: arr.length < RUNS_PER_DAY, runsToday: arr.length, max: RUNS_PER_DAY };
 }
 
-function recordRun(adminKey: string): void {
+// Exported so the route can pre-charge a slot at start time. Charging at
+// start (rather than after anchor lookup) keeps the count returned in the
+// start response accurate. A typo'd city wastes a slot, but that's the
+// same trade-off as any rate-limited endpoint and avoids client lying.
+export function recordGpBulkRun(adminKey: string): void {
   const arr = ADMIN_RUNS.get(adminKey) || [];
   arr.push(Date.now());
   ADMIN_RUNS.set(adminKey, arr);
@@ -155,16 +162,18 @@ async function callPlacesText(body: any, apiKey: string, fieldMask = FIELD_MASK,
     },
     body: JSON.stringify(body),
   });
-  // Retry only on transient 5xx; treat 429 as terminal (quota) — retrying it
-  // would just burn more cells and continue producing zero results.
-  if (resp.status >= 500 && attempt < 3) {
+  // Retry both 429 (rate-limit / transient throttle) and 5xx with exp
+  // backoff; only treat 429 as terminal AFTER all retries exhausted (true
+  // quota exhaustion). 401/403 are always terminal — never recover from
+  // bad/missing API key without admin intervention.
+  if ((resp.status === 429 || resp.status >= 500) && attempt < MAX_TRANSIENT_RETRIES) {
     await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
     return callPlacesText(body, apiKey, fieldMask, attempt + 1);
   }
   const data: any = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     const msg = data?.error?.message || `Places API ${resp.status}`;
-    if (TERMINAL_HTTP_STATUSES.has(resp.status)) {
+    if (TERMINAL_HTTP_STATUSES.has(resp.status) || resp.status === 429) {
       throw new TerminalPlacesError(resp.status, msg);
     }
     throw new Error(msg);
@@ -313,10 +322,8 @@ export async function startGoogleBulkSearch(opts: StartBulkOpts): Promise<string
     try {
       const anchor = await getCityAnchor(city, apiKey);
       status.apiCalls++;
-      // Only charge against the daily quota once anchor lookup succeeds —
-      // otherwise a typo'd city or a transient Google failure burns a run
-      // for nothing.
-      recordRun(opts.adminKey);
+      // Daily quota is now charged in the route at start time so the count
+      // returned to the client stays accurate. See `recordGpBulkRun`.
       const grid = generateGrid(anchor.center, anchor.bboxKm, CELL_SPACING_KM);
       status.totalCells = grid.length;
       status.currentArea = `Anchor: ${anchor.center.lat.toFixed(3)}, ${anchor.center.lng.toFixed(3)} — ${grid.length} cells`;
