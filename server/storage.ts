@@ -110,7 +110,7 @@ export interface IStorage {
   getVisitorStats(): Promise<{ total: number; today: number; last7Days: { date: string; count: number }[] }>;
   deductMultipleCredits(userId: string, role: string, amount: number): Promise<boolean>;
 
-  createJob(data: { userId: string; jobName: string; description: string; location: string; state?: string; district?: string; salary?: string; workHours?: string; numEmployees?: string; contactPhone: string }): Promise<Job>;
+  createJob(data: { userId: string; jobName: string; description: string; location: string; state?: string; district?: string; workType?: string; salary?: string; workHours?: string; numEmployees?: string; contactPhone?: string; postType: "mitrify" | "google_form"; googleFormUrl?: string }): Promise<Job>;
   listActiveJobs(): Promise<Job[]>;
   getJobsByUser(userId: string): Promise<Job[]>;
   getJob(jobId: number): Promise<Job | undefined>;
@@ -1643,8 +1643,22 @@ export class DatabaseStorage implements IStorage {
     return true;
   }
 
-  async createJob(data: { userId: string; jobName: string; description: string; location: string; state?: string; district?: string; salary?: string; workHours?: string; numEmployees?: string; contactPhone: string }): Promise<Job> {
-    const [job] = await db.insert(jobs).values(data).returning();
+  async createJob(data: { userId: string; jobName: string; description: string; location: string; state?: string; district?: string; workType?: string; salary?: string; workHours?: string; numEmployees?: string; contactPhone?: string; postType: "mitrify" | "google_form"; googleFormUrl?: string }): Promise<Job> {
+    const [job] = await db.insert(jobs).values({
+      userId: data.userId,
+      jobName: data.jobName,
+      description: data.description,
+      location: data.location,
+      state: data.state,
+      district: data.district,
+      workType: data.workType,
+      salary: data.salary,
+      workHours: data.workHours,
+      numEmployees: data.numEmployees,
+      contactPhone: data.contactPhone,
+      postType: data.postType,
+      googleFormUrl: data.googleFormUrl,
+    }).returning();
     return job;
   }
 

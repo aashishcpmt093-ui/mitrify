@@ -373,13 +373,46 @@ export const jobs = pgTable("jobs", {
   salary: varchar("salary", { length: 100 }),
   workHours: varchar("work_hours", { length: 100 }),
   numEmployees: varchar("num_employees", { length: 50 }),
-  contactPhone: varchar("contact_phone", { length: 20 }).notNull(),
+  contactPhone: varchar("contact_phone", { length: 20 }),
+  postType: varchar("post_type", { length: 20 }).default("mitrify").notNull(),
+  googleFormUrl: text("google_form_url"),
   isActive: boolean("is_active").default(true).notNull(),
   lowCredit: boolean("low_credit").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export type Job = typeof jobs.$inferSelect;
+
+// Google Form URL: only forms.gle/* or docs.google.com/forms/* are allowed.
+export const GOOGLE_FORM_URL_REGEX = /^https?:\/\/(forms\.gle\/[^\s]+|docs\.google\.com\/forms\/[^\s]+)$/i;
+
+const baseJobFields = {
+  jobName: z.string().trim().min(1, "Job name required"),
+  description: z.string().trim().min(1, "Description required"),
+  state: z.string().trim().min(1, "State required"),
+  district: z.string().trim().min(1, "District required"),
+  location: z.string().trim().optional().default(""),
+  contactPhone: z.string().trim().optional().default(""),
+};
+
+export const insertJobSchema = z.discriminatedUnion("postType", [
+  z.object({
+    postType: z.literal("mitrify"),
+    ...baseJobFields,
+    workType: z.string().optional().default("field"),
+    salary: z.string().optional().default(""),
+    workHours: z.string().optional().default(""),
+    numEmployees: z.string().trim().min(1, "Kitne log chahiye field required hai"),
+    contactPhone: z.string().trim().min(1, "Contact number required"),
+  }),
+  z.object({
+    postType: z.literal("google_form"),
+    ...baseJobFields,
+    googleFormUrl: z.string().trim().regex(GOOGLE_FORM_URL_REGEX, "Sirf Google Form ka link allowed hai"),
+  }),
+]);
+
+export type InsertJob = z.infer<typeof insertJobSchema>;
 
 export const employees = pgTable("employees", {
   id: serial("id").primaryKey(),

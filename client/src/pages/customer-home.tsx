@@ -26,7 +26,7 @@ import { useLanguage, LANGUAGE_NAMES, Language } from "@/lib/language";
 import { Moon, Sun } from "lucide-react";
 import logoImg from "@assets/772B17C5-7738-43B8-B5C0-04A7F2A6561B_1773842365564.png";
 import WelcomePopup from "@/components/welcome-popup";
-import type { ProviderSearchResult } from "@shared/schema";
+import type { ProviderSearchResult, InsertJob } from "@shared/schema";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
 const SERVICE_CATEGORIES = [
@@ -92,7 +92,12 @@ function JobList({ jobList, jobListLoading, jobFilterText, jobFilterState, onSel
         >
           <div className="flex items-center justify-between gap-3">
             <div className="flex-1 min-w-0">
-              <h4 className="font-semibold">{job.jobName}</h4>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h4 className="font-semibold">{job.jobName}</h4>
+                {job.postType === "google_form" && (
+                  <Badge variant="secondary" className="text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" data-testid={`badge-job-list-type-${job.id}`}>Google Form</Badge>
+                )}
+              </div>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
                 <span className="flex items-center gap-1 text-xs text-muted-foreground"><MapPin className="w-3 h-3" />{job.district ? `${job.district}, ${job.state}` : job.location}</span>
                 {job.salary && <span className="flex items-center gap-1 text-xs text-green-600 font-medium"><Coins className="w-3 h-3" />{job.salary}</span>}
@@ -150,10 +155,11 @@ export default function CustomerHomePage() {
   const [phoneSearching, setPhoneSearching] = useState(false);
   const [jobMenuOpen, setJobMenuOpen] = useState(false);
   const [showPostJob, setShowPostJob] = useState(false);
+  const [postJobMethod, setPostJobMethod] = useState<"choice" | "mitrify" | "google_form">("choice");
   const [showFindJob, setShowFindJob] = useState(false);
   const [showMyPosts, setShowMyPosts] = useState(false);
   const [selectedJob, setSelectedJob] = useState<any | null>(null);
-  const [jobForm, setJobForm] = useState({ jobName: "", description: "", location: "", state: DEFAULT_STATE, district: DEFAULT_DISTRICT, workType: "field", salary: "", workHours: "", numEmployees: "", contactPhone: "" });
+  const [jobForm, setJobForm] = useState({ jobName: "", description: "", location: "", state: DEFAULT_STATE, district: DEFAULT_DISTRICT, workType: "field", salary: "", workHours: "", numEmployees: "", contactPhone: "", googleFormUrl: "" });
   const [jobFilterText, setJobFilterText] = useState("");
   const [jobFilterState, setJobFilterState] = useState("");
   const [jobPosting, setJobPosting] = useState(false);
@@ -369,25 +375,78 @@ export default function CustomerHomePage() {
     setSearching(true);
   };
 
+  const GOOGLE_FORM_URL_RE = /^https?:\/\/(forms\.gle\/[^\s]+|docs\.google\.com\/forms\/[^\s]+)$/i;
+
+  const resetJobForm = () => {
+    setJobForm({ jobName: "", description: "", location: "", state: DEFAULT_STATE, district: DEFAULT_DISTRICT, workType: "field", salary: "", workHours: "", numEmployees: "", contactPhone: "", googleFormUrl: "" });
+  };
+
+  const openPostJobChoice = () => {
+    setShowPostJob(true);
+    setPostJobMethod("choice");
+    setJobConfirmChecked(false);
+    resetJobForm();
+  };
+
   const handlePostJob = async () => {
     if (!isAuthenticated) { setShowLoginPrompt(true); return; }
-    if (!jobForm.jobName.trim() || !jobForm.description.trim() || !jobForm.state || !jobForm.district || !jobForm.contactPhone.trim()) {
+    const isGoogleForm = postJobMethod === "google_form";
+    if (!jobForm.jobName.trim() || !jobForm.description.trim() || !jobForm.state || !jobForm.district) {
       toast({ title: "Sabhi required fields fill karein", variant: "destructive" });
       return;
     }
+    if (isGoogleForm) {
+      if (!jobForm.googleFormUrl.trim() || !GOOGLE_FORM_URL_RE.test(jobForm.googleFormUrl.trim())) {
+        toast({ title: "Sirf Google Form ka link allowed hai", description: "e.g. forms.gle/... ya docs.google.com/forms/...", variant: "destructive" });
+        return;
+      }
+    } else {
+      if (!jobForm.contactPhone.trim()) {
+        toast({ title: "Contact number required", variant: "destructive" });
+        return;
+      }
+      if (!jobForm.numEmployees.trim()) {
+        toast({ title: "Kitne log chahiye field required hai", variant: "destructive" });
+        return;
+      }
+    }
     setJobPosting(true);
     try {
-      const payload = {
-        ...jobForm,
-        location: jobForm.location.trim() || `${jobForm.district}, ${jobForm.state}`,
-      };
+      const location = jobForm.location.trim() || `${jobForm.district}, ${jobForm.state}`;
+      const payload: InsertJob = isGoogleForm
+        ? {
+            postType: "google_form",
+            jobName: jobForm.jobName,
+            description: jobForm.description,
+            state: jobForm.state,
+            district: jobForm.district,
+            location,
+            contactPhone: jobForm.contactPhone,
+            googleFormUrl: jobForm.googleFormUrl.trim(),
+          }
+        : {
+            postType: "mitrify",
+            jobName: jobForm.jobName,
+            description: jobForm.description,
+            state: jobForm.state,
+            district: jobForm.district,
+            location,
+            workType: jobForm.workType,
+            salary: jobForm.salary,
+            workHours: jobForm.workHours,
+            numEmployees: jobForm.numEmployees,
+            contactPhone: jobForm.contactPhone,
+          };
       const res = await apiRequest("POST", "/api/jobs", payload);
       await res.json();
       toast({ title: "Job post ho gayi!", description: "25 credits deduct hue" });
       setShowPostJob(false);
+      setPostJobMethod("choice");
       setJobMenuOpen(false);
-      setJobForm({ jobName: "", description: "", location: "", state: DEFAULT_STATE, district: DEFAULT_DISTRICT, workType: "field", salary: "", workHours: "", numEmployees: "", contactPhone: "" });
+      resetJobForm();
       queryClient.invalidateQueries({ queryKey: ["/api/credits/me"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/jobs/my"] });
     } catch (e: any) {
       toast({ title: "Job post failed", description: e.message || "Try again", variant: "destructive" });
     } finally {
@@ -644,7 +703,7 @@ export default function CustomerHomePage() {
             </div>
             <div className="px-5 pt-4 space-y-3">
               <button
-                onClick={() => { setShowPostJob(true); setJobConfirmChecked(false); setJobForm({ jobName: "", description: "", location: "", state: DEFAULT_STATE, district: DEFAULT_DISTRICT, workType: "field", salary: "", workHours: "", numEmployees: "", contactPhone: "" }); }}
+                onClick={openPostJobChoice}
                 className="w-full flex items-center gap-4 p-4 rounded-xl border bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 hover:shadow-md transition-all text-left"
                 data-testid="button-post-job"
               >
@@ -691,7 +750,145 @@ export default function CustomerHomePage() {
       )}
 
       {/* ── POST JOB FORM ────────────────────────── */}
-      {jobMenuOpen && showPostJob && (
+      {jobMenuOpen && showPostJob && postJobMethod === "choice" && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center" data-testid="post-job-choice-modal">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowPostJob(false)} />
+          <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 animate-in slide-in-from-bottom duration-300">
+            <div className="flex justify-center pt-3 pb-2">
+              <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
+            </div>
+            <div className="px-5 pb-4 border-b flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-lg flex items-center gap-2"><Plus className="w-5 h-5 text-amber-500" /> {t("postJob")}</h3>
+                <p className="text-sm text-muted-foreground">Kis tarike se job post karna chahte ho?</p>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setShowPostJob(false)} data-testid="button-close-post-choice"><X className="w-5 h-5" /></Button>
+            </div>
+            <div className="px-5 pt-4 space-y-3">
+              <button
+                onClick={() => setPostJobMethod("google_form")}
+                className="w-full flex items-center gap-4 p-4 rounded-xl border bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 hover:shadow-md transition-all text-left"
+                data-testid="button-method-google-form"
+              >
+                <div className="w-11 h-11 rounded-xl bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center shrink-0">
+                  <ScrollText className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-blue-700 dark:text-blue-300">By Google Form</p>
+                  <p className="text-xs text-muted-foreground">Apna Google Form link paste karein</p>
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted-foreground" />
+              </button>
+              <button
+                onClick={() => setPostJobMethod("mitrify")}
+                className="w-full flex items-center gap-4 p-4 rounded-xl border bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 hover:shadow-md transition-all text-left"
+                data-testid="button-method-mitrify"
+              >
+                <div className="w-11 h-11 rounded-xl bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center shrink-0">
+                  <Briefcase className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-amber-700 dark:text-amber-300">By Mitrify</p>
+                  <p className="text-xs text-muted-foreground">Mitrify ka detailed job form bharein</p>
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted-foreground" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── POST JOB: GOOGLE FORM VARIANT ────────── */}
+      {jobMenuOpen && showPostJob && postJobMethod === "google_form" && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center" data-testid="post-job-google-form-modal">
+          <div className="absolute inset-0 bg-black/40" onClick={() => { setShowPostJob(false); setJobMenuOpen(false); }} />
+          <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[92vh] overflow-y-auto animate-in slide-in-from-bottom duration-300">
+            <div className="flex justify-center pt-3 pb-2">
+              <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
+            </div>
+            <div className="px-5 pb-4 border-b flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-lg flex items-center gap-2"><ScrollText className="w-5 h-5 text-blue-500" /> Post via Google Form</h3>
+                <p className="text-sm text-muted-foreground">Apna Google Form link paste karein</p>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setPostJobMethod("choice")} data-testid="button-back-google-form"><X className="w-5 h-5" /></Button>
+            </div>
+            <div className="px-5 pt-4 space-y-3">
+              <div>
+                <label className="text-sm font-medium mb-1 block">Job Title / Naam <span className="text-destructive">*</span></label>
+                <Input placeholder="e.g., Driver chahiye, Cook chahiye..." value={jobForm.jobName} onChange={e => setJobForm(f => ({ ...f, jobName: e.target.value }))} data-testid="input-gf-job-name" />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Description <span className="text-destructive">*</span></label>
+                <Textarea placeholder="Kaam ki short detail" value={jobForm.description} onChange={e => setJobForm(f => ({ ...f, description: e.target.value }))} rows={3} data-testid="input-gf-job-description" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">State <span className="text-destructive">*</span></label>
+                  <Select value={jobForm.state} onValueChange={v => setJobForm(f => ({ ...f, state: v, district: getDistricts(v)[0] || "" }))}>
+                    <SelectTrigger data-testid="select-gf-job-state"><SelectValue placeholder="State" /></SelectTrigger>
+                    <SelectContent className="max-h-56 overflow-y-auto">
+                      {ALL_STATES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">District <span className="text-destructive">*</span></label>
+                  <Select value={jobForm.district} onValueChange={v => setJobForm(f => ({ ...f, district: v }))}>
+                    <SelectTrigger data-testid="select-gf-job-district"><SelectValue placeholder="District" /></SelectTrigger>
+                    <SelectContent className="max-h-56 overflow-y-auto">
+                      {getDistricts(jobForm.state).map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Contact Number (Optional)</label>
+                <Input type="tel" placeholder="Optional" value={jobForm.contactPhone} onChange={e => setJobForm(f => ({ ...f, contactPhone: e.target.value }))} data-testid="input-gf-job-phone" />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Google Form Link <span className="text-destructive">*</span></label>
+                <Input
+                  placeholder="https://forms.gle/... ya https://docs.google.com/forms/..."
+                  value={jobForm.googleFormUrl}
+                  onChange={e => setJobForm(f => ({ ...f, googleFormUrl: e.target.value }))}
+                  data-testid="input-gf-url"
+                />
+                {jobForm.googleFormUrl.trim() !== "" && !GOOGLE_FORM_URL_RE.test(jobForm.googleFormUrl.trim()) && (
+                  <p className="text-xs text-destructive mt-1" data-testid="text-gf-url-error">Sirf Google Form ka link allowed hai (forms.gle / docs.google.com/forms)</p>
+                )}
+              </div>
+              <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700 dark:text-amber-300">Job post karne ke liye 25 credits deduct honge. Apply button par tap karne se aapka Google Form khulega.</p>
+              </div>
+              <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors" data-testid="label-gf-job-confirm">
+                <input
+                  type="checkbox"
+                  checked={jobConfirmChecked}
+                  onChange={e => setJobConfirmChecked(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 accent-amber-500"
+                  data-testid="checkbox-gf-job-confirm"
+                />
+                <span className="text-xs text-muted-foreground leading-relaxed">
+                  ☑️ Main samajhta/samajhti hoon ki <strong>job post mein 25 credits deduct honge</strong>. Job ko baad mein edit nahi kiya ja sakta, sirf delete kiya ja sakta hai.
+                </span>
+              </label>
+              <Button
+                className="w-full bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50"
+                onClick={handlePostJob}
+                disabled={jobPosting || !jobConfirmChecked}
+                data-testid="button-submit-gf-job"
+              >
+                {jobPosting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
+                {jobPosting ? `${t("loading")}...` : "Post via Google Form"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {jobMenuOpen && showPostJob && postJobMethod === "mitrify" && (
         <div className="fixed inset-0 z-50 flex items-end justify-center" data-testid="post-job-modal">
           <div className="absolute inset-0 bg-black/40" onClick={() => { setShowPostJob(false); setJobMenuOpen(false); }} />
           <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[92vh] overflow-y-auto animate-in slide-in-from-bottom duration-300">
@@ -703,7 +900,7 @@ export default function CustomerHomePage() {
                 <h3 className="font-bold text-lg flex items-center gap-2"><Plus className="w-5 h-5 text-amber-500" /> {t("postJob")}</h3>
                 <p className="text-sm text-muted-foreground">{t("jobPostDesc")}</p>
               </div>
-              <Button variant="ghost" size="icon" onClick={() => { setShowPostJob(false); setJobMenuOpen(false); }}><X className="w-5 h-5" /></Button>
+              <Button variant="ghost" size="icon" onClick={() => setPostJobMethod("choice")} data-testid="button-back-mitrify"><X className="w-5 h-5" /></Button>
             </div>
             <div className="px-5 pt-4 space-y-3">
               <div>
@@ -760,7 +957,7 @@ export default function CustomerHomePage() {
                 </div>
               </div>
               <div>
-                <label className="text-sm font-medium mb-1 block">Kitne Log Chahiye? (Optional)</label>
+                <label className="text-sm font-medium mb-1 block">Kitne Log Chahiye? <span className="text-destructive">*</span></label>
                 <Input placeholder="e.g., 1, 2-3, 5+" value={jobForm.numEmployees} onChange={e => setJobForm(f => ({ ...f, numEmployees: e.target.value }))} data-testid="input-job-employees" />
               </div>
               <div>
@@ -786,7 +983,7 @@ export default function CustomerHomePage() {
               <Button
                 className="w-full bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50"
                 onClick={handlePostJob}
-                disabled={jobPosting || !jobConfirmChecked}
+                disabled={jobPosting || !jobConfirmChecked || !jobForm.numEmployees.trim()}
                 data-testid="button-submit-job"
               >
                 {jobPosting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
@@ -848,9 +1045,20 @@ export default function CustomerHomePage() {
               <div className="flex-1 min-w-0">
                 <h3 className="font-bold text-lg leading-tight">{selectedJob.jobName}</h3>
                 <span className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5"><MapPin className="w-3 h-3" />{selectedJob.location}</span>
+                {selectedJob.postType === "google_form" && (
+                  <Badge variant="secondary" className="mt-1 text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" data-testid={`badge-job-type-detail-${selectedJob.id}`}>Google Form</Badge>
+                )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {selectedJob.lowCredit ? (
+                {selectedJob.postType === "google_form" ? (
+                  <Button
+                    className="h-10 px-4 rounded-xl bg-blue-500 hover:bg-blue-600 text-white shadow-md gap-2"
+                    onClick={() => window.open(selectedJob.googleFormUrl, "_blank", "noopener,noreferrer")}
+                    data-testid="button-job-apply-gf-top"
+                  >
+                    <ScrollText className="w-4 h-4" /> Apply
+                  </Button>
+                ) : selectedJob.lowCredit ? (
                   <div className="px-3 py-2 rounded-xl bg-muted text-xs text-muted-foreground font-medium">Call N/A</div>
                 ) : (
                   <Button
@@ -888,11 +1096,23 @@ export default function CustomerHomePage() {
                   )}
                 </div>
               )}
-              <p className="text-xs text-muted-foreground text-center pt-2">1 credit deduct hoga is call se</p>
+              {selectedJob.postType === "google_form" ? (
+                <p className="text-xs text-muted-foreground text-center pt-2">Apply karne ke liye Google Form khulega</p>
+              ) : (
+                <p className="text-xs text-muted-foreground text-center pt-2">1 credit deduct hoga is call se</p>
+              )}
             </div>
-            {/* Footer: Call button at bottom */}
+            {/* Footer: Call/Apply button at bottom */}
             <div className="px-5 pt-3 shrink-0">
-              {selectedJob.lowCredit ? (
+              {selectedJob.postType === "google_form" ? (
+                <Button
+                  className="w-full h-12 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-base font-semibold gap-2"
+                  onClick={() => window.open(selectedJob.googleFormUrl, "_blank", "noopener,noreferrer")}
+                  data-testid="button-job-apply-gf-bottom"
+                >
+                  <ScrollText className="w-5 h-5" /> Apply (Google Form)
+                </Button>
+              ) : selectedJob.lowCredit ? (
                 <div className="w-full py-3 rounded-xl bg-muted text-center text-sm text-muted-foreground">Is job poster ke credits khatam ho gaye hain</div>
               ) : (
                 <Button
@@ -927,7 +1147,7 @@ export default function CustomerHomePage() {
                 <div className="text-center py-12 text-muted-foreground">
                   <Briefcase className="w-12 h-12 mx-auto mb-3 opacity-30" />
                   <p className="font-medium">Aapne koi job post nahi ki</p>
-                  <Button size="sm" variant="outline" className="mt-3" onClick={() => { setShowMyPosts(false); setShowPostJob(true); setJobConfirmChecked(false); setJobForm({ jobName: "", description: "", location: "", state: DEFAULT_STATE, district: DEFAULT_DISTRICT, workType: "field", salary: "", workHours: "", numEmployees: "", contactPhone: "" }); }}>
+                  <Button size="sm" variant="outline" className="mt-3" onClick={() => { setShowMyPosts(false); openPostJobChoice(); }}>
                     <Plus className="w-4 h-4 mr-1" /> {t("postJob")}
                   </Button>
                 </div>
@@ -938,8 +1158,13 @@ export default function CustomerHomePage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="font-semibold">{job.jobName}</h4>
+                          {job.postType === "google_form" ? (
+                            <Badge variant="secondary" className="text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" data-testid={`badge-my-job-type-${job.id}`}>Google Form</Badge>
+                          ) : (
+                            <Badge variant="secondary" className="text-xs bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300" data-testid={`badge-my-job-type-${job.id}`}>Mitrify</Badge>
+                          )}
                           {!job.isActive && <Badge variant="secondary" className="text-xs bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">Inactive</Badge>}
-                          {job.lowCredit && <Badge variant="secondary" className="text-xs bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400">Low Credit</Badge>}
+                          {job.lowCredit && job.postType !== "google_form" && <Badge variant="secondary" className="text-xs bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400">Low Credit</Badge>}
                         </div>
                         <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{job.description}</p>
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2">

@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { storage } from "./storage";
 import { db, pool } from "./db";
-import { profiles, siteContent, jobs, pendingProviders, type SubscriptionPlanConfig } from "@shared/schema";
+import { profiles, siteContent, jobs, pendingProviders, insertJobSchema, type SubscriptionPlanConfig } from "@shared/schema";
 import { api, buildUrl } from "@shared/routes";
 import { z } from "zod";
 import { eq, desc, count, and, inArray } from "drizzle-orm";
@@ -1066,17 +1066,41 @@ export async function registerRoutes(
     try {
       const userId = (req.user as any)?.claims?.sub || (req.session as any)?.localUserId;
       if (!userId) return res.status(401).json({ message: "Not authenticated" });
-      const { jobName, description, location, state, district, salary, workHours, numEmployees, contactPhone } = req.body;
-      if (!jobName || !description || !location || !contactPhone) {
-        return res.status(400).json({ message: "Required fields missing" });
+      const incoming = { ...req.body, postType: req.body?.postType || "mitrify" };
+      const parsed = insertJobSchema.safeParse(incoming);
+      if (!parsed.success) {
+        const first = parsed.error.errors[0];
+        return res.status(400).json({ message: first?.message || "Invalid job data" });
       }
+      const data = parsed.data;
       const credit = await storage.getOrCreateCredits(userId, "customer");
       const total = (credit?.freeCredits || 0) + (credit?.purchasedCredits || 0);
       if (total < JOB_CREDIT_COST) {
         return res.status(400).json({ message: `Job post ke liye ${JOB_CREDIT_COST} credits chahiye. Abhi: ${total}` });
       }
       await storage.deductMultipleCredits(userId, "user", JOB_CREDIT_COST);
-      const job = await storage.createJob({ userId, jobName, description, location, state, district, salary, workHours, numEmployees, contactPhone });
+      const fallbackLocation = data.location?.trim() || `${data.district}, ${data.state}`;
+      const job = await storage.createJob({
+        userId,
+        jobName: data.jobName,
+        description: data.description,
+        location: fallbackLocation,
+        state: data.state,
+        district: data.district,
+        postType: data.postType,
+        ...(data.postType === "mitrify"
+          ? {
+              workType: data.workType,
+              salary: data.salary,
+              workHours: data.workHours,
+              numEmployees: data.numEmployees,
+              contactPhone: data.contactPhone,
+            }
+          : {
+              googleFormUrl: data.googleFormUrl,
+              contactPhone: data.contactPhone || undefined,
+            }),
+      });
       res.status(201).json(job);
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Job post failed" });
@@ -1111,6 +1135,7 @@ export async function registerRoutes(
       const allJobs = await storage.listActiveJobs();
       const job = allJobs.find(j => j.id === jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
+      if (job.postType === "google_form") return res.status(400).json({ message: "Ye job Google Form se apply karni hai, call nahi" });
       const callerCredit = await storage.getOrCreateCredits(userId);
       const callerTotal = (callerCredit?.freeCredits || 0) + (callerCredit?.purchasedCredits || 0);
       if (callerTotal < 1) return res.status(400).json({ message: "Aapke credits khatam ho gaye" });
