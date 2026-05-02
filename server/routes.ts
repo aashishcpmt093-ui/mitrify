@@ -497,7 +497,11 @@ export async function registerRoutes(
     }
   });
 
-  // Search open to all (including guests — no auth required)
+  // Search open to all (including guests — no auth required).
+  // NOTE: search tracking is intentionally NOT done here — every keystroke
+  // refetches this endpoint, which would log partials like "d", "dr", "dri".
+  // Tracking is done explicitly via POST /api/search/track from the client
+  // only on Enter / button click / category click.
   app.get(api.providers.search.path, async (req: any, res) => {
     try {
       const { query, lat, lng, radius } = req.query;
@@ -507,10 +511,6 @@ export async function registerRoutes(
         lng ? parseFloat(lng as string) : undefined,
         radius ? parseFloat(radius as string) : undefined,
       );
-      // Track search server-side (fire-and-forget, never block response)
-      if (query && typeof query === "string" && query.trim().length > 0) {
-        storage.trackSearch(query.trim()).catch(() => {});
-      }
       res.json({ results });
     } catch (error) {
       res.status(500).json({ message: "Search failed" });

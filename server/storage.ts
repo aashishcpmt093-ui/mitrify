@@ -1584,9 +1584,15 @@ export class DatabaseStorage implements IStorage {
 
   async trackSearch(query: string): Promise<void> {
     const normalizedQuery = query.toLowerCase().trim();
+    // Defense-in-depth: never log very short queries (single keystrokes).
+    // The client only calls /api/search/track on Enter / button / category
+    // click, but this guard keeps the search history clean even if some
+    // future caller forgets and fires off partials.
+    if (normalizedQuery.length < 2) return;
+
     const [existing] = await db.select().from(searchLog)
       .where(eq(searchLog.query, normalizedQuery));
-    
+
     if (existing) {
       await db.update(searchLog)
         .set({ count: existing.count + 1, lastSearched: new Date() })
