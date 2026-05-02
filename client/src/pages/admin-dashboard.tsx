@@ -20,7 +20,7 @@ import {
   SortAsc, Filter, TrendingUp, Activity, Briefcase, Link, Eye, EyeOff,
   UserCog, ExternalLink, Key, CheckCircle, Loader2,
   Calendar, Award, Clock, XCircle, ChevronRight, Upload, FileSpreadsheet,
-  Copy, MapPin, Star, Database, Cloud, CloudUpload, Bell, Sparkles, Tag
+  Copy, MapPin, Star, Database, Cloud, CloudUpload, Bell, Sparkles, Tag, Mail
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useTheme } from "@/lib/theme";
@@ -572,6 +572,10 @@ export default function AdminDashboardPage() {
   });
 
   const [recruitmentLink, setRecruitmentLink] = useState("https://forms.gle/C54uAz7pkupe6g136");
+  const [contactEmails, setContactEmails] = useState<{ label: string; email: string }[]>([
+    { label: "Help & Support", email: "help@mitrify.com" },
+    { label: "General Inquiries", email: "contact@mitrify.in" },
+  ]);
   const [activeTab, setActiveTab] = useState("providers");
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [gcsMode, setGcsMode] = useState<"overwrite" | "new">("new");
@@ -967,10 +971,26 @@ export default function AdminDashboardPage() {
     enabled: !!isAdmin,
     staleTime: 0,
   });
+  const { data: contactEmailsContent } = useQuery({
+    queryKey: ["/api/content", "contact_emails"],
+    queryFn: async () => { const res = await fetch("/api/content/contact_emails"); if (!res.ok) return null; return res.json(); },
+    enabled: !!isAdmin,
+    staleTime: 0,
+  });
 
   useEffect(() => { if (aboutContent) { setAboutForm(aboutContent); } }, [aboutContent]);
   useEffect(() => { if (termsContent) { setTermsForm(termsContent); } }, [termsContent]);
   useEffect(() => { if (recruitmentContent) { setRecruitmentLink(recruitmentContent); } }, [recruitmentContent]);
+  useEffect(() => {
+    if (Array.isArray(contactEmailsContent) && contactEmailsContent.length > 0) {
+      setContactEmails(
+        contactEmailsContent
+          .filter((x: any) => x && typeof x.email === "string")
+          .slice(0, 5)
+          .map((x: any) => ({ label: String(x.label || ""), email: String(x.email) })),
+      );
+    }
+  }, [contactEmailsContent]);
 
   const { data: visitorData } = useQuery<{ total: number; today: number; last7Days: { date: string; count: number }[] }>({
     queryKey: ["/api/visitor/stats"],
@@ -1153,6 +1173,26 @@ export default function AdminDashboardPage() {
       toast({ title: "✅ Recruitment link saved!" }); 
       queryClient.invalidateQueries({ queryKey: ["/api/content", "recruitment_link"] });
       queryClient.refetchQueries({ queryKey: ["/api/content", "recruitment_link"] });
+    },
+    onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to save"}`, variant: "destructive" }),
+  });
+  const saveContactEmails = useMutation({
+    mutationFn: async () => {
+      const cleaned = contactEmails
+        .map(e => ({ label: (e.label || "").trim(), email: (e.email || "").trim() }))
+        .filter(e => e.email.length > 0);
+      if (cleaned.length === 0) throw new Error("Kam se kam ek email zaroori hai");
+      if (cleaned.length > 5) throw new Error("Max 5 emails allowed");
+      const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      for (const e of cleaned) {
+        if (!emailRe.test(e.email)) throw new Error(`Invalid email: ${e.email}`);
+      }
+      return await apiRequest("PUT", "/api/admin/content/contact_emails", { value: cleaned }).then(r => r.json());
+    },
+    onSuccess: () => {
+      toast({ title: "✅ Contact emails saved!" });
+      queryClient.invalidateQueries({ queryKey: ["/api/content", "contact_emails"] });
+      queryClient.refetchQueries({ queryKey: ["/api/content", "contact_emails"] });
     },
     onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to save"}`, variant: "destructive" }),
   });
@@ -2186,6 +2226,74 @@ export default function AdminDashboardPage() {
                 </div>
                 <Button onClick={() => saveRecruitment.mutate()} disabled={saveRecruitment.isPending} className="w-full rounded-xl" data-testid="button-save-recruitment">
                   <Save className="w-4 h-4 mr-2" />{saveRecruitment.isPending ? "Saving..." : "Save Recruitment Link"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-sm p-5" data-testid="card-contact-emails">
+              <h3 className="font-bold text-base mb-1 flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <Mail className="w-4 h-4 text-primary" />
+                </div>
+                Contact Emails
+              </h3>
+              <p className="text-xs text-muted-foreground mb-3">Yeh emails users ko Contact Us sheet mein dikhte hain. Min 1, max 5.</p>
+              <div className="space-y-2">
+                {contactEmails.map((entry, i) => (
+                  <div key={i} className="flex gap-2" data-testid={`row-contact-email-${i}`}>
+                    <Input
+                      className="rounded-xl flex-1"
+                      placeholder="Label (e.g. Help & Support)"
+                      value={entry.label}
+                      onChange={e => {
+                        const next = [...contactEmails];
+                        next[i] = { ...next[i], label: e.target.value };
+                        setContactEmails(next);
+                      }}
+                      data-testid={`input-contact-label-${i}`}
+                    />
+                    <Input
+                      className="rounded-xl flex-[2]"
+                      placeholder="email@example.com"
+                      type="email"
+                      value={entry.email}
+                      onChange={e => {
+                        const next = [...contactEmails];
+                        next[i] = { ...next[i], email: e.target.value };
+                        setContactEmails(next);
+                      }}
+                      data-testid={`input-contact-email-${i}`}
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="rounded-xl shrink-0"
+                      disabled={contactEmails.length <= 1}
+                      onClick={() => setContactEmails(contactEmails.filter((_, idx) => idx !== i))}
+                      data-testid={`button-remove-contact-${i}`}
+                      title="Remove"
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-xl"
+                  disabled={contactEmails.length >= 5}
+                  onClick={() => setContactEmails([...contactEmails, { label: "", email: "" }])}
+                  data-testid="button-add-contact-email"
+                >
+                  <Plus className="w-4 h-4 mr-1" /> Add Email
+                </Button>
+                <Button
+                  onClick={() => saveContactEmails.mutate()}
+                  disabled={saveContactEmails.isPending}
+                  className="w-full rounded-xl"
+                  data-testid="button-save-contact-emails"
+                >
+                  <Save className="w-4 h-4 mr-2" />{saveContactEmails.isPending ? "Saving..." : "Save Contact Emails"}
                 </Button>
               </div>
             </div>

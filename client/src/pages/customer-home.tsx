@@ -126,6 +126,21 @@ export default function CustomerHomePage() {
   const [locationLabel, setLocationLabel] = useState("Current Location");
   const [menuOpen, setMenuOpen] = useState(false);
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
+  const { data: contactEmailsData } = useQuery<{ label: string; email: string }[] | null>({
+    queryKey: ["/api/content", "contact_emails"],
+    queryFn: async () => {
+      const res = await fetch("/api/content/contact_emails");
+      if (!res.ok) return null;
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const contactEmailsList = (Array.isArray(contactEmailsData) && contactEmailsData.length > 0)
+    ? contactEmailsData.filter(x => x && typeof x.email === "string" && x.email.trim().length > 0)
+    : [
+        { label: t("mailHelp"), email: "help@mitrify.com" },
+        { label: t("mailContact"), email: "contact@mitrify.in" },
+      ];
   const [searching, setSearching] = useState(false);
   const [phoneQuery, setPhoneQuery] = useState("");
   const [phoneSearching, setPhoneSearching] = useState(false);
@@ -1097,34 +1112,25 @@ export default function CustomerHomePage() {
               </Button>
             </div>
             <div className="space-y-2">
-              <a
-                href="mailto:help@mitrify.com"
-                className="flex items-center gap-3 p-3 rounded-xl border bg-background hover:bg-muted active:scale-[0.98] transition"
-                data-testid="link-email-help"
-              >
-                <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                  <Mail className="w-4 h-4 text-primary" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-muted-foreground">{t("mailHelp")}</p>
-                  <p className="font-mono text-sm break-all">help@mitrify.com</p>
-                </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-              </a>
-              <a
-                href="mailto:contact@mitrify.in"
-                className="flex items-center gap-3 p-3 rounded-xl border bg-background hover:bg-muted active:scale-[0.98] transition"
-                data-testid="link-email-contact"
-              >
-                <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                  <Mail className="w-4 h-4 text-primary" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-muted-foreground">{t("mailContact")}</p>
-                  <p className="font-mono text-sm break-all">contact@mitrify.in</p>
-                </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-              </a>
+              {contactEmailsList.map((entry, i) => (
+                <a
+                  key={`${entry.email}-${i}`}
+                  href={`mailto:${entry.email}`}
+                  className="flex items-center gap-3 p-3 rounded-xl border bg-background hover:bg-muted active:scale-[0.98] transition"
+                  data-testid={`link-email-${i}`}
+                >
+                  <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                    <Mail className="w-4 h-4 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    {entry.label ? (
+                      <p className="text-xs font-medium text-muted-foreground">{entry.label}</p>
+                    ) : null}
+                    <p className="font-mono text-sm break-all">{entry.email}</p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                </a>
+              ))}
             </div>
             <Button variant="outline" className="w-full" onClick={() => setContactSheetOpen(false)} data-testid="button-cancel-contact-sheet">
               {t("cancel")}
