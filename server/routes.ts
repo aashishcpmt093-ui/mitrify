@@ -15,7 +15,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory, recordBackupHistory } from "./backupJob";
 import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverStaleJobs } from "./lib/auto-tags";
 // Per-admin daily quota for Google Places admin search. In-memory map of
 // `{ adminKey -> [timestampMs] }`. Resets on process restart (acceptable —
@@ -2708,13 +2708,32 @@ export async function registerRoutes(
       const writeP = (s: string) => {
         if (!stream.write(s)) return new Promise<void>((r) => stream.once("drain", r));
       };
-      await streamBackupSql((s) => { writeP(s); }, { filename });
+      const startedAt = Date.now();
+      const totals = await streamBackupSql((s) => { writeP(s); }, { filename });
       await new Promise<void>((resolve, reject) => {
         stream.end((err?: Error | null) => err ? reject(err) : resolve());
       });
       // Upload to GCS
       const result = await uploadToGCS(filepath, filename, mode);
       const size = fs.statSync(filepath).size;
+      // Persist as a history entry so admins see manual GCS uploads
+      // alongside nightly/run-now backups (metadata only, no PII).
+      try {
+        await recordBackupHistory({
+          filename,
+          size,
+          generatedAt: now.toISOString(),
+          emailed: false,
+          gcsUploaded: true,
+          gcsName: result.gcsName,
+          durationMs: Date.now() - startedAt,
+          alertSent: false,
+          totalRows: totals.totalRows,
+          tableCount: totals.tableCount,
+        });
+      } catch (logErr) {
+        console.error("[backup] failed to record GCS upload history:", logErr);
+      }
       res.json({ ok: true, gcsName: result.gcsName, url: result.url, size, filename });
     } catch (err: any) {
       try { fs.unlinkSync(filepath); } catch {}
@@ -2764,12 +2783,34 @@ export async function registerRoutes(
 
   app.get("/api/admin/backup", adminCheck, async (req, res) => {
     const filename = makeBackupFilename();
+    const startedAt = Date.now();
     res.setHeader("Content-Type", "application/sql; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader("Cache-Control", "no-store");
+    // Track bytes streamed so we can persist size in history without
+    // buffering the whole dump in memory.
+    let bytesStreamed = 0;
     try {
-      await streamBackupSql((s) => res.write(s), { filename });
+      const totals = await streamBackupSql((s) => {
+        bytesStreamed += Buffer.byteLength(s, "utf8");
+        res.write(s);
+      }, { filename });
       res.end();
+      // Persist history entry (metadata only — no dump contents).
+      try {
+        await recordBackupHistory({
+          filename,
+          size: bytesStreamed,
+          generatedAt: new Date().toISOString(),
+          emailed: false,
+          durationMs: Date.now() - startedAt,
+          alertSent: false,
+          totalRows: totals.totalRows,
+          tableCount: totals.tableCount,
+        });
+      } catch (logErr) {
+        console.error("[backup] failed to record manual download history:", logErr);
+      }
     } catch (err: any) {
       console.error("Backup failed:", err);
       if (res.headersSent) {

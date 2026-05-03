@@ -5019,7 +5019,7 @@ export default function AdminDashboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {backupStatus.history.map((entry, idx) => (
+                    {backupStatus.history.slice(0, 5).map((entry, idx) => (
                       <tr key={entry.filename} className="border-t border-slate-100 dark:border-slate-800" data-testid={`row-backup-history-${idx}`}>
                         <td className="px-2 py-1.5">
                           <span className="font-mono truncate block max-w-[140px]" title={entry.filename}>

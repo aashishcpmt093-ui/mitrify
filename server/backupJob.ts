@@ -709,6 +709,22 @@ export async function getBackupStatus(): Promise<BackupStatus> {
   return readStatus();
 }
 
+/**
+ * Append a new entry to the persisted backup history. Used by the
+ * on-demand admin endpoints (browser download + GCS upload) so manual
+ * backups show up in the same history table as the nightly job.
+ *
+ * Only metadata is stored — never any dump contents (no PII).
+ */
+export async function recordBackupHistory(entry: BackupHistoryEntry): Promise<void> {
+  const status = await readStatus();
+  status.lastSuccessAt = entry.generatedAt;
+  status.lastSuccess = entry;
+  status.history = [entry, ...status.history].slice(0, RETENTION);
+  if (entry.emailed || entry.emailError === undefined) status.lastError = null;
+  await writeStatus(status);
+}
+
 // ─────────────────────────────────────────────────────────────
 // Test alert history — record every "Send test alert" attempt
 // from the admin dashboard so admins have an audit trail of
