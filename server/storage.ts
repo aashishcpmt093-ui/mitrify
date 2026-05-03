@@ -1882,6 +1882,18 @@ export class DatabaseStorage implements IStorage {
       pendingMobiles = new Set(existingPending.map(r => normalize(r.mobile)).filter(Boolean));
       const existingUsers = await db.select({ phone: localUsers.phone }).from(localUsers);
       userPhones = new Set(existingUsers.map(r => normalize(r.phone)).filter(Boolean));
+      // Also exclude numbers already attached to verified providers
+      // (providers.mobileNumbers is a text[] — a provider can register
+      // multiple lines). Without this, background-saved Google leads
+      // would shadow already-onboarded providers.
+      const existingProviders = await db.select({ mobileNumbers: providers.mobileNumbers }).from(providers);
+      for (const row of existingProviders) {
+        const arr = Array.isArray(row.mobileNumbers) ? row.mobileNumbers : [];
+        for (const m of arr) {
+          const n = normalize(m);
+          if (n) userPhones.add(n);
+        }
+      }
     }
 
     const seen = new Set<string>();

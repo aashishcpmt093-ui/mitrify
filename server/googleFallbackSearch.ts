@@ -18,7 +18,7 @@
 //     stop hitting Google at all once the admin verifies them.
 
 import { db } from "./db";
-import { localUsers, pendingProviders, coAdmins } from "@shared/schema";
+import { localUsers, pendingProviders, providers, type InsertCoAdmin } from "@shared/schema";
 import { storage } from "./storage";
 import bcrypt from "bcryptjs";
 
@@ -159,12 +159,13 @@ async function ensureSystemCoAdmin(): Promise<string> {
       // Random un-loggable password — this account is never meant to log in.
       const randomPwd = (await import("crypto")).randomBytes(24).toString("hex");
       const hash = await bcrypt.hash(randomPwd, 10);
-      await storage.createCoAdmin({
+      const payload: InsertCoAdmin = {
         username: SYSTEM_COADMIN_USERNAME,
         password: hash,
         role: "coadmin",
         isActive: false,
-      } as any);
+      };
+      await storage.createCoAdmin(payload);
     }
     coAdminEnsured = true;
   } catch {
@@ -256,15 +257,29 @@ export async function searchGoogleFallback(opts: {
 async function loadKnownPhones(): Promise<Set<string>> {
   const phones = new Set<string>();
   try {
+    // Pending leads (single mobile column).
     const pending = await db.select({ mobile: pendingProviders.mobile }).from(pendingProviders);
     for (const r of pending) {
       const n = normalizePhone(r.mobile || "");
       if (n) phones.add(n);
     }
+    // Registered local-auth users (login phone).
     const users = await db.select({ phone: localUsers.phone }).from(localUsers);
     for (const r of users) {
       const n = normalizePhone(r.phone || "");
       if (n) phones.add(n);
+    }
+    // Verified providers — `mobileNumbers` is a text[] of all numbers
+    // they've registered (a provider can attach multiple lines). Without
+    // this set, an already-onboarded provider could reappear in the
+    // Google section.
+    const provs = await db.select({ mobileNumbers: providers.mobileNumbers }).from(providers);
+    for (const r of provs) {
+      const arr = Array.isArray(r.mobileNumbers) ? r.mobileNumbers : [];
+      for (const m of arr) {
+        const n = normalizePhone(m || "");
+        if (n) phones.add(n);
+      }
     }
   } catch {
     // If lookup fails, fall through with whatever we have — better to
