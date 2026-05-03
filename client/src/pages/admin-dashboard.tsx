@@ -3305,9 +3305,8 @@ export default function AdminDashboardPage() {
                       <span
                         className="text-amber-700 dark:text-amber-300 font-mono shrink-0"
                         data-testid="text-gp-cost-today"
-                        title={`${todayCalls} API calls today`}
                       >
-                        Aaj total: ${todayCost.toFixed(2)}
+                        Aaj total: {todayCalls} calls · ${todayCost.toFixed(2)}
                       </span>
                     )}
                   </div>
