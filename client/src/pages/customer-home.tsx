@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { PlanTick } from "@/components/PlanTick";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ALL_STATES, getDistricts, DEFAULT_STATE, DEFAULT_DISTRICT } from "@/lib/india-locations";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -133,6 +134,15 @@ export default function CustomerHomePage() {
   const { canInstall, install: installPwa } = usePwaInstall();
   const { theme, toggleTheme } = useTheme();
   const [searchQuery, setSearchQuery] = useState("");
+  // Filter UI state — sits between search bar and results.
+  // `maxDistanceKm` caps how far a provider can be (default 50 km, the
+  // value most providers actually serve in our data). `sameCityOnly`
+  // is a strict city-name match against the user's resolved city.
+  const [maxDistanceKm, setMaxDistanceKm] = useState<number>(50);
+  const [sameCityOnly, setSameCityOnly] = useState<boolean>(false);
+  // User's city derived from active lat/lng via Nominatim reverse geocode.
+  // Used by the "Same city only" filter. null until resolved.
+  const [userCity, setUserCity] = useState<string | null>(null);
   const [currentLat, setCurrentLat] = useState<number | null>(null);
   const [currentLng, setCurrentLng] = useState<number | null>(null);
   const [customLat, setCustomLat] = useState<number | null>(null);
@@ -258,6 +268,35 @@ export default function CustomerHomePage() {
   const activeLat = locationMode === "current" ? currentLat : customLat;
   const activeLng = locationMode === "current" ? currentLng : customLng;
 
+  // Reverse-geocode the active location to a city name so the
+  // "Same city only" filter has something to compare against. Debounced
+  // and cached per-coord (3-decimal precision ~111 m) to avoid hammering
+  // Nominatim — they have a 1 req/sec public limit.
+  useEffect(() => {
+    if (activeLat == null || activeLng == null) { setUserCity(null); return; }
+    const key = `${activeLat.toFixed(3)},${activeLng.toFixed(3)}`;
+    const cached = sessionStorage.getItem(`rev:${key}`);
+    if (cached !== null) { setUserCity(cached || null); return; }
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${activeLat}&lon=${activeLng}&zoom=10&addressdetails=1`,
+        );
+        const j = await r.json();
+        const a = j?.address || {};
+        const city = a.city || a.town || a.village || a.municipality || a.county || a.state_district || "";
+        sessionStorage.setItem(`rev:${key}`, city);
+        setUserCity(city || null);
+      } catch {
+        // Silent — sameCity filter just won't constrain anything.
+      }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [activeLat, activeLng]);
+
+  const normalizeCity = (s: string | null | undefined): string =>
+    (s || "").toLowerCase().trim().replace(/\s+/g, " ");
+
   useEffect(() => {
     if (!navigator.geolocation) return;
     const tryGps = (highAccuracy: boolean, timeout: number) => {
@@ -319,8 +358,23 @@ export default function CustomerHomePage() {
     enabled: searching || searchQuery.length === 0,
   });
 
-  const results = searchData?.results || [];
+  const rawResults = searchData?.results || [];
   const suggestion = searchData?.suggestion;
+
+  // Apply UI filters (distance cap + same-city) on the verified provider
+  // list. Phone-search and Google fallback sections are intentionally
+  // not filtered — phone search is an exact lookup and Google fallback
+  // is already capped at 25 km server-side.
+  const userCityNorm = normalizeCity(userCity);
+  const results = rawResults.filter((r) => {
+    if (typeof r.distanceKm === "number" && r.distanceKm > maxDistanceKm) return false;
+    if (sameCityOnly && userCityNorm) {
+      const rc = normalizeCity((r as any).city);
+      if (!rc || rc !== userCityNorm) return false;
+    }
+    return true;
+  });
+  const hiddenByFilter = rawResults.length - results.length;
 
   // ── Google fallback (Task #72) ──────────────────────────────────
   // Runs in parallel with our own search and surfaces nearby
@@ -1569,7 +1623,7 @@ export default function CustomerHomePage() {
         )}
 
         {(searching || phoneSearching) && (
-          <div className="mb-4">
+          <div className="mb-4 space-y-3">
             <div className="flex items-center gap-2 px-4 py-2.5 rounded-full border bg-card shadow-md">
               <Search className="w-4 h-4 text-muted-foreground shrink-0" />
               <Input
@@ -1589,6 +1643,71 @@ export default function CustomerHomePage() {
                 <X className="w-4 h-4" />
               </Button>
             </div>
+
+            {/* Result filter box — sits between search and results.
+                Distance cap (numeric input + quick chips) + a Same-city
+                checkbox. Only shown for service search (not phone). */}
+            {searching && !phoneSearching && (
+              <div className="px-4 py-3 rounded-2xl border bg-card shadow-sm" data-testid="box-result-filters">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-xs font-medium text-muted-foreground">Max distance</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={500}
+                      value={maxDistanceKm}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        if (!isNaN(v) && v > 0 && v <= 500) setMaxDistanceKm(v);
+                        else if (e.target.value === "") setMaxDistanceKm(1);
+                      }}
+                      className="w-20 h-8 text-sm"
+                      data-testid="input-max-distance"
+                    />
+                    <span className="text-xs font-medium text-muted-foreground">km</span>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer select-none" data-testid="label-same-city">
+                    <Checkbox
+                      checked={sameCityOnly}
+                      onCheckedChange={(v) => setSameCityOnly(v === true)}
+                      data-testid="checkbox-same-city"
+                    />
+                    <span className="text-xs font-medium">
+                      Same city only
+                      {userCity ? <span className="text-muted-foreground"> · {userCity}</span> : null}
+                    </span>
+                  </label>
+                </div>
+                <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                  {[5, 10, 25, 50, 100].map((km) => (
+                    <button
+                      key={km}
+                      onClick={() => setMaxDistanceKm(km)}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all ${
+                        maxDistanceKm === km
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-muted-foreground hover:bg-muted/80"
+                      }`}
+                      data-testid={`chip-distance-${km}`}
+                    >
+                      {km} km
+                    </button>
+                  ))}
+                  {hiddenByFilter > 0 && (
+                    <span className="text-[11px] text-muted-foreground ml-auto" data-testid="text-hidden-count">
+                      {hiddenByFilter} hidden by filter
+                    </span>
+                  )}
+                </div>
+                {sameCityOnly && !userCity && (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-2" data-testid="text-city-warning">
+                    City detect nahi ho payi — filter tab tak nahi lagega jab tak location resolve na ho.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
