@@ -17,9 +17,11 @@
 //     admin tool uses, so repeat searches gradually grow our own DB and
 //     stop hitting Google at all once the admin verifies them.
 
-import { type InsertCoAdmin } from "@shared/schema";
+import { type InsertCoAdmin, pendingProviders } from "@shared/schema";
 import { storage } from "./storage";
 import { findKnownPhones, normalizePhone as normalizePhoneShared } from "./phoneDedupe";
+import { db } from "./db";
+import { and, eq, or, ilike } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 
 // ── In-memory 24 h LRU cache ──────────────────────────────────────────
@@ -292,6 +294,98 @@ export async function searchGoogleFallback(opts: {
       return a.distanceKm - b.distanceKm;
     });
   }
+  return out;
+}
+
+// ── Saved Google leads search ─────────────────────────────────────────
+//
+// On the very first customer search for a service we hit Google, surface
+// the results, AND background-save them into pending_providers attributed
+// to `system_google_fallback`. The next time the same (or a similar)
+// service is searched, we want those rows to surface in the MAIN result
+// list — not in the "from Google" section — so the customer gets an
+// instant, no-API-cost match. The Google fallback's existing phone
+// dedupe will then strip any duplicates from the bottom Google section.
+//
+// Match rules: `serviceName` OR `name` ILIKE %query%, status='pending',
+// addedBy=SYSTEM_COADMIN_USERNAME, must have phone + lat/lng, and
+// haversine distance ≤ MAX_DISTANCE_KM.
+export async function searchSavedGoogleLeads(opts: {
+  query: string;
+  lat?: number;
+  lng?: number;
+}): Promise<GoogleFallbackResult[]> {
+  const q = (opts.query || "").trim();
+  if (!q) return [];
+  // Without coords we can't apply the 25 km cap, so we'd risk surfacing
+  // a saved lead from another city. Same guard as the live Google path.
+  // Reject NaN / non-finite (e.g. parseFloat("abc")) explicitly — otherwise
+  // haversine returns NaN and `NaN > MAX_DISTANCE_KM` is false, which would
+  // leak up to 200 nationwide leads through this open endpoint.
+  if (
+    !Number.isFinite(opts.lat as number) ||
+    !Number.isFinite(opts.lng as number) ||
+    Math.abs(opts.lat as number) > 90 ||
+    Math.abs(opts.lng as number) > 180
+  ) {
+    return [];
+  }
+  const like = `%${q.toLowerCase()}%`;
+  let rows: Array<{
+    id: number;
+    name: string;
+    mobile: string | null;
+    address: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    serviceName: string;
+  }> = [];
+  try {
+    rows = await db
+      .select({
+        id: pendingProviders.id,
+        name: pendingProviders.name,
+        mobile: pendingProviders.mobile,
+        address: pendingProviders.address,
+        latitude: pendingProviders.latitude,
+        longitude: pendingProviders.longitude,
+        serviceName: pendingProviders.serviceName,
+      })
+      .from(pendingProviders)
+      .where(
+        and(
+          eq(pendingProviders.addedBy, SYSTEM_COADMIN_USERNAME),
+          eq(pendingProviders.status, "pending"),
+          or(
+            ilike(pendingProviders.serviceName, like),
+            ilike(pendingProviders.name, like),
+          ),
+        ),
+      )
+      .limit(200);
+  } catch {
+    return [];
+  }
+  const out: GoogleFallbackResult[] = [];
+  for (const r of rows) {
+    const phone = normalizePhone(r.mobile || "");
+    if (phone.length < 10) continue;
+    if (r.latitude == null || r.longitude == null) continue;
+    const distanceKm = haversineKm(opts.lat, opts.lng, r.latitude, r.longitude);
+    if (!Number.isFinite(distanceKm) || distanceKm > MAX_DISTANCE_KM) continue;
+    out.push({
+      placeId: `pending:${r.id}`,
+      name: r.name || "Unnamed Business",
+      address: r.address || "",
+      phone,
+      latitude: r.latitude,
+      longitude: r.longitude,
+      rating: null,
+      ratingCount: null,
+      distanceKm,
+    });
+  }
+  out.sort((a, b) => (a.distanceKm ?? Infinity) - (b.distanceKm ?? Infinity));
   return out;
 }
 

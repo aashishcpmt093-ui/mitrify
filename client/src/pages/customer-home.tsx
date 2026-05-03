@@ -400,6 +400,36 @@ export default function CustomerHomePage() {
   });
   const googleResults: GoogleFallbackResult[] = googleData?.results || [];
 
+  // Saved Google leads — pending_providers added via system_google_fallback.
+  // These are previously-seen Google businesses we've already auto-saved.
+  // Surface them in the MAIN results region (not the bottom Google section)
+  // so a 2nd search for the same service feels instant + DB-native.
+  const { data: savedGoogleData } = useQuery<{ results: GoogleFallbackResult[] }>({
+    queryKey: ["/api/providers/search-saved-google", searchQuery, activeLat, activeLng],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (searchQuery) params.set("query", searchQuery);
+      if (activeLat) params.set("lat", String(activeLat));
+      if (activeLng) params.set("lng", String(activeLng));
+      const res = await fetch(`/api/providers/search-saved-google?${params}`);
+      if (!res.ok) return { results: [] };
+      return res.json();
+    },
+    enabled: searching && searchQuery.trim().length > 0 && !isPureNumericQuery && activeLat != null && activeLng != null,
+    staleTime: 30_000,
+  });
+  const savedGoogleResults: GoogleFallbackResult[] = savedGoogleData?.results || [];
+  // Apply the same client-side distance / same-city filter the verified
+  // results use so the chips on top behave consistently across sections.
+  const filteredSavedGoogleResults = savedGoogleResults.filter((g) => {
+    if (g.distanceKm != null && maxDistanceKm > 0 && g.distanceKm > maxDistanceKm) return false;
+    if (sameCityOnly && userCity) {
+      const inCity = (g.address || "").toLowerCase().includes(userCity.toLowerCase());
+      if (!inCity) return false;
+    }
+    return true;
+  });
+
   const [isDialing, setIsDialing] = useState(false);
 
   const { data: phoneResults, isLoading: phoneLoading } = useQuery<ProviderSearchResult[]>({
@@ -1772,7 +1802,7 @@ export default function CustomerHomePage() {
           </div>
         )}
 
-        {searching && !isLoading && results && results.length === 0 && !suggestion && googleResults.length === 0 && !googleLoading && (
+        {searching && !isLoading && results && results.length === 0 && !suggestion && googleResults.length === 0 && !googleLoading && filteredSavedGoogleResults.length === 0 && (
           <div className="text-center py-12 text-muted-foreground">
             <Search className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p>No service providers found</p>
@@ -1963,6 +1993,55 @@ export default function CustomerHomePage() {
                       <Phone className="w-5 h-5 text-muted-foreground/40" />
                     </div>
                   )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+
+          {/* ── Saved Google leads (previously auto-saved) ──────────
+              Render these BEFORE the "from Google" separator so they
+              feel like a continuation of our own DB results. The bottom
+              Google section already dedupes them by phone, so they
+              won't appear twice. */}
+          {filteredSavedGoogleResults.map((g, i) => (
+            <Card
+              key={`saved-google-${g.placeId || g.phone}-${i}`}
+              className="overflow-hidden hover:shadow-lg transition-shadow duration-200 animate-slide-up"
+              style={{ animationDelay: `${(results?.length || 0) * 80 + i * 60}ms` }}
+              data-testid={`card-saved-google-${g.placeId || i}`}
+            >
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex gap-3 flex-1 min-w-0">
+                    <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center shrink-0 border border-border">
+                      <Wrench className="w-6 h-6 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h3 className="font-semibold truncate" data-testid={`text-saved-google-name-${i}`}>{g.name}</h3>
+                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 leading-tight text-muted-foreground border-muted-foreground/30" data-testid={`badge-saved-google-unverified-${i}`}>
+                          Unverified
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-1 mt-1 text-sm text-muted-foreground">
+                        <MapPin className="w-3 h-3" />
+                        {g.distanceKm != null
+                          ? `~${g.distanceKm.toFixed(1)} km ${t("away")}`
+                          : t("distanceUnknown")}
+                      </div>
+                      {g.address && (
+                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{g.address}</p>
+                      )}
+                    </div>
+                  </div>
+                  <a
+                    href={`tel:${g.phone}`}
+                    className="shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-xl bg-blue-500 hover:bg-blue-600 text-white shadow-md transition-colors"
+                    data-testid={`button-call-saved-google-${g.placeId || i}`}
+                    aria-label={`Call ${g.name}`}
+                  >
+                    <Phone className="w-5 h-5" />
+                  </a>
                 </div>
               </CardContent>
             </Card>
