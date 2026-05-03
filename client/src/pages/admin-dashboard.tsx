@@ -57,9 +57,9 @@ function avatarColor(name: string) {
 
 interface BackupStatusResponse {
   lastSuccessAt: string | null;
-  lastSuccess: { filename: string; size: number; emailed: boolean; emailError?: string; gcsUploaded?: boolean; gcsName?: string; alertSent: boolean; alertError?: string } | null;
+  lastSuccess: { filename: string; size: number; emailed: boolean; emailError?: string; gcsUploaded?: boolean; gcsName?: string; alertSent: boolean; alertError?: string; warnings?: string[] } | null;
   lastError: { at: string; message: string } | null;
-  history: Array<{ filename: string; size: number; generatedAt: string; emailed: boolean; emailError?: string; durationMs: number; gcsUploaded?: boolean; alertSent: boolean; alertError?: string; totalRows?: number; tableCount?: number }>;
+  history: Array<{ filename: string; size: number; generatedAt: string; emailed: boolean; emailError?: string; durationMs: number; gcsUploaded?: boolean; alertSent: boolean; alertError?: string; totalRows?: number; tableCount?: number; warnings?: string[] }>;
 }
 
 function formatRows(n: number) {
@@ -124,9 +124,21 @@ function BackupStatusLine() {
   }, [lastRunAt]);
 
   const runNowMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/admin/backup/run-now"),
-    onSuccess: () => {
-      toast({ title: "Backup complete", description: "Backup ran successfully." });
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/backup/run-now");
+      return res.json();
+    },
+    onSuccess: (entry: any) => {
+      const warnings: string[] = Array.isArray(entry?.warnings) ? entry.warnings : [];
+      if (warnings.length > 0) {
+        toast({
+          title: `⚠️ Backup OK but ${warnings.length} table(s) shrank`,
+          description: warnings.slice(0, 3).join(" • ") + (warnings.length > 3 ? ` • +${warnings.length - 3} more` : ""),
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Backup complete", description: "Backup ran successfully." });
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/admin/backup/status"] });
       refetch();
       setLastRunAt(Date.now());
@@ -743,6 +755,20 @@ export default function AdminDashboardPage() {
       const disposition = res.headers.get("content-disposition") || "";
       const match = /filename="?([^"]+)"?/.exec(disposition);
       const filename = match?.[1] || "mitrify-backup.sql";
+      // Surface row-drop warnings as a destructive toast BEFORE the blob
+      // is consumed — the server set these headers up-front (see
+      // streamBackupSql onMetricsReady).
+      const warnCount = parseInt(res.headers.get("X-Backup-Warnings") || "0", 10);
+      if (warnCount > 0) {
+        const detailRaw = res.headers.get("X-Backup-Warning-Detail") || "";
+        let detail = "";
+        try { detail = decodeURIComponent(detailRaw); } catch { detail = detailRaw; }
+        toast({
+          title: `⚠️ Backup OK but ${warnCount} table(s) shrank`,
+          description: detail.slice(0, 240) || "Check dump header for details.",
+          variant: "destructive",
+        });
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -1223,14 +1249,25 @@ export default function AdminDashboardPage() {
   });
 
   const gcsUploadMutation = useMutation({
-    mutationFn: (mode: "overwrite" | "new") =>
-      apiRequest("POST", "/api/admin/backup/gcs-upload", { mode }),
+    mutationFn: async (mode: "overwrite" | "new") => {
+      const res = await apiRequest("POST", "/api/admin/backup/gcs-upload", { mode });
+      return res.json();
+    },
     onSuccess: (data: any) => {
       setGcsUploadResult({ gcsName: data.gcsName, url: data.url, size: data.size });
-      toast({
-        title: "Google Cloud Upload Complete",
-        description: `Saved as ${data.gcsName} (${formatBytes(data.size)})`,
-      });
+      const warnings: string[] = Array.isArray(data?.warnings) ? data.warnings : [];
+      if (warnings.length > 0) {
+        toast({
+          title: `⚠️ Uploaded, but ${warnings.length} table(s) shrank`,
+          description: warnings.slice(0, 3).join(" • ") + (warnings.length > 3 ? ` • +${warnings.length - 3} more` : ""),
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Google Cloud Upload Complete",
+          description: `Saved as ${data.gcsName} (${formatBytes(data.size)})`,
+        });
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/admin/backup/status"] });
     },
     onError: (err: any) => {

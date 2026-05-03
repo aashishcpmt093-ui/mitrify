@@ -2709,7 +2709,12 @@ export async function registerRoutes(
         if (!stream.write(s)) return new Promise<void>((r) => stream.once("drain", r));
       };
       const startedAt = Date.now();
-      const totals = await streamBackupSql((s) => { writeP(s); }, { filename });
+      const prevStatus = await getBackupStatus();
+      const previousPerTable = prevStatus.lastSuccess?.perTableRows;
+      const totals = await streamBackupSql(
+        (s) => { writeP(s); },
+        { filename, previousPerTable },
+      );
       await new Promise<void>((resolve, reject) => {
         stream.end((err?: Error | null) => err ? reject(err) : resolve());
       });
@@ -2730,11 +2735,20 @@ export async function registerRoutes(
           alertSent: false,
           totalRows: totals.totalRows,
           tableCount: totals.tableCount,
+          perTableRows: totals.perTable,
+          warnings: totals.warnings.length > 0 ? totals.warnings : undefined,
         });
       } catch (logErr) {
         console.error("[backup] failed to record GCS upload history:", logErr);
       }
-      res.json({ ok: true, gcsName: result.gcsName, url: result.url, size, filename });
+      res.json({
+        ok: true,
+        gcsName: result.gcsName,
+        url: result.url,
+        size,
+        filename,
+        warnings: totals.warnings,
+      });
     } catch (err: any) {
       try { fs.unlinkSync(filepath); } catch {}
       res.status(500).json({ message: err?.message || "GCS upload failed" });
@@ -2791,10 +2805,27 @@ export async function registerRoutes(
     // buffering the whole dump in memory.
     let bytesStreamed = 0;
     try {
-      const totals = await streamBackupSql((s) => {
-        bytesStreamed += Buffer.byteLength(s, "utf8");
-        res.write(s);
-      }, { filename });
+      const prevStatus = await getBackupStatus();
+      const previousPerTable = prevStatus.lastSuccess?.perTableRows;
+      const totals = await streamBackupSql(
+        (s) => {
+          bytesStreamed += Buffer.byteLength(s, "utf8");
+          res.write(s);
+        },
+        {
+          filename,
+          previousPerTable,
+          // Set the warnings header BEFORE the body stream begins so the
+          // browser-side download handler can read it via response.headers
+          // and surface a destructive toast.
+          onMetricsReady: ({ warnings }) => {
+            if (warnings.length > 0 && !res.headersSent) {
+              res.setHeader("X-Backup-Warnings", String(warnings.length));
+              res.setHeader("X-Backup-Warning-Detail", encodeURIComponent(warnings.join(" | ")));
+            }
+          },
+        },
+      );
       res.end();
       // Persist history entry (metadata only — no dump contents).
       try {
@@ -2807,6 +2838,8 @@ export async function registerRoutes(
           alertSent: false,
           totalRows: totals.totalRows,
           tableCount: totals.tableCount,
+          perTableRows: totals.perTable,
+          warnings: totals.warnings.length > 0 ? totals.warnings : undefined,
         });
       } catch (logErr) {
         console.error("[backup] failed to record manual download history:", logErr);

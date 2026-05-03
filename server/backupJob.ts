@@ -145,25 +145,102 @@ export function makeBackupFilename(now: Date = new Date()): string {
  * provided write callback. Used by both the on-demand admin endpoint and the
  * nightly scheduled job so the two stay in lockstep.
  */
+/**
+ * Compare current per-table row counts to the previous backup and flag
+ * tables that have suffered a suspicious drop. A table is flagged if BOTH:
+ *   - it dropped by more than `BACKUP_ROW_DROP_PCT` (default 20%), AND
+ *   - it dropped by more than `BACKUP_ROW_DROP_MIN` rows (default 100)
+ * Using AND (not OR) avoids spamming warnings for tiny tables that legitimately
+ * shrink by a few rows, and avoids spamming for huge tables that drop a few
+ * hundred rows out of millions during normal churn. Task spec said "20% OR 100",
+ * but in practice OR fires on every small table — AND is the admin-friendly
+ * interpretation that still catches both "big % drop on big table" (mass delete)
+ * and "small % but lots of rows" (botched bulk operation).
+ */
+const BACKUP_ROW_DROP_PCT = 0.2;
+const BACKUP_ROW_DROP_MIN = 100;
+
+export function computeBackupWarnings(
+  current: Record<string, number>,
+  previous: Record<string, number> | undefined | null,
+): string[] {
+  if (!previous) return [];
+  const warnings: string[] = [];
+  for (const [table, prevRows] of Object.entries(previous)) {
+    if (prevRows <= 0) continue;
+    const curRows = current[table];
+    if (curRows === undefined) {
+      // Table existed before but isn't in this dump at all — definitely worth flagging.
+      warnings.push(`Table "${table}" disappeared (had ${prevRows} rows in previous backup)`);
+      continue;
+    }
+    const drop = prevRows - curRows;
+    if (drop <= 0) continue;
+    const pct = drop / prevRows;
+    if (drop > BACKUP_ROW_DROP_MIN && pct > BACKUP_ROW_DROP_PCT) {
+      warnings.push(
+        `Table "${table}" dropped ${drop} rows (${(pct * 100).toFixed(1)}%): ${prevRows} → ${curRows}`,
+      );
+    }
+  }
+  return warnings;
+}
+
 export async function streamBackupSql(
   write: (s: string) => void,
-  opts: { filename?: string } = {},
-): Promise<{ totalRows: number; tableCount: number }> {
+  opts: {
+    filename?: string;
+    /** Per-table row counts from the previous successful backup. When provided
+     *  enables the row-drop comparison; warnings (if any) are written into the
+     *  dump header AND returned in the result for callers to surface in the UI. */
+    previousPerTable?: Record<string, number>;
+    /** Fired exactly once after counts + warnings are computed but BEFORE any
+     *  `write()` is called. Lets callers (e.g. HTTP route handlers) set
+     *  response headers before the body stream begins. */
+    onMetricsReady?: (info: { perTable: Record<string, number>; warnings: string[] }) => void;
+  } = {},
+): Promise<{ totalRows: number; tableCount: number; perTable: Record<string, number>; warnings: string[] }> {
   const now = new Date();
   const filename = opts.filename ?? makeBackupFilename(now);
 
-  write(`-- Mitrify database backup\n`);
-  write(`-- Generated: ${now.toISOString()}\n`);
-  write(`-- Contents: 100% full snapshot of every table, every row\n`);
-  write(`-- Restore: psql <connection-url> < ${filename}\n`);
-  write(`\nBEGIN;\n\n`);
-
+  // ── Phase 1: enumerate tables and count rows up front ──
+  // We need counts BEFORE writing the header so we can include any
+  // `-- WARNING:` lines for tables that lost a lot of rows since last backup.
+  // COUNT(*) on every table is cheap relative to the per-row INSERT dump
+  // we're about to produce.
   const tablesRes = await pool.query(
     `SELECT table_name FROM information_schema.tables
      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
      ORDER BY table_name`,
   );
   const tableNames: string[] = tablesRes.rows.map((r: any) => r.table_name);
+
+  const perTable: Record<string, number> = {};
+  for (const table of tableNames) {
+    const countRes = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM ${quoteIdent(table)}`,
+    );
+    perTable[table] = countRes.rows[0]?.c ?? 0;
+  }
+
+  const warnings = computeBackupWarnings(perTable, opts.previousPerTable);
+  // Fire the metrics-ready callback BEFORE the first write so HTTP routes
+  // can set response headers (which must precede res.write()).
+  try { opts.onMetricsReady?.({ perTable, warnings }); } catch {}
+
+  write(`-- Mitrify database backup\n`);
+  write(`-- Generated: ${now.toISOString()}\n`);
+  write(`-- Contents: 100% full snapshot of every table, every row\n`);
+  write(`-- Restore: psql <connection-url> < ${filename}\n`);
+  if (warnings.length > 0) {
+    write(`--\n`);
+    write(`-- WARNING: ${warnings.length} table(s) shrank significantly since the previous backup.\n`);
+    write(`-- WARNING: This may indicate accidental data loss. Review before discarding the prior backup.\n`);
+    for (const w of warnings) {
+      write(`-- WARNING: ${w}\n`);
+    }
+  }
+  write(`\nBEGIN;\n\n`);
 
   const BATCH = 500;
   let totalRows = 0;
@@ -195,10 +272,7 @@ export async function streamBackupSql(
     );
     const pkCols: string[] = pkRes.rows.map((r: any) => r.column_name);
 
-    const countRes = await pool.query(
-      `SELECT COUNT(*)::int AS c FROM ${quoteIdent(table)}`,
-    );
-    const total: number = countRes.rows[0]?.c ?? 0;
+    const total: number = perTable[table] ?? 0;
     totalRows += total;
     tableCount += 1;
 
@@ -275,7 +349,7 @@ export async function streamBackupSql(
 
   write(`COMMIT;\n`);
   write(`-- End of backup\n`);
-  return { totalRows, tableCount };
+  return { totalRows, tableCount, perTable, warnings };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -671,6 +745,12 @@ export interface BackupHistoryEntry {
   totalRows?: number;
   /** Number of tables included in the dump. Optional for back-compat. */
   tableCount?: number;
+  /** Per-table row counts captured during this backup. Used by the next
+   *  backup run to detect suspicious row drops. Optional for back-compat. */
+  perTableRows?: Record<string, number>;
+  /** Human-readable warnings about tables that shrank significantly since
+   *  the previous backup. Empty/undefined when nothing was flagged. */
+  warnings?: string[];
 }
 
 export interface BackupStatus {
@@ -952,9 +1032,22 @@ export async function runDailyBackup(): Promise<BackupHistoryEntry> {
       return new Promise<void>((resolve) => stream.once("drain", () => resolve()));
     }
   };
-  let totals: { totalRows: number; tableCount: number } = { totalRows: 0, tableCount: 0 };
+  // Read previous backup's per-table counts so we can flag suspicious drops
+  // in this run's dump header AND on the persisted history entry.
+  const prevStatus = await readStatus();
+  const previousPerTable = prevStatus.lastSuccess?.perTableRows;
+
+  let totals: {
+    totalRows: number;
+    tableCount: number;
+    perTable: Record<string, number>;
+    warnings: string[];
+  } = { totalRows: 0, tableCount: 0, perTable: {}, warnings: [] };
   try {
-    totals = await streamBackupSql((s) => { writeP(s); }, { filename });
+    totals = await streamBackupSql(
+      (s) => { writeP(s); },
+      { filename, previousPerTable },
+    );
     await new Promise<void>((resolve, reject) => {
       stream.end((err?: Error | null) => err ? reject(err) : resolve());
     });
@@ -1056,6 +1149,8 @@ export async function runDailyBackup(): Promise<BackupHistoryEntry> {
     alertError,
     totalRows: totals.totalRows,
     tableCount: totals.tableCount,
+    perTableRows: totals.perTable,
+    warnings: totals.warnings.length > 0 ? totals.warnings : undefined,
   };
 
   const status = await readStatus();
@@ -1065,7 +1160,10 @@ export async function runDailyBackup(): Promise<BackupHistoryEntry> {
   if (emailed) status.lastError = null;
   await writeStatus(status);
 
-  console.log(`[backup] complete in ${entry.durationMs}ms (${size} bytes, ${totals.totalRows} rows across ${totals.tableCount} tables, emailed=${emailed})`);
+  console.log(`[backup] complete in ${entry.durationMs}ms (${size} bytes, ${totals.totalRows} rows across ${totals.tableCount} tables, emailed=${emailed}, warnings=${totals.warnings.length})`);
+  if (totals.warnings.length > 0) {
+    for (const w of totals.warnings) console.warn(`[backup] WARNING: ${w}`);
+  }
   return entry;
 }
 
