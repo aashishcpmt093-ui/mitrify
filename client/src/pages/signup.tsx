@@ -162,7 +162,7 @@ export default function SignupPage() {
           onClick={() => {
             if (step === "credentials") setStep("otp");
             else if (step === "otp") setStep("contact");
-            else setLocation("/login");
+            else setLocation("/welcome");
           }}
           data-testid="button-back"
         >
@@ -398,7 +398,7 @@ export default function SignupPage() {
           )}
 
           <div className="text-center">
-            <Button variant="link" className="text-sm" onClick={() => setLocation("/login")} data-testid="button-goto-login">
+            <Button variant="link" className="text-sm" onClick={() => setLocation("/welcome")} data-testid="button-goto-login">
               {t("signupAlreadyHave")}
             </Button>
           </div>

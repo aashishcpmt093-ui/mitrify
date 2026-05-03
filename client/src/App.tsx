@@ -45,6 +45,36 @@ import InvestmentPage from "@/pages/investment";
 import NotFound from "@/pages/not-found";
 import VisitorCounter from "@/components/VisitorCounter";
 
+// Auto-skip wrapper for "/" — for guests silently enters guest mode and redirects to customer home.
+// For authenticated users, routes to their role dashboard without clearing session.
+function AutoSkipToHome() {
+  const [, setLocation] = useLocation();
+  const { user, isLoading, isAuthenticated } = useAuth();
+  useEffect(() => {
+    if (isLoading) return;
+    if (isAuthenticated && user) {
+      const role = (user as any).role || (user as any).authType;
+      if (role === "admin") setLocation("/admin/dashboard");
+      else if (role === "coadmin") setLocation("/coadmin/dashboard");
+      else setLocation("/customer/home");
+      return;
+    }
+    (async () => {
+      try {
+        localStorage.removeItem("mitrify_auth_v1");
+        queryClient.setQueryData(["/api/auth/user"], null);
+        await fetch("/api/guest-mode", { method: "POST", credentials: "include" });
+      } catch {}
+      setLocation("/customer/home");
+    })();
+  }, [isLoading, isAuthenticated, user, setLocation]);
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="animate-pulse text-muted-foreground">Loading...</div>
+    </div>
+  );
+}
+
 // ── Auth-guarded route wrappers ───────────────────────────────────────────────
 
 // Requires login + provider profile
@@ -64,7 +94,7 @@ function AuthenticatedRoute({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      setLocation("/login");
+      setLocation("/welcome");
     }
   }, [isLoading, isAuthenticated]);
 
@@ -93,7 +123,7 @@ function LoggedInRoute({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      setLocation("/login");
+      setLocation("/welcome");
     }
   }, [isLoading, isAuthenticated]);
 
@@ -114,7 +144,7 @@ function SetupRoute({ role, children }: { role: "customer" | "provider"; childre
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      setLocation("/login");
+      setLocation("/welcome");
     }
   }, [isLoading, isAuthenticated]);
 
@@ -135,13 +165,10 @@ function Router() {
 
   useEffect(() => {
     if (isLoading) return;
-    if (!user) {
-      if (window.location.pathname === "/") setLocation("/customer/home");
-      return;
-    }
+    if (!user) return;
     const role = (user as any).role || (user as any).authType;
     const current = window.location.pathname;
-    if (current === "/" || current === "/login" || current === "/select-role") {
+    if (current === "/" || current === "/welcome" || current === "/login" || current === "/select-role") {
       if (role === "admin") setLocation("/admin/dashboard");
       else if (role === "coadmin") setLocation("/coadmin/dashboard");
       else setLocation("/customer/home");
@@ -150,7 +177,8 @@ function Router() {
 
   return (
     <Switch>
-      <Route path="/" component={WelcomePage} />
+      <Route path="/" component={AutoSkipToHome} />
+      <Route path="/welcome" component={WelcomePage} />
       <Route path="/login" component={LoginPage} />
       <Route path="/signup" component={SignupPage} />
       <Route path="/forgot-password" component={ForgotPasswordPage} />

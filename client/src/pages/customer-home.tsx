@@ -222,7 +222,7 @@ export default function CustomerHomePage() {
 
   const handleGoToLogin = async () => {
     try { await fetch("/api/guest-mode", { method: "POST", credentials: "include" }); } catch {}
-    setLocation("/login");
+    setLocation("/welcome");
   };
 
   const resetToHome = () => {
@@ -1499,7 +1499,7 @@ export default function CustomerHomePage() {
                   <LogOut className="w-4 h-4" /> {t("logout")}
                 </Button>
               ) : (
-                <Button variant="ghost" className="w-full justify-start gap-3 text-primary" onClick={() => { setMenuOpen(false); setLocation("/login"); }} data-testid="button-login-menu">
+                <Button variant="ghost" className="w-full justify-start gap-3 text-primary" onClick={() => { setMenuOpen(false); setLocation("/welcome"); }} data-testid="button-login-menu">
                   <LogOut className="w-4 h-4" /> {t("loginSignup")}
                 </Button>
               )}
@@ -1599,7 +1599,7 @@ export default function CustomerHomePage() {
                   <Button
                     size="sm"
                     className="flex-1 h-8 text-xs bg-blue-500 hover:bg-blue-600"
-                    onClick={() => setLocation("/login")}
+                    onClick={() => setLocation("/welcome")}
                     data-testid="button-guest-login-banner"
                   >
                     <LogIn className="w-3 h-3 mr-1" /> Login
@@ -2277,7 +2277,7 @@ export default function CustomerHomePage() {
             <h3 className="font-bold text-lg mb-1">{t("loginRequired")}</h3>
             <p className="text-sm text-muted-foreground mb-5">{t("loginRequiredDesc")}</p>
             <div className="space-y-2">
-              <Button className="w-full" onClick={() => { setShowLoginPrompt(false); setLocation("/login"); }} data-testid="button-prompt-login">
+              <Button className="w-full" onClick={() => { setShowLoginPrompt(false); setLocation("/welcome"); }} data-testid="button-prompt-login">
                 {t("loginBtn")}
               </Button>
               <Button variant="outline" className="w-full" onClick={() => { setShowLoginPrompt(false); setLocation("/signup"); }} data-testid="button-prompt-signup">

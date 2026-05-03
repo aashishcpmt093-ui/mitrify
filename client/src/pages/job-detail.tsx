@@ -31,7 +31,7 @@ export default function JobDetailPage() {
   const handleCall = async () => {
     if (!user) {
       toast({ title: "Login required", description: "Please login to call" });
-      setLocation("/login");
+      setLocation("/welcome");
       return;
     }
 

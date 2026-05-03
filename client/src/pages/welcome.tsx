@@ -100,11 +100,20 @@ export default function WelcomePage() {
           <div className="w-full max-w-sm space-y-3 animate-slide-up delay-200">
             <Button
               className="w-full py-4 text-base bg-white text-primary font-semibold shadow-xl"
-              onClick={async () => { await enterGuestMode(); setLocation("/customer/home"); }}
+              onClick={() => setLocation("/login")}
               data-testid="button-login"
             >
               <LogIn className="w-5 h-5 mr-2" />
-              Login / Sign Up
+              Login
+            </Button>
+
+            <Button
+              className="w-full py-4 text-base bg-amber-400 hover:bg-amber-500 text-gray-900 font-semibold shadow-xl"
+              onClick={() => setLocation("/signup")}
+              data-testid="button-signup"
+            >
+              <Sparkles className="w-5 h-5 mr-2" />
+              Sign Up
             </Button>
 
             <Button

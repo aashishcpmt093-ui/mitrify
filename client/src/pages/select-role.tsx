@@ -11,7 +11,7 @@ export default function SelectRolePage() {
 
   useEffect(() => {
     if (isLoading) return;
-    if (!isAuthenticated) { setLocation("/login"); return; }
+    if (!isAuthenticated) { setLocation("/welcome"); return; }
     const role = (user as any)?.role || (user as any)?.authType;
     if (role === "admin") { setLocation("/admin/dashboard"); return; }
     if (role === "coadmin") { setLocation("/coadmin/dashboard"); return; }

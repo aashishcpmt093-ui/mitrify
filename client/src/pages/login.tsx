@@ -154,7 +154,7 @@ export default function LoginPage() {
         <div className="absolute -bottom-4 -left-6 w-20 h-20 rounded-full bg-white/10 animate-float delay-200" />
 
         <div className="relative z-10">
-          <Button variant="ghost" size="icon" onClick={() => setLocation("/")} className="text-white/80" data-testid="button-back">
+          <Button variant="ghost" size="icon" onClick={() => setLocation("/welcome")} className="text-white/80" data-testid="button-back">
             <ArrowLeft className="w-5 h-5" />
           </Button>
 

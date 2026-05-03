@@ -73,7 +73,7 @@ export default function ForgotPasswordPage() {
         return;
       }
       toast({ title: t("forgotResetOk") });
-      setLocation("/login");
+      setLocation("/welcome");
     } catch (err: any) {
       const msg = err?.code === "auth/invalid-verification-code"
         ? t("signupInvalidOtp")
@@ -89,7 +89,7 @@ export default function ForgotPasswordPage() {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <div className="p-4">
-        <Button variant="ghost" size="icon" onClick={() => setLocation("/login")} data-testid="button-back">
+        <Button variant="ghost" size="icon" onClick={() => setLocation("/welcome")} data-testid="button-back">
           <ArrowLeft className="w-5 h-5" />
         </Button>
       </div>
@@ -168,7 +168,7 @@ export default function ForgotPasswordPage() {
             <Button
               variant="link"
               className="text-sm"
-              onClick={() => setLocation("/login")}
+              onClick={() => setLocation("/welcome")}
               data-testid="button-back-to-login"
             >
               {t("forgotBackToLogin")}
