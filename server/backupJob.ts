@@ -147,15 +147,12 @@ export function makeBackupFilename(now: Date = new Date()): string {
  */
 /**
  * Compare current per-table row counts to the previous backup and flag
- * tables that have suffered a suspicious drop. A table is flagged if BOTH:
- *   - it dropped by more than `BACKUP_ROW_DROP_PCT` (default 20%), AND
+ * tables that have suffered a suspicious drop. A table is flagged if EITHER:
+ *   - it dropped by more than `BACKUP_ROW_DROP_PCT` (default 20%), OR
  *   - it dropped by more than `BACKUP_ROW_DROP_MIN` rows (default 100)
- * Using AND (not OR) avoids spamming warnings for tiny tables that legitimately
- * shrink by a few rows, and avoids spamming for huge tables that drop a few
- * hundred rows out of millions during normal churn. Task spec said "20% OR 100",
- * but in practice OR fires on every small table — AND is the admin-friendly
- * interpretation that still catches both "big % drop on big table" (mass delete)
- * and "small % but lots of rows" (botched bulk operation).
+ * Catches both "small % but lots of rows" (botched bulk delete on a huge
+ * table) and "big % drop on small but important table" (e.g. an admin
+ * config table going from 30 → 5 rows).
  */
 const BACKUP_ROW_DROP_PCT = 0.2;
 const BACKUP_ROW_DROP_MIN = 100;
@@ -177,7 +174,7 @@ export function computeBackupWarnings(
     const drop = prevRows - curRows;
     if (drop <= 0) continue;
     const pct = drop / prevRows;
-    if (drop > BACKUP_ROW_DROP_MIN && pct > BACKUP_ROW_DROP_PCT) {
+    if (drop > BACKUP_ROW_DROP_MIN || pct > BACKUP_ROW_DROP_PCT) {
       warnings.push(
         `Table "${table}" dropped ${drop} rows (${(pct * 100).toFixed(1)}%): ${prevRows} → ${curRows}`,
       );
