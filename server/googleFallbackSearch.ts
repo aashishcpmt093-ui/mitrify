@@ -86,7 +86,16 @@ type RawPlace = {
   ratingCount: number | null;
 };
 
-async function callGooglePlaces(textQuery: string): Promise<RawPlace[]> {
+// Hard cap on how far a Google result can be from the customer to be
+// surfaced. Anything beyond this is geographically useless (we saw
+// 11,000+ km USA results bleeding into Indian queries).
+const MAX_DISTANCE_KM = 25;
+
+async function callGooglePlaces(
+  textQuery: string,
+  lat: number,
+  lng: number,
+): Promise<RawPlace[]> {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) return [];
   const fieldMask = [
@@ -102,6 +111,13 @@ async function callGooglePlaces(textQuery: string): Promise<RawPlace[]> {
   ].join(",");
   // Single page only — for a customer query we want low latency, not
   // exhaustive coverage. The admin tool is the one that paginates.
+  //
+  // Text Search (New) only supports `rectangle` in `locationRestriction`;
+  // `circle` is allowed in `locationBias`. We pass a circle bias so Google
+  // strongly prefers nearby results, then enforce the 25 km cut-off
+  // ourselves with a haversine check below — so far-away places (we saw
+  // 11,000+ km USA results bleeding into Indian queries) can never reach
+  // the customer.
   const r = await fetch("https://places.googleapis.com/v1/places:searchText", {
     method: "POST",
     headers: {
@@ -109,7 +125,17 @@ async function callGooglePlaces(textQuery: string): Promise<RawPlace[]> {
       "X-Goog-Api-Key": apiKey,
       "X-Goog-FieldMask": fieldMask,
     },
-    body: JSON.stringify({ textQuery, regionCode: "IN", maxResultCount: 20 }),
+    body: JSON.stringify({
+      textQuery,
+      regionCode: "IN",
+      maxResultCount: 20,
+      locationBias: {
+        circle: {
+          center: { latitude: lat, longitude: lng },
+          radius: MAX_DISTANCE_KM * 1000,
+        },
+      },
+    }),
   });
   if (!r.ok) return [];
   const j: any = await r.json();
@@ -188,15 +214,20 @@ export async function searchGoogleFallback(opts: {
   const digits = query.replace(/\D/g, "");
   if (digits.length >= 6 && digits === query.replace(/[\s\-\+]/g, "")) return [];
   if (!process.env.GOOGLE_PLACES_API_KEY) return [];
+  // Without the customer's location we can't enforce the 25 km cap, so
+  // any Google result we return would be geographically random
+  // (e.g. an Indian customer searching "salon" was getting Oregon, USA).
+  // Skip the fallback entirely until the client passes lat/lng.
+  if (opts.lat == null || opts.lng == null) return [];
 
   const key = cacheKey(query, opts.lat, opts.lng);
   let raw = cacheGet(key);
   if (!raw) {
-    // Bias the textQuery with "near me" when we have coords so Google
-    // weighs proximity. Without coords, fall back to the bare query.
-    const textQuery = (opts.lat != null && opts.lng != null) ? `${query} near me` : query;
+    // Bias the textQuery with "near me" so Google additionally weighs
+    // proximity inside the restricted circle.
+    const textQuery = `${query} near me`;
     try {
-      raw = await callGooglePlaces(textQuery);
+      raw = await callGooglePlaces(textQuery, opts.lat, opts.lng);
     } catch {
       raw = [];
     }
@@ -211,10 +242,16 @@ export async function searchGoogleFallback(opts: {
     }
   }
 
-  // Filter: must have phone + lat/lng.
-  const candidates = raw.filter(
-    (p) => normalizePhone(p.phone).length >= 10 && p.latitude != null && p.longitude != null,
-  );
+  // Filter: must have phone + lat/lng AND be within the 25 km cap.
+  // `locationBias` is soft, so Google can still return places outside
+  // the circle when matches inside are sparse — this haversine check is
+  // the actual hard cut-off the customer sees.
+  const candidates = raw.filter((p) => {
+    if (normalizePhone(p.phone).length < 10) return false;
+    if (p.latitude == null || p.longitude == null) return false;
+    const d = haversineKm(opts.lat as number, opts.lng as number, p.latitude, p.longitude);
+    return d <= MAX_DISTANCE_KM;
+  });
   if (candidates.length === 0) return [];
 
   // Dedupe against our own DB so we never show a number our app already
