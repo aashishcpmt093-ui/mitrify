@@ -27,6 +27,13 @@ import { useTheme } from "@/lib/theme";
 import type { AdminStats, Profile, CallLog, PromoCode } from "@shared/schema";
 import { NO_ALERT_NEEDED_MESSAGE } from "@shared/schema";
 
+// ── Google Places API cost estimate constants ──
+// Source: Google Places API (New) "Text Search Pro" SKU pricing.
+// Update these two values if Google changes pricing or our server changes
+// how many pages it merges per fetch.
+const GOOGLE_PLACES_USD_PER_CALL = 0.032;       // $0.032 per Text Search call
+const GOOGLE_PLACES_CALLS_PER_FETCH = 2;        // server merges anchor + page-2
+
 interface EditProviderState { open: boolean; profile: any | null; providerData: any | null; }
 
 function getInitials(name: string) {
@@ -3280,6 +3287,32 @@ export default function AdminDashboardPage() {
                 Har click pe ~40 businesses milte hain • Daily limit: 2000 runs/admin
                 {gpRateInfo && ` • Aaj: ${gpRateInfo.runsToday}/${gpRateInfo.max} use ho chuke`}
               </p>
+
+              {/* Cost preview — helps prevent accidental Google Places API spend */}
+              {(() => {
+                const perFetchCost = GOOGLE_PLACES_CALLS_PER_FETCH * GOOGLE_PLACES_USD_PER_CALL;
+                const todayCalls = (gpRateInfo?.runsToday ?? 0) * GOOGLE_PLACES_CALLS_PER_FETCH;
+                const todayCost = todayCalls * GOOGLE_PLACES_USD_PER_CALL;
+                return (
+                  <div
+                    className="rounded-lg border border-amber-200 dark:border-amber-800/60 bg-amber-50/70 dark:bg-amber-900/20 px-2.5 py-1.5 flex items-center justify-between gap-2 text-[11px]"
+                    data-testid="panel-gp-cost-estimate"
+                  >
+                    <span className="text-amber-800 dark:text-amber-200">
+                      Is fetch ka estimate: <strong data-testid="text-gp-cost-per-fetch">~{GOOGLE_PLACES_CALLS_PER_FETCH} API calls · ${perFetchCost.toFixed(3)}</strong>
+                    </span>
+                    {gpRateInfo && gpRateInfo.runsToday > 0 && (
+                      <span
+                        className="text-amber-700 dark:text-amber-300 font-mono shrink-0"
+                        data-testid="text-gp-cost-today"
+                        title={`${todayCalls} API calls today`}
+                      >
+                        Aaj total: ${todayCost.toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Search / Stop Buttons */}
               {!gpSearching ? (
