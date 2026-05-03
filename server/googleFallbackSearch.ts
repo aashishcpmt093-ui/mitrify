@@ -17,9 +17,9 @@
 //     admin tool uses, so repeat searches gradually grow our own DB and
 //     stop hitting Google at all once the admin verifies them.
 
-import { db } from "./db";
-import { localUsers, pendingProviders, providers, type InsertCoAdmin } from "@shared/schema";
+import { type InsertCoAdmin } from "@shared/schema";
 import { storage } from "./storage";
+import { findKnownPhones, normalizePhone as normalizePhoneShared } from "./phoneDedupe";
 import bcrypt from "bcryptjs";
 
 // ── In-memory 24 h LRU cache ──────────────────────────────────────────
@@ -138,11 +138,10 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
 }
 
 // ── Phone normalization (matches bulkCreateGooglePlaces) ─────────────
+// Re-exported alias of the shared normalizer so this file's existing
+// call sites stay readable.
 
-function normalizePhone(p: string): string {
-  const digits = (p || "").replace(/\D/g, "");
-  return digits.length >= 10 ? digits.slice(-10) : digits;
-}
+const normalizePhone = normalizePhoneShared;
 
 // ── Ensure system co-admin exists for `addedBy` attribution ──────────
 //
@@ -221,8 +220,13 @@ export async function searchGoogleFallback(opts: {
   // Dedupe against our own DB so we never show a number our app already
   // has (verified provider OR pending row). Same dedupe basis used by
   // bulkCreateGooglePlaces (last-10-digits of pendingProviders.mobile +
-  // localUsers.phone).
-  const knownPhones = await loadKnownPhones();
+  // localUsers.phone). We only look up the candidate phones (≤20) instead
+  // of pulling every known phone into memory — keeps server memory flat
+  // and lets the DB use indexes as the table grows.
+  const candidatePhones = Array.from(
+    new Set(candidates.map((p) => normalizePhone(p.phone)).filter((n) => n.length === 10)),
+  );
+  const knownPhones = await findKnownPhones(candidatePhones);
   const dedup = candidates.filter((p) => !knownPhones.has(normalizePhone(p.phone)));
 
   // Add distance + sort (closest first) when we know the user's location.
@@ -252,40 +256,6 @@ export async function searchGoogleFallback(opts: {
     });
   }
   return out;
-}
-
-async function loadKnownPhones(): Promise<Set<string>> {
-  const phones = new Set<string>();
-  try {
-    // Pending leads (single mobile column).
-    const pending = await db.select({ mobile: pendingProviders.mobile }).from(pendingProviders);
-    for (const r of pending) {
-      const n = normalizePhone(r.mobile || "");
-      if (n) phones.add(n);
-    }
-    // Registered local-auth users (login phone).
-    const users = await db.select({ phone: localUsers.phone }).from(localUsers);
-    for (const r of users) {
-      const n = normalizePhone(r.phone || "");
-      if (n) phones.add(n);
-    }
-    // Verified providers — `mobileNumbers` is a text[] of all numbers
-    // they've registered (a provider can attach multiple lines). Without
-    // this set, an already-onboarded provider could reappear in the
-    // Google section.
-    const provs = await db.select({ mobileNumbers: providers.mobileNumbers }).from(providers);
-    for (const r of provs) {
-      const arr = Array.isArray(r.mobileNumbers) ? r.mobileNumbers : [];
-      for (const m of arr) {
-        const n = normalizePhone(m || "");
-        if (n) phones.add(n);
-      }
-    }
-  } catch {
-    // If lookup fails, fall through with whatever we have — better to
-    // possibly show a duplicate than to drop the entire response.
-  }
-  return phones;
 }
 
 async function persistToPendingProviders(raw: RawPlace[], serviceName: string): Promise<void> {

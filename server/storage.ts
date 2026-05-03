@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { findKnownPhones } from "./phoneDedupe";
 import {
   profiles, providers, calls, promoCodes, localUsers, credits, subscriptions, siteContent,
   coAdmins, pendingProviders, visitorStats, jobs, promoUsageLog, employees, searchLog,
@@ -1865,51 +1866,48 @@ export class DatabaseStorage implements IStorage {
     const total = records.length;
     let skippedNoMobile = 0;
 
-    let pendingMobiles = new Set<string>();
-    let userPhones = new Set<string>();
-    if (!allowDuplicate) {
-      // Normalize existing DB numbers to last-10-digits — older rows may
-      // have stored "+91 9876543210" while incoming Google results give
-      // "9876543210". Without this normalization the dedupe set would
-      // miss them and we'd insert a duplicate. Same normalization is
-      // used by the customer-facing Google fallback path so both stay
-      // consistent.
-      const normalize = (raw: string | null | undefined) => {
-        const d = (raw || "").replace(/\D/g, "");
-        return d.length >= 10 ? d.slice(-10) : d;
-      };
-      const existingPending = await db.select({ mobile: pendingProviders.mobile }).from(pendingProviders);
-      pendingMobiles = new Set(existingPending.map(r => normalize(r.mobile)).filter(Boolean));
-      const existingUsers = await db.select({ phone: localUsers.phone }).from(localUsers);
-      userPhones = new Set(existingUsers.map(r => normalize(r.phone)).filter(Boolean));
-      // Also exclude numbers already attached to verified providers
-      // (providers.mobileNumbers is a text[] — a provider can register
-      // multiple lines). Without this, background-saved Google leads
-      // would shadow already-onboarded providers.
-      const existingProviders = await db.select({ mobileNumbers: providers.mobileNumbers }).from(providers);
-      for (const row of existingProviders) {
-        const arr = Array.isArray(row.mobileNumbers) ? row.mobileNumbers : [];
-        for (const m of arr) {
-          const n = normalize(m);
-          if (n) userPhones.add(n);
-        }
+    // Normalize incoming Google numbers to last-10-digits up front so we
+    // can do a single targeted DB lookup over only the phones we're
+    // about to insert (instead of streaming every existing phone in
+    // pending_providers / local_users / providers into Node memory just
+    // to throw most of them away). Memory stays flat as the table grows.
+    const normalize = (raw: string | null | undefined) => {
+      const d = (raw || "").replace(/\D/g, "");
+      return d.length >= 10 ? d.slice(-10) : d;
+    };
+
+    type Norm = { rec: typeof records[number]; cleanMob: string };
+    const normalised: Norm[] = [];
+    for (const rec of records) {
+      const cleanMob = normalize(rec.mobile);
+      if (!cleanMob) {
+        skippedNoMobile++;
+        if (allowDuplicate) normalised.push({ rec, cleanMob: "" });
+        continue;
       }
+      normalised.push({ rec, cleanMob });
+    }
+
+    let known = new Set<string>();
+    if (!allowDuplicate) {
+      const candidatePhones = normalised
+        .map(n => n.cleanMob)
+        .filter(p => p.length === 10);
+      // Targeted lookup over only the candidate phones — see
+      // server/phoneDedupe.ts for why this is safe and scalable.
+      known = await findKnownPhones(candidatePhones);
     }
 
     const seen = new Set<string>();
     const toInsert: typeof records = [];
-    for (const rec of records) {
-      const mob = (rec.mobile || "").replace(/\D/g, "");
-      const cleanMob = mob.length >= 10 ? mob.slice(-10) : mob;
+    for (const { rec, cleanMob } of normalised) {
       if (!cleanMob) {
-        skippedNoMobile++;
-        if (!allowDuplicate) continue;
         toInsert.push({ ...rec, mobile: "" });
         continue;
       }
       if (!allowDuplicate) {
         if (seen.has(cleanMob)) continue;
-        if (pendingMobiles.has(cleanMob) || userPhones.has(cleanMob)) continue;
+        if (known.has(cleanMob)) continue;
         seen.add(cleanMob);
       }
       toInsert.push({ ...rec, mobile: cleanMob });
