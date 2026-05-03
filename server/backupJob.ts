@@ -924,7 +924,20 @@ function getGCSClient(): { storage: Storage; bucketName: string } | null {
   const bucketName = process.env.GCS_BUCKET_NAME;
   if (!keyJson || !bucketName) return null;
   try {
+    // When the JSON service-account key is pasted into hosting providers
+    // (Railway, Heroku, Vercel) the private_key field's newlines often get
+    // mangled — either converted to literal "\n" text, double-escaped to
+    // "\\n", or stripped entirely. We normalize it to real newlines before
+    // handing the credentials to the Google SDK, otherwise the JWT signing
+    // step fails with "invalid_grant: Invalid JWT Signature".
     const credentials = JSON.parse(keyJson);
+    if (typeof credentials.private_key === "string") {
+      let pk: string = credentials.private_key;
+      pk = pk.replace(/\\\\n/g, "\n");
+      pk = pk.replace(/\\n/g, "\n");
+      if (!pk.endsWith("\n")) pk += "\n";
+      credentials.private_key = pk;
+    }
     const storage = new Storage({ credentials });
     return { storage, bucketName };
   } catch (err) {
