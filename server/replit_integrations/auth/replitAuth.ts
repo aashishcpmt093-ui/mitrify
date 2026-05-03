@@ -168,6 +168,7 @@ export async function setupAuth(app: Express) {
     if (process.env.RAILWAY_PUBLIC_DOMAIN) {
       allowedHosts.add(process.env.RAILWAY_PUBLIC_DOMAIN.trim());
     }
+    allowedHosts.add("mitrify-production.up.railway.app");
     allowedHosts.add("www.mitrify.com");
     allowedHosts.add("mitrify.com");
 
