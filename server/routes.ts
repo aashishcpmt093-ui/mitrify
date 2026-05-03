@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { storage } from "./storage";
 import { db, pool } from "./db";
-import { profiles, siteContent, jobs, pendingProviders, insertJobSchema, GOOGLE_FORM_URL_REGEX, type SubscriptionPlanConfig } from "@shared/schema";
+import { profiles, siteContent, jobs, pendingProviders, insertJobSchema, GOOGLE_FORM_URL_REGEX, insertGooglePlacesRunSchema, type SubscriptionPlanConfig } from "@shared/schema";
 import { api, buildUrl } from "@shared/routes";
 import { z } from "zod";
 import { eq, desc, count, and, inArray } from "drizzle-orm";
@@ -2441,6 +2441,77 @@ export async function registerRoutes(
       res.json({ ok: true, ...publicResult, approved, approveErrors });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Google Places import failed" });
+    }
+  });
+
+  // ── Google Places bulk-fetch run history (audit / replay) ──
+  // Counts only — no places stored. Used by the admin Google Places card to
+  // show last-10 runs with click-to-replay.
+  app.get("/api/admin/google-places-runs", adminCheck, async (_req, res) => {
+    try {
+      const rows = await storage.listRecentGooglePlacesRuns(10);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to load run history" });
+    }
+  });
+
+  app.post("/api/admin/google-places-runs", adminCheck, async (req, res) => {
+    try {
+      const body = z.object({
+        city: z.string().trim().min(1).max(200),
+        service: z.string().trim().min(1).max(200),
+        target: z.number().int().nonnegative(),
+        uniqueCount: z.number().int().nonnegative(),
+        dupSkipped: z.number().int().nonnegative(),
+        apiCalls: z.number().int().nonnegative(),
+        durationMs: z.number().int().nonnegative(),
+        startedAt: z.union([z.number(), z.string()]),
+        finishedAt: z.union([z.number(), z.string()]),
+        cancelled: z.boolean().optional().default(false),
+        error: z.string().nullable().optional(),
+        // NOTE: `stoppedBy` is intentionally NOT accepted from the client —
+        // it's an audit field derived server-side from the authenticated
+        // admin so the log cannot be spoofed.
+      }).parse(req.body || {});
+
+      const startedAt = new Date(body.startedAt);
+      const finishedAt = new Date(body.finishedAt);
+      if (Number.isNaN(startedAt.getTime()) || Number.isNaN(finishedAt.getTime())) {
+        return res.status(400).json({ message: "Invalid startedAt / finishedAt" });
+      }
+      if (finishedAt.getTime() < startedAt.getTime()) {
+        return res.status(400).json({ message: "finishedAt must be >= startedAt" });
+      }
+
+      // Audit identity: trust the session, never the request body.
+      const adminUser = (req as any)?.session?.localUser?.username
+        || (req as any)?.user?.claims?.sub
+        || "admin";
+
+      const parsed = insertGooglePlacesRunSchema.parse({
+        city: body.city,
+        service: body.service,
+        target: body.target,
+        uniqueCount: body.uniqueCount,
+        dupSkipped: body.dupSkipped,
+        apiCalls: body.apiCalls,
+        durationMs: body.durationMs,
+        startedAt,
+        finishedAt,
+        cancelled: body.cancelled ?? false,
+        error: body.error ?? null,
+        // Server-authoritative: only set when the run was cancelled, and
+        // always to the calling admin's identity.
+        stoppedBy: body.cancelled ? String(adminUser) : null,
+      });
+      const row = await storage.createGooglePlacesRun(parsed);
+      res.json({ ok: true, run: row });
+    } catch (err: any) {
+      if (err?.name === "ZodError") {
+        return res.status(400).json({ message: "Invalid run payload", details: err.errors });
+      }
+      res.status(500).json({ message: err.message || "Failed to record run" });
     }
   });
 

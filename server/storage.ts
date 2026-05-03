@@ -2,9 +2,9 @@ import { db } from "./db";
 import {
   profiles, providers, calls, promoCodes, localUsers, credits, subscriptions, siteContent,
   coAdmins, pendingProviders, visitorStats, jobs, promoUsageLog, employees, searchLog,
-  salaryPayments, creditPayments, appNotifications, tagJobs,
+  salaryPayments, creditPayments, appNotifications, tagJobs, googlePlacesRuns,
   DEFAULT_SUBSCRIPTION_PLAN_CONFIG,
-  type TagJob,
+  type TagJob, type GooglePlacesRun, type InsertGooglePlacesRun,
   type Job,
   type Profile, type InsertProfile,
   type Provider, type InsertProvider,
@@ -187,6 +187,10 @@ export interface IStorage {
    *  mid-run" state when an admin refreshes after a restart. */
   getLatestTagJob(maxAgeSeconds: number): Promise<TagJob | undefined>;
   markStaleTagJobsFailed(staleSeconds: number): Promise<number>;
+
+  // Google Places admin bulk-fetch run audit log (counts only, no places).
+  createGooglePlacesRun(data: InsertGooglePlacesRun): Promise<GooglePlacesRun>;
+  listRecentGooglePlacesRuns(limit: number): Promise<GooglePlacesRun[]>;
 }
 
 function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -2436,6 +2440,17 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(tagJobs.done, false), lt(tagJobs.updatedAt, cutoff)))
       .returning({ jobId: tagJobs.jobId });
     return result.length;
+  }
+
+  async createGooglePlacesRun(data: InsertGooglePlacesRun): Promise<GooglePlacesRun> {
+    const [row] = await db.insert(googlePlacesRuns).values(data).returning();
+    return row;
+  }
+
+  async listRecentGooglePlacesRuns(limit: number): Promise<GooglePlacesRun[]> {
+    return db.select().from(googlePlacesRuns)
+      .orderBy(desc(googlePlacesRuns.startedAt))
+      .limit(limit);
   }
 }
 

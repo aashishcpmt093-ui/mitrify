@@ -497,4 +497,30 @@ export const tagJobs = pgTable("tag_jobs", {
 
 export type TagJob = typeof tagJobs.$inferSelect;
 
+// Audit/replay log of completed Google Places admin bulk-fetch runs.
+// Counts only — full `places` arrays are never persisted (privacy + size).
+// Used by the admin Google Places card to show last-10 history with
+// click-to-replay (copies city + service back into the inputs).
+export const googlePlacesRuns = pgTable("google_places_runs", {
+  id: serial("id").primaryKey(),
+  city: text("city").notNull(),
+  service: text("service").notNull(),
+  target: integer("target").notNull().default(0),
+  uniqueCount: integer("unique_count").notNull().default(0),
+  dupSkipped: integer("dup_skipped").notNull().default(0),
+  apiCalls: integer("api_calls").notNull().default(0),
+  durationMs: integer("duration_ms").notNull().default(0),
+  startedAt: timestamp("started_at").notNull(),
+  finishedAt: timestamp("finished_at").notNull(),
+  cancelled: boolean("cancelled").notNull().default(false),
+  error: text("error"),
+  stoppedBy: text("stopped_by"),
+}, (t) => ({
+  startedAtIdx: index("gp_runs_started_at_idx").on(t.startedAt),
+}));
+
+export type GooglePlacesRun = typeof googlePlacesRuns.$inferSelect;
+export const insertGooglePlacesRunSchema = createInsertSchema(googlePlacesRuns).omit({ id: true });
+export type InsertGooglePlacesRun = z.infer<typeof insertGooglePlacesRunSchema>;
+
 export const NO_ALERT_NEEDED_MESSAGE = "No alert needed (backup succeeded)";

@@ -1088,6 +1088,18 @@ export default function AdminDashboardPage() {
   });
   const { data: promoCodesData } = useQuery<PromoCode[]>({ queryKey: ["/api/admin/promo-codes"], enabled: !!isAdmin });
 
+  // Last-10 completed Google Places bulk-fetch runs (audit + replay).
+  // Server records counts only — no places — so this is safe to keep loaded.
+  const { data: gpRuns } = useQuery<Array<{
+    id: number; city: string; service: string; target: number;
+    uniqueCount: number; dupSkipped: number; apiCalls: number;
+    durationMs: number; startedAt: string; finishedAt: string;
+    cancelled: boolean; error: string | null; stoppedBy: string | null;
+  }>>({
+    queryKey: ["/api/admin/google-places-runs"],
+    enabled: !!isAdmin,
+  });
+
   const { data: aboutContent } = useQuery({
     queryKey: ["/api/content", "about"],
     queryFn: async () => { const res = await fetch("/api/content/about"); if (!res.ok) return null; return res.json(); },
@@ -1593,6 +1605,25 @@ export default function AdminDashboardPage() {
     const finishedAt = Date.now();
     setGpProgress({ target, fetched, unique, duplicates, apiCalls, done: true, cancelled, error: errorMsg, startedAt, finishedAt });
     setGpSearching(false);
+
+    // Persist completed run for audit/replay (counts only — no places).
+    // Fire-and-forget; UI must not block on this. We invalidate the history
+    // query on success so the panel reflects the new row immediately.
+    apiRequest("POST", "/api/admin/google-places-runs", {
+      city: gpCity.trim(),
+      service: gpService.trim(),
+      target,
+      uniqueCount: unique,
+      dupSkipped: duplicates,
+      apiCalls,
+      durationMs: finishedAt - startedAt,
+      startedAt,
+      finishedAt,
+      cancelled,
+      error: errorMsg ?? null,
+    }).then(() => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/google-places-runs"] });
+    }).catch(() => { /* non-fatal — history is best-effort */ });
     // Save the continuation token (if Google still has more pages) so the
     // admin can press "Add 20 More" later without re-running the whole fetch.
     setGpNextPageToken(pageToken || null);
@@ -3411,6 +3442,51 @@ export default function AdminDashboardPage() {
                       ⚠ Partial results import ho sakte hain — neeche se select karke "Import" press karein
                     </p>
                   )}
+                </div>
+              )}
+
+              {/* ── Run history (last 10) — click to copy city + service back
+                  into the inputs for instant replay. Counts-only, no places. */}
+              {gpRuns && gpRuns.length > 0 && (
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 p-3 space-y-2" data-testid="panel-gp-history">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">📜 Last {gpRuns.length} runs (click to re-fill)</p>
+                    <span className="text-[10px] text-muted-foreground">Audit log — counts only</span>
+                  </div>
+                  <div className="max-h-56 overflow-y-auto divide-y divide-slate-200 dark:divide-slate-800 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950">
+                    {gpRuns.map(r => {
+                      const dt = new Date(r.startedAt);
+                      const when = dt.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+                      const status = r.error ? "❌" : r.cancelled ? "🛑" : "✓";
+                      return (
+                        <button
+                          type="button"
+                          key={r.id}
+                          onClick={() => {
+                            setGpCity(r.city);
+                            setGpService(r.service);
+                            toast({ title: `Filled: ${r.city} • ${r.service}`, description: "Search dabakar dobara run karein" });
+                          }}
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors flex items-start justify-between gap-2"
+                          data-testid={`button-gp-run-${r.id}`}
+                          title={r.error || (r.cancelled ? `Stopped${r.stoppedBy ? ` by ${r.stoppedBy}` : ""}` : "Completed")}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="font-medium text-slate-900 dark:text-white truncate">
+                              <span className="mr-1">{status}</span>{r.city} • {r.service}
+                            </p>
+                            <p className="text-[10px] text-muted-foreground mt-0.5 font-mono">
+                              {when} • {r.uniqueCount}/{r.target} unique • {r.dupSkipped} dup • {r.apiCalls} API • {Math.round(r.durationMs / 1000)}s
+                              {r.cancelled && r.stoppedBy ? ` • by ${r.stoppedBy}` : ""}
+                            </p>
+                            {r.error && (
+                              <p className="text-[10px] text-red-600 dark:text-red-400 mt-0.5 truncate">⚠ {r.error}</p>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 

@@ -15,6 +15,13 @@
       "when": 1777752521193,
       "tag": "0001_concerned_gateway",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1778198400000,
+      "tag": "0007_google_places_runs",
+      "breakpoints": true
     }
   ]
 }
