@@ -7,7 +7,7 @@ import { db, pool } from "./db";
 import { profiles, siteContent, jobs, pendingProviders, insertJobSchema, GOOGLE_FORM_URL_REGEX, insertGooglePlacesRunSchema, type SubscriptionPlanConfig } from "@shared/schema";
 import { api, buildUrl } from "@shared/routes";
 import { z } from "zod";
-import { eq, desc, count, and, inArray } from "drizzle-orm";
+import { eq, desc, count, and, inArray, gte } from "drizzle-orm";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
@@ -2074,6 +2074,41 @@ export async function registerRoutes(
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: "Failed to fetch pending providers" });
+    }
+  });
+
+  // Counter: how many leads were auto-saved by the customer-facing
+  // Google fallback path (Task #74). Differentiator is `addedBy` =
+  // "system_google_fallback" — the source column is set to "google"
+  // both for this path and the admin's manual Google Places import,
+  // so addedBy is the only reliable filter.
+  app.get("/api/admin/google-fallback-stats", verifierCheck, async (_req, res) => {
+    try {
+      const SYSTEM_USER = "system_google_fallback";
+      const now = new Date();
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const startOfWeek = new Date(startOfDay);
+      startOfWeek.setDate(startOfWeek.getDate() - 6); // last 7 days incl. today
+
+      const [todayRow, weekRow, totalRow, pendingRow] = await Promise.all([
+        db.select({ c: count() }).from(pendingProviders)
+          .where(and(eq(pendingProviders.addedBy, SYSTEM_USER), gte(pendingProviders.createdAt, startOfDay))),
+        db.select({ c: count() }).from(pendingProviders)
+          .where(and(eq(pendingProviders.addedBy, SYSTEM_USER), gte(pendingProviders.createdAt, startOfWeek))),
+        db.select({ c: count() }).from(pendingProviders)
+          .where(eq(pendingProviders.addedBy, SYSTEM_USER)),
+        db.select({ c: count() }).from(pendingProviders)
+          .where(and(eq(pendingProviders.addedBy, SYSTEM_USER), eq(pendingProviders.status, "pending"))),
+      ]);
+      res.json({
+        today: Number(todayRow[0]?.c ?? 0),
+        week: Number(weekRow[0]?.c ?? 0),
+        total: Number(totalRow[0]?.c ?? 0),
+        pending: Number(pendingRow[0]?.c ?? 0),
+        systemUser: SYSTEM_USER,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: "Failed to fetch google-fallback stats" });
     }
   });
 

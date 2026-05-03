@@ -124,6 +124,42 @@ export default function VerifyDashboard() {
     queryFn: () => fetch("/api/admin/group-stats", { credentials: "include" }).then(r => r.ok ? r.json() : []),
   });
 
+  // Task #74: counter for auto-saved Google fallback leads. The
+  // customer search bar silently saves Google Places hits into
+  // pending_providers under addedBy="system_google_fallback" — this
+  // gives admins a one-glance view of "how many leads came in this
+  // way today / this week" so they can decide whether to focus on
+  // verifying them.
+  type GFallbackStats = { today: number; week: number; total: number; pending: number; systemUser: string };
+  const { data: gFallback } = useQuery<GFallbackStats | null>({
+    queryKey: ["/api/admin/google-fallback-stats"],
+    staleTime: 30_000,
+    queryFn: async () => {
+      const r = await fetch("/api/admin/google-fallback-stats", { credentials: "include" });
+      if (!r.ok) return null;
+      return (await r.json()) as GFallbackStats;
+    },
+  });
+  const GOOGLE_FALLBACK_USER = gFallback?.systemUser || "system_google_fallback";
+  const isGoogleFallbackFilterOn =
+    selectedCoAdmins.length === 1 && selectedCoAdmins[0] === GOOGLE_FALLBACK_USER;
+  const toggleGoogleFallbackOnly = () => {
+    if (isGoogleFallbackFilterOn) {
+      setSelectedCoAdmins([]);
+      localStorage.removeItem("verify_coAdmins");
+    } else {
+      setSelectedCoAdmins([GOOGLE_FALLBACK_USER]);
+      localStorage.setItem("verify_coAdmins", JSON.stringify([GOOGLE_FALLBACK_USER]));
+    }
+    setPage(1);
+  };
+  const labelForCoAdmin = (name: string) =>
+    name === "bulk-import"
+      ? "📋 Bulk Import"
+      : name === GOOGLE_FALLBACK_USER
+        ? "🌐 Google Auto-Lead"
+        : name;
+
   // Helper: toggle item in array and persist
   const toggleCoAdmin = (name: string) => {
     setSelectedCoAdmins(prev => {
@@ -279,6 +315,52 @@ export default function VerifyDashboard() {
           />
         </div>
 
+        {/* Task #74: Google fallback counter card — quick filter + at-a-glance counts */}
+        {gFallback && gFallback.total > 0 && (
+          <button
+            type="button"
+            onClick={toggleGoogleFallbackOnly}
+            data-testid="card-google-fallback-stats"
+            className={`w-full text-left rounded-xl border px-3 py-2.5 transition-all active:scale-[0.99] ${
+              isGoogleFallbackFilterOn
+                ? "bg-blue-600 text-white border-blue-700 shadow"
+                : "bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800/60 hover:border-blue-400"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className={`text-xs font-semibold flex items-center gap-1 ${isGoogleFallbackFilterOn ? "text-white" : "text-blue-700 dark:text-blue-300"}`}>
+                  🌐 Google Auto-Leads
+                  {isGoogleFallbackFilterOn && <span className="text-[10px] font-normal opacity-80">(filter active — tap to clear)</span>}
+                </p>
+                <p className={`text-[11px] mt-0.5 ${isGoogleFallbackFilterOn ? "text-white/80" : "text-blue-600/80 dark:text-blue-400/80"}`}>
+                  Customer search se auto-saved leads — verify karke live karein
+                </p>
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="text-center">
+                  <p className={`text-lg font-extrabold leading-none ${isGoogleFallbackFilterOn ? "text-white" : "text-blue-700 dark:text-blue-300"}`} data-testid="text-gfallback-today">
+                    {gFallback.today.toLocaleString("en-IN")}
+                  </p>
+                  <p className={`text-[10px] mt-0.5 ${isGoogleFallbackFilterOn ? "text-white/80" : "text-blue-600/70 dark:text-blue-400/70"}`}>Today</p>
+                </div>
+                <div className="text-center">
+                  <p className={`text-lg font-extrabold leading-none ${isGoogleFallbackFilterOn ? "text-white" : "text-blue-700 dark:text-blue-300"}`} data-testid="text-gfallback-week">
+                    {gFallback.week.toLocaleString("en-IN")}
+                  </p>
+                  <p className={`text-[10px] mt-0.5 ${isGoogleFallbackFilterOn ? "text-white/80" : "text-blue-600/70 dark:text-blue-400/70"}`}>7 days</p>
+                </div>
+                <div className="text-center">
+                  <p className={`text-lg font-extrabold leading-none ${isGoogleFallbackFilterOn ? "text-white" : "text-blue-700 dark:text-blue-300"}`} data-testid="text-gfallback-pending">
+                    {gFallback.pending.toLocaleString("en-IN")}
+                  </p>
+                  <p className={`text-[10px] mt-0.5 ${isGoogleFallbackFilterOn ? "text-white/80" : "text-blue-600/70 dark:text-blue-400/70"}`}>Pending</p>
+                </div>
+              </div>
+            </div>
+          </button>
+        )}
+
         {/* Filter tabs */}
         <div className="flex gap-2 overflow-x-auto pb-1">
           {(["pending", "approved", "rejected", "all"] as const).map(f => (
@@ -354,7 +436,7 @@ export default function VerifyDashboard() {
                         }`}>
                           {checked && <span className="text-[8px] font-bold">✓</span>}
                         </span>
-                        {ca === "bulk-import" ? "📋 Bulk Import" : ca}
+                        {labelForCoAdmin(ca)}
                       </button>
                     );
                   })}
@@ -421,7 +503,7 @@ export default function VerifyDashboard() {
                 key={ca}
                 className="inline-flex items-center gap-1 bg-primary/10 text-primary border border-primary/20 rounded-full px-2.5 py-0.5 text-xs font-medium"
               >
-                {ca === "bulk-import" ? "Bulk Import" : ca}
+                {labelForCoAdmin(ca)}
                 <button onClick={() => toggleCoAdmin(ca)} className="ml-0.5 opacity-70 hover:opacity-100" data-testid={`chip-remove-coadmin-${ca}`}>
                   <X className="w-2.5 h-2.5" />
                 </button>
