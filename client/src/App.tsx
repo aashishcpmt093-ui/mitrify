@@ -45,21 +45,34 @@ import InvestmentPage from "@/pages/investment";
 import NotFound from "@/pages/not-found";
 import VisitorCounter from "@/components/VisitorCounter";
 
-// Auto-skip wrapper for "/" — for guests silently enters guest mode and redirects to customer home.
-// For authenticated users, routes to their role dashboard without clearing session.
+// Root "/" handler.
+// First visit in a session → silently enters guest mode and redirects to /customer/home
+//   (so users start browsing immediately, no welcome flash).
+// Subsequent visits to "/" (e.g., browser Back from /customer/home) → redirect to /welcome
+//   so the user sees the proper Welcome screen (Login / Sign Up / Skip).
+// Authenticated users → routed to their role dashboard, session never cleared.
+const ROOT_VISITED_FLAG = "mitrify_root_autoskipped";
 function AutoSkipToHome() {
   const [, setLocation] = useLocation();
   const { user, isLoading, isAuthenticated } = useAuth();
   useEffect(() => {
     if (isLoading) return;
     if (isAuthenticated && user) {
-      const role = (user as any).role || (user as any).authType;
+      const role = (user as { role?: string; authType?: string }).role
+        ?? (user as { role?: string; authType?: string }).authType;
       if (role === "admin") setLocation("/admin/dashboard");
       else if (role === "coadmin") setLocation("/coadmin/dashboard");
       else setLocation("/customer/home");
       return;
     }
+    let alreadySkipped = false;
+    try { alreadySkipped = sessionStorage.getItem(ROOT_VISITED_FLAG) === "1"; } catch {}
+    if (alreadySkipped) {
+      setLocation("/welcome");
+      return;
+    }
     (async () => {
+      try { sessionStorage.setItem(ROOT_VISITED_FLAG, "1"); } catch {}
       try {
         localStorage.removeItem("mitrify_auth_v1");
         queryClient.setQueryData(["/api/auth/user"], null);
