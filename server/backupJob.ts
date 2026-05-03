@@ -148,7 +148,7 @@ export function makeBackupFilename(now: Date = new Date()): string {
 export async function streamBackupSql(
   write: (s: string) => void,
   opts: { filename?: string } = {},
-): Promise<void> {
+): Promise<{ totalRows: number; tableCount: number }> {
   const now = new Date();
   const filename = opts.filename ?? makeBackupFilename(now);
 
@@ -166,6 +166,8 @@ export async function streamBackupSql(
   const tableNames: string[] = tablesRes.rows.map((r: any) => r.table_name);
 
   const BATCH = 500;
+  let totalRows = 0;
+  let tableCount = 0;
 
   for (const table of tableNames) {
     const colsRes = await pool.query(
@@ -197,6 +199,8 @@ export async function streamBackupSql(
       `SELECT COUNT(*)::int AS c FROM ${quoteIdent(table)}`,
     );
     const total: number = countRes.rows[0]?.c ?? 0;
+    totalRows += total;
+    tableCount += 1;
 
     write(`-- ─────────────────────────────────────────\n`);
     write(`-- Table: ${table}  |  rows in dump: ${total}\n`);
@@ -271,6 +275,7 @@ export async function streamBackupSql(
 
   write(`COMMIT;\n`);
   write(`-- End of backup\n`);
+  return { totalRows, tableCount };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -661,6 +666,11 @@ export interface BackupHistoryEntry {
   durationMs: number;
   alertSent: boolean;
   alertError?: string;
+  /** Total rows captured across all tables in the dump. Optional for
+   *  back-compat with history entries written before this field existed. */
+  totalRows?: number;
+  /** Number of tables included in the dump. Optional for back-compat. */
+  tableCount?: number;
 }
 
 export interface BackupStatus {
@@ -926,8 +936,9 @@ export async function runDailyBackup(): Promise<BackupHistoryEntry> {
       return new Promise<void>((resolve) => stream.once("drain", () => resolve()));
     }
   };
+  let totals: { totalRows: number; tableCount: number } = { totalRows: 0, tableCount: 0 };
   try {
-    await streamBackupSql((s) => { writeP(s); }, { filename });
+    totals = await streamBackupSql((s) => { writeP(s); }, { filename });
     await new Promise<void>((resolve, reject) => {
       stream.end((err?: Error | null) => err ? reject(err) : resolve());
     });
@@ -1027,6 +1038,8 @@ export async function runDailyBackup(): Promise<BackupHistoryEntry> {
     durationMs: Date.now() - startedAt,
     alertSent,
     alertError,
+    totalRows: totals.totalRows,
+    tableCount: totals.tableCount,
   };
 
   const status = await readStatus();
@@ -1036,7 +1049,7 @@ export async function runDailyBackup(): Promise<BackupHistoryEntry> {
   if (emailed) status.lastError = null;
   await writeStatus(status);
 
-  console.log(`[backup] complete in ${entry.durationMs}ms (${size} bytes, emailed=${emailed})`);
+  console.log(`[backup] complete in ${entry.durationMs}ms (${size} bytes, ${totals.totalRows} rows across ${totals.tableCount} tables, emailed=${emailed})`);
   return entry;
 }
 

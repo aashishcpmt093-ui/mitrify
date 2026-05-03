@@ -59,7 +59,13 @@ interface BackupStatusResponse {
   lastSuccessAt: string | null;
   lastSuccess: { filename: string; size: number; emailed: boolean; emailError?: string; gcsUploaded?: boolean; gcsName?: string; alertSent: boolean; alertError?: string } | null;
   lastError: { at: string; message: string } | null;
-  history: Array<{ filename: string; size: number; generatedAt: string; emailed: boolean; emailError?: string; durationMs: number; gcsUploaded?: boolean; alertSent: boolean; alertError?: string }>;
+  history: Array<{ filename: string; size: number; generatedAt: string; emailed: boolean; emailError?: string; durationMs: number; gcsUploaded?: boolean; alertSent: boolean; alertError?: string; totalRows?: number; tableCount?: number }>;
+}
+
+function formatRows(n: number) {
+  if (n < 1000) return `${n}`;
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
 function formatBytes(n: number) {
@@ -5007,6 +5013,7 @@ export default function AdminDashboardPage() {
                     <tr>
                       <th className="text-left px-2 py-1.5 font-semibold">File</th>
                       <th className="text-right px-2 py-1.5 font-semibold">Size</th>
+                      <th className="text-right px-2 py-1.5 font-semibold">Rows</th>
                       <th className="text-center px-2 py-1.5 font-semibold">Email</th>
                       <th className="text-center px-2 py-1.5 font-semibold">Alert</th>
                     </tr>
@@ -5021,6 +5028,19 @@ export default function AdminDashboardPage() {
                           <span className="text-muted-foreground">{formatRelative(entry.generatedAt)}</span>
                         </td>
                         <td className="px-2 py-1.5 text-right text-muted-foreground">{formatBytes(entry.size)}</td>
+                        <td
+                          className="px-2 py-1.5 text-right text-muted-foreground tabular-nums"
+                          data-testid={`text-rows-${idx}`}
+                          title={
+                            typeof entry.totalRows === "number"
+                              ? `${entry.totalRows.toLocaleString()} rows${
+                                  entry.tableCount ? ` across ${entry.tableCount} tables` : ""
+                                }`
+                              : "Row count not recorded for this backup"
+                          }
+                        >
+                          {typeof entry.totalRows === "number" ? formatRows(entry.totalRows) : "—"}
+                        </td>
                         <td className="px-2 py-1.5 text-center" data-testid={`status-email-${idx}`}>
                           {entry.emailed ? (
                             <span className="inline-flex items-center gap-0.5 text-emerald-700 dark:text-emerald-400 font-semibold" title="Email sent">
