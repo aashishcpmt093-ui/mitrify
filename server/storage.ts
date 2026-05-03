@@ -1868,10 +1868,20 @@ export class DatabaseStorage implements IStorage {
     let pendingMobiles = new Set<string>();
     let userPhones = new Set<string>();
     if (!allowDuplicate) {
+      // Normalize existing DB numbers to last-10-digits — older rows may
+      // have stored "+91 9876543210" while incoming Google results give
+      // "9876543210". Without this normalization the dedupe set would
+      // miss them and we'd insert a duplicate. Same normalization is
+      // used by the customer-facing Google fallback path so both stay
+      // consistent.
+      const normalize = (raw: string | null | undefined) => {
+        const d = (raw || "").replace(/\D/g, "");
+        return d.length >= 10 ? d.slice(-10) : d;
+      };
       const existingPending = await db.select({ mobile: pendingProviders.mobile }).from(pendingProviders);
-      pendingMobiles = new Set(existingPending.map(r => r.mobile).filter(Boolean) as string[]);
+      pendingMobiles = new Set(existingPending.map(r => normalize(r.mobile)).filter(Boolean));
       const existingUsers = await db.select({ phone: localUsers.phone }).from(localUsers);
-      userPhones = new Set(existingUsers.map(r => r.phone).filter(Boolean) as string[]);
+      userPhones = new Set(existingUsers.map(r => normalize(r.phone)).filter(Boolean));
     }
 
     const seen = new Set<string>();

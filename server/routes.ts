@@ -17,6 +17,7 @@ import multer from "multer";
 import * as XLSX from "xlsx";
 import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory, recordBackupHistory } from "./backupJob";
 import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverStaleJobs } from "./lib/auto-tags";
+import { searchGoogleFallback } from "./googleFallbackSearch";
 // Per-admin daily quota for Google Places admin search. In-memory map of
 // `{ adminKey -> [timestampMs] }`. Resets on process restart (acceptable —
 // the safety cap is to prevent accidental cost spikes from rapid clicks).
@@ -606,6 +607,26 @@ export async function registerRoutes(
       res.json({ results });
     } catch (error) {
       res.status(500).json({ message: "Search failed" });
+    }
+  });
+
+  // Customer-facing Google Places fallback — runs alongside the verified
+  // search and surfaces nearby businesses we don't yet have in our DB.
+  // Open to all (including guests). See server/googleFallbackSearch.ts
+  // for caching, dedupe, and background-save behaviour.
+  app.get("/api/providers/search-google", async (req: any, res) => {
+    try {
+      const { query, lat, lng } = req.query;
+      const results = await searchGoogleFallback({
+        query: String(query || ""),
+        lat: lat ? parseFloat(lat as string) : undefined,
+        lng: lng ? parseFloat(lng as string) : undefined,
+      });
+      res.json({ results });
+    } catch {
+      // Never let a fallback failure surface — customer's own-results
+      // pane is the source of truth, this is purely additive.
+      res.json({ results: [] });
     }
   });
 

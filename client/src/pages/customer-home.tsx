@@ -47,6 +47,18 @@ const SERVICE_CATEGORIES = [
 
 type LocationMode = "current" | "custom";
 
+type GoogleFallbackResult = {
+  placeId: string;
+  name: string;
+  address: string;
+  phone: string;
+  latitude: number;
+  longitude: number;
+  rating: number | null;
+  ratingCount: number | null;
+  distanceKm: number | null;
+};
+
 function JobList({ jobList, jobListLoading, jobFilterText, jobFilterState, onSelect }: {
   jobList: any[] | undefined;
   jobListLoading: boolean;
@@ -309,6 +321,30 @@ export default function CustomerHomePage() {
 
   const results = searchData?.results || [];
   const suggestion = searchData?.suggestion;
+
+  // ── Google fallback (Task #72) ──────────────────────────────────
+  // Runs in parallel with our own search and surfaces nearby
+  // businesses we don't have yet. Disabled for pure-numeric queries
+  // (those use the dedicated phone-lookup endpoint).
+  const isPureNumericQuery = (() => {
+    const d = searchQuery.trim().replace(/\D/g, "");
+    return d.length >= 6 && d === searchQuery.trim().replace(/[\s\-\+]/g, "");
+  })();
+  const { data: googleData, isLoading: googleLoading } = useQuery<{ results: GoogleFallbackResult[] }>({
+    queryKey: ["/api/providers/search-google", searchQuery, activeLat, activeLng],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (searchQuery) params.set("query", searchQuery);
+      if (activeLat) params.set("lat", String(activeLat));
+      if (activeLng) params.set("lng", String(activeLng));
+      const res = await fetch(`/api/providers/search-google?${params}`);
+      if (!res.ok) return { results: [] };
+      return res.json();
+    },
+    enabled: searching && searchQuery.trim().length > 0 && !isPureNumericQuery,
+    staleTime: 60_000,
+  });
+  const googleResults: GoogleFallbackResult[] = googleData?.results || [];
 
   const [isDialing, setIsDialing] = useState(false);
 
@@ -1614,7 +1650,7 @@ export default function CustomerHomePage() {
           </div>
         )}
 
-        {searching && !isLoading && results && results.length === 0 && !suggestion && (
+        {searching && !isLoading && results && results.length === 0 && !suggestion && googleResults.length === 0 && !googleLoading && (
           <div className="text-center py-12 text-muted-foreground">
             <Search className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p>No service providers found</p>
@@ -1724,6 +1760,7 @@ export default function CustomerHomePage() {
           ))}
 
           {/* Service search results */}
+          {/* Verified providers (own DB) */}
           {results?.map((result, i) => (
             <Card key={result.provider.id} className="overflow-hidden hover:shadow-lg transition-shadow duration-200 animate-slide-up" style={{ animationDelay: `${i * 80}ms` }} data-testid={`card-provider-${result.provider.id}`}>
               <CardContent className="p-4">
@@ -1808,6 +1845,94 @@ export default function CustomerHomePage() {
               </CardContent>
             </Card>
           ))}
+
+          {/* ── Google fallback section (Task #72) ──────────────────
+              Hamesha apne results ke neeche dikhao. Sirf woh Google
+              businesses jinme phone + location dono hain. Direct call
+              link — koi credit nahi katega, koi masking nahi. */}
+          {searching && !isPureNumericQuery && googleLoading && googleResults.length === 0 && (
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center gap-3 py-2" data-testid="separator-google-loading">
+                <div className="flex-1 h-px bg-border" />
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70">from Google</span>
+                <div className="flex-1 h-px bg-border" />
+              </div>
+              {[0, 1, 2].map((i) => (
+                <Card key={`google-skel-${i}`} className="overflow-hidden border-dashed border-muted-foreground/20">
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-3 animate-pulse">
+                      <div className="w-12 h-12 rounded-full bg-muted shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <div className="h-3 w-1/2 bg-muted rounded" />
+                        <div className="h-2 w-2/3 bg-muted rounded" />
+                        <div className="h-2 w-1/3 bg-muted rounded" />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+          {searching && !isPureNumericQuery && googleResults.length > 0 && (
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center gap-3 py-2" data-testid="separator-google">
+                <div className="flex-1 h-px bg-border" />
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70">—— from Google ——</span>
+                <div className="flex-1 h-px bg-border" />
+              </div>
+              {googleResults.map((g, i) => (
+                <Card
+                  key={`google-${g.placeId || g.phone}-${i}`}
+                  className="overflow-hidden border-dashed border-muted-foreground/30 bg-muted/20 animate-slide-up"
+                  style={{ animationDelay: `${i * 60}ms` }}
+                  data-testid={`card-google-${g.placeId || i}`}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex gap-3 flex-1 min-w-0">
+                        <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center shrink-0 border border-border">
+                          <MapPinned className="w-5 h-5 text-muted-foreground" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <h3 className="font-semibold truncate" data-testid={`text-google-name-${i}`}>{g.name}</h3>
+                            <Badge variant="outline" className="text-[9px] px-1.5 py-0 leading-tight text-muted-foreground border-muted-foreground/30" data-testid={`badge-google-unverified-${i}`}>
+                              Unverified
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground flex-wrap">
+                            {g.distanceKm != null && (
+                              <span className="flex items-center gap-1">
+                                <MapPin className="w-3 h-3" />~{g.distanceKm.toFixed(1)} km {t("away")}
+                              </span>
+                            )}
+                            {g.rating != null && (
+                              <span className="flex items-center gap-0.5">
+                                <Sparkles className="w-3 h-3 text-amber-500" />
+                                {g.rating.toFixed(1)}
+                                {g.ratingCount != null && <span className="text-muted-foreground/60"> ({g.ratingCount})</span>}
+                              </span>
+                            )}
+                          </div>
+                          {g.address && (
+                            <p className="text-xs text-muted-foreground/80 mt-0.5 line-clamp-2">{g.address}</p>
+                          )}
+                        </div>
+                      </div>
+                      <a
+                        href={`tel:${g.phone}`}
+                        className="shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-xl bg-blue-500 hover:bg-blue-600 text-white shadow-md transition-colors"
+                        data-testid={`button-call-google-${g.placeId || i}`}
+                        aria-label={`Call ${g.name}`}
+                      >
+                        <Phone className="w-5 h-5" />
+                      </a>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </div>
       </main>
 
