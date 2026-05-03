@@ -17,7 +17,7 @@ import {
   LogOut, Zap, Loader2, ChevronRight, Tag, ArrowLeftRight, Wrench,
   Droplets, Plug, Paintbrush, Car, Home, Scissors, Hammer, Laptop,
   UtensilsCrossed, Shirt, Clock, Navigation, MapPinned, Check, Settings, GraduationCap,
-  Info, ScrollText, Briefcase, Plus, AlertCircle, Trash2, LogIn, UserX, Bell, User, Mail, Sparkles
+  Info, ScrollText, Briefcase, Plus, AlertCircle, Trash2, LogIn, UserX, Bell, User, Mail, Sparkles, Lock
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { usePwaInstall } from "@/hooks/use-pwa-install";
@@ -1373,6 +1373,9 @@ export default function CustomerHomePage() {
               </Button>
               <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); if (!isAuthenticated) { setShowLoginPrompt(true); return; } setLocation("/subscriptions"); }} data-testid="button-subscriptions-menu">
                 <Sparkles className="w-4 h-4 text-amber-500" /> {t("subscriptions")}
+              </Button>
+              <Button variant="ghost" className="w-full justify-start gap-3" onClick={() => { setMenuOpen(false); window.open("https://mitrify.xyz", "_blank", "noopener,noreferrer"); }} data-testid="button-secret-chat">
+                <Lock className="w-4 h-4 text-emerald-500" /> Secret Chat
               </Button>
               <Button variant="ghost" className="w-full justify-start gap-3" onClick={toggleTheme} data-testid="button-theme-toggle">
                 {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
