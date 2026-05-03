@@ -161,6 +161,13 @@ export async function setupAuth(app: Express) {
     if (process.env.REPLIT_DOMAINS) {
       process.env.REPLIT_DOMAINS.split(",").forEach((d) => allowedHosts.add(d.trim()));
     }
+    // Railway auto-injects RAILWAY_PUBLIC_DOMAIN — register it so the
+    // production app on Railway uses its own callback URL instead of
+    // falling back to www.mitrify.com (which causes redirect_uri_mismatch
+    // until DNS is switched over).
+    if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+      allowedHosts.add(process.env.RAILWAY_PUBLIC_DOMAIN.trim());
+    }
     allowedHosts.add("www.mitrify.com");
     allowedHosts.add("mitrify.com");
 
