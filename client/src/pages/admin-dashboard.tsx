@@ -74,6 +74,10 @@ function formatBytes(n: number) {
   return `${(n / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+// localStorage key for remembering the admin's last-selected stored backup
+// filename across Backup-tab re-opens. Survives full page reloads.
+const LAST_STORED_BACKUP_KEY = "mitrify.admin.lastStoredBackup";
+
 function formatRelative(iso: string) {
   const then = new Date(iso).getTime();
   const diffMs = Date.now() - then;
@@ -977,6 +981,11 @@ export default function AdminDashboardPage() {
 
   async function handleStoredFileSelect(filename: string) {
     setSelectedStoredFilename(filename);
+    // Persist last selection so re-opening the Backup tab can restore it.
+    // Best-effort — quota/private-mode failures must not break selection.
+    try {
+      if (filename) localStorage.setItem(LAST_STORED_BACKUP_KEY, filename);
+    } catch {}
     setRestoreConfirmed(false);
     setRestoreSummary(null);
     setDryRunResult(null);
@@ -1103,11 +1112,44 @@ export default function AdminDashboardPage() {
 
   useEffect(() => { if (isAdmin === false) setLocation("/admin/login"); }, [isAdmin]);
 
+  // One-shot ref: ensures the last-selected stored backup is auto-restored
+  // exactly once per Backup-tab visit, not on every render. Resets when the
+  // admin leaves the Backup tab so the next visit can restore again.
+  const restoredLastSelectionRef = useRef(false);
+  useEffect(() => {
+    if (activeTab !== "backup") {
+      restoredLastSelectionRef.current = false;
+    }
+  }, [activeTab]);
+
   const { data: backupStatus } = useQuery<BackupStatusResponse>({
     queryKey: ["/api/admin/backup/status"],
     refetchInterval: 5 * 60 * 1000,
     enabled: !!isAdmin,
   });
+
+  // Auto-restore the admin's last-selected stored backup whenever the Backup
+  // tab opens (or on first load if it's already the active tab). Saves the
+  // admin from re-clicking after switching tabs or refreshing.
+  // Guards: only fires once per tab visit, only if no current selection,
+  // and only if the saved file still exists in the latest history.
+  useEffect(() => {
+    if (activeTab !== "backup") return;
+    if (restoredLastSelectionRef.current) return;
+    if (!backupStatus?.history?.length) return;
+    if (selectedStoredFilename || restoreFile || selectedGcsName) return;
+    let saved: string | null = null;
+    try { saved = localStorage.getItem(LAST_STORED_BACKUP_KEY); } catch {}
+    if (!saved) return;
+    if (!backupStatus.history.some((e) => e.filename === saved)) {
+      // Stale entry (e.g. file was rotated out) — purge so we don't keep retrying.
+      try { localStorage.removeItem(LAST_STORED_BACKUP_KEY); } catch {}
+      return;
+    }
+    restoredLastSelectionRef.current = true;
+    setRestoreMode("stored");
+    void handleStoredFileSelect(saved);
+  }, [activeTab, backupStatus, selectedStoredFilename, restoreFile, selectedGcsName]);
 
   const { data: stats } = useQuery<AdminStats>({ queryKey: ["/api/admin/stats"], enabled: !!isAdmin });
   const { data: providersList } = useQuery<any[]>({ queryKey: ["/api/admin/providers"], enabled: !!isAdmin });
