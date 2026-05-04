@@ -777,7 +777,7 @@ export default function CustomerHomePage() {
   };
 
   return (
-    <div className="min-h-screen bg-background" ref={contentRef} onScroll={handleScroll}>
+    <div className="min-h-screen bg-background relative isolate" ref={contentRef} onScroll={handleScroll}>
       <WelcomePopup />
       <div className="sticky top-0 z-50 border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
@@ -793,8 +793,8 @@ export default function CustomerHomePage() {
         </div>
       </div>
       {phoneSheet.open && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center" data-testid="phone-sheet">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setPhoneSheet({ open: false, providerId: "", providerName: "", numbers: [] })} />
+        <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="phone-sheet">
+          <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => setPhoneSheet({ open: false, providerId: "", providerName: "", numbers: [] })} />
           <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-6 animate-in slide-in-from-bottom duration-300">
             <div className="flex justify-center pt-3 pb-1">
               <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
@@ -839,8 +839,8 @@ export default function CustomerHomePage() {
 
       {/* ── JOB MENU ─────────────────────────────── */}
       {jobMenuOpen && !showPostJob && !showFindJob && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center" data-testid="job-menu">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setJobMenuOpen(false)} />
+        <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="job-menu">
+          <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => setJobMenuOpen(false)} />
           <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 animate-in slide-in-from-bottom duration-300">
             <div className="flex justify-center pt-3 pb-2">
               <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
@@ -899,8 +899,8 @@ export default function CustomerHomePage() {
 
       {/* ── POST JOB FORM ────────────────────────── */}
       {jobMenuOpen && showPostJob && postJobMethod === "choice" && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center" data-testid="post-job-choice-modal">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setShowPostJob(false)} />
+        <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="post-job-choice-modal">
+          <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => setShowPostJob(false)} />
           <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 animate-in slide-in-from-bottom duration-300">
             <div className="flex justify-center pt-3 pb-2">
               <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
@@ -948,8 +948,8 @@ export default function CustomerHomePage() {
 
       {/* ── POST JOB: GOOGLE FORM VARIANT ────────── */}
       {jobMenuOpen && showPostJob && postJobMethod === "google_form" && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center" data-testid="post-job-google-form-modal">
-          <div className="absolute inset-0 bg-black/40" onClick={() => { setShowPostJob(false); setJobMenuOpen(false); }} />
+        <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="post-job-google-form-modal">
+          <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => { setShowPostJob(false); setJobMenuOpen(false); }} />
           <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[92vh] overflow-y-auto animate-in slide-in-from-bottom duration-300">
             <div className="flex justify-center pt-3 pb-2">
               <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
@@ -1037,8 +1037,8 @@ export default function CustomerHomePage() {
       )}
 
       {jobMenuOpen && showPostJob && postJobMethod === "mitrify" && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center" data-testid="post-job-modal">
-          <div className="absolute inset-0 bg-black/40" onClick={() => { setShowPostJob(false); setJobMenuOpen(false); }} />
+        <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="post-job-modal">
+          <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => { setShowPostJob(false); setJobMenuOpen(false); }} />
           <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[92vh] overflow-y-auto animate-in slide-in-from-bottom duration-300">
             <div className="flex justify-center pt-3 pb-2">
               <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
@@ -1144,8 +1144,8 @@ export default function CustomerHomePage() {
 
       {/* ── FIND JOBS LIST ───────────────────────── */}
       {jobMenuOpen && showFindJob && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center" data-testid="find-jobs-modal">
-          <div className="absolute inset-0 bg-black/40" onClick={() => { setShowFindJob(false); setJobMenuOpen(false); }} />
+        <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="find-jobs-modal">
+          <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => { setShowFindJob(false); setJobMenuOpen(false); }} />
           <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[92vh] flex flex-col animate-in slide-in-from-bottom duration-300">
             <div className="flex justify-center pt-3 pb-2 shrink-0">
               <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
@@ -1185,8 +1185,8 @@ export default function CustomerHomePage() {
 
       {/* ── JOB DETAIL MODAL ─────────────────────── */}
       {selectedJob && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center" data-testid="job-detail-modal">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setSelectedJob(null)} />
+        <div className="fixed inset-0 z-[60] flex items-end justify-center pointer-events-none" data-testid="job-detail-modal">
+          <div className="absolute inset-0 bg-black/50 pointer-events-auto" onClick={() => setSelectedJob(null)} />
           <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[90vh] flex flex-col animate-in slide-in-from-bottom duration-300">
             {/* Header: Job name + Call button */}
             <div className="px-5 pt-5 pb-4 border-b flex items-center justify-between gap-3 shrink-0">
@@ -1280,8 +1280,8 @@ export default function CustomerHomePage() {
 
       {/* ── MERI POSTS MODAL ─────────────────────── */}
       {jobMenuOpen && showMyPosts && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center" data-testid="my-posts-modal">
-          <div className="absolute inset-0 bg-black/40" onClick={() => { setShowMyPosts(false); setJobMenuOpen(false); }} />
+        <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="my-posts-modal">
+          <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => { setShowMyPosts(false); setJobMenuOpen(false); }} />
           <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[92vh] flex flex-col animate-in slide-in-from-bottom duration-300">
             <div className="flex justify-center pt-3 pb-2 shrink-0">
               <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
@@ -1346,8 +1346,8 @@ export default function CustomerHomePage() {
       )}
 
       {locationPickerOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center" data-testid="location-picker">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setLocationPickerOpen(false)} />
+        <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="location-picker">
+          <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => setLocationPickerOpen(false)} />
           <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-6 animate-in slide-in-from-bottom duration-300">
             <div className="flex justify-center pt-3 pb-1">
               <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
@@ -1419,7 +1419,7 @@ export default function CustomerHomePage() {
       )}
 
       {menuOpen && (
-        <div className="fixed inset-0 z-50 flex">
+        <div className="fixed inset-0 z-50 flex pointer-events-none">
           <div className="w-72 bg-card border-r shadow-xl h-full flex flex-col">
             <div className="p-4 border-b flex items-center justify-between">
               <div
@@ -1510,7 +1510,7 @@ export default function CustomerHomePage() {
       )}
 
       {contactSheetOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40" onClick={() => setContactSheetOpen(false)} data-testid="sheet-contact-us">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 pointer-events-auto" onClick={() => setContactSheetOpen(false)} data-testid="sheet-contact-us">
           <div className="w-full sm:max-w-md bg-card border-t sm:border sm:rounded-2xl rounded-t-2xl shadow-2xl p-5 space-y-4 animate-in slide-in-from-bottom" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1 min-w-0">
@@ -2139,8 +2139,8 @@ export default function CustomerHomePage() {
 
       {/* ── PROVIDER DETAIL MODAL ────────────────── */}
       {selectedProvider && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center" data-testid="provider-detail-modal">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setSelectedProvider(null)} />
+        <div className="fixed inset-0 z-[60] flex items-end justify-center pointer-events-none" data-testid="provider-detail-modal">
+          <div className="absolute inset-0 bg-black/50 pointer-events-auto" onClick={() => setSelectedProvider(null)} />
           <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[90vh] flex flex-col">
             {/* Header: name + quick call */}
             <div className="px-5 pt-5 pb-4 border-b flex items-center justify-between gap-3 shrink-0">
@@ -2268,8 +2268,8 @@ export default function CustomerHomePage() {
 
       {/* ── GUEST LOGIN PROMPT MODAL ─────────────── */}
       {showLoginPrompt && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center px-4" data-testid="login-prompt-modal">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setShowLoginPrompt(false)} />
+        <div className="fixed inset-0 z-[70] flex items-center justify-center px-4 pointer-events-none" data-testid="login-prompt-modal">
+          <div className="absolute inset-0 bg-black/60 pointer-events-auto" onClick={() => setShowLoginPrompt(false)} />
           <div className="relative w-full max-w-sm bg-card rounded-2xl shadow-2xl p-6 text-center">
             <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
               <Phone className="w-7 h-7 text-primary" />
