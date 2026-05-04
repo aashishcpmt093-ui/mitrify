@@ -201,7 +201,10 @@ export async function setupAuth(app: Express) {
     };
 
     const getCallbackURL = (hostname: string): string => {
-      if (allowedHosts.has(hostname)) {
+      if (hostname === "mitrify-production.up.railway.app") {
+        return `https://mitrify-production.up.railway.app/api/auth/google/callback`;
+      }
+      if (hostname === "mitrify.com" || hostname === "www.mitrify.com") {
         return `https://${hostname}/api/auth/google/callback`;
       }
       return `https://mitrify-production.up.railway.app/api/auth/google/callback`;
