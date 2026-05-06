@@ -24,6 +24,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { SubscriptionsAdminPanel } from "@/components/SubscriptionsAdminPanel";
 import { useTheme } from "@/lib/theme";
+import { useAuth } from "@/hooks/use-auth";
 import type { AdminStats, Profile, CallLog, PromoCode } from "@shared/schema";
 import { NO_ALERT_NEEDED_MESSAGE } from "@shared/schema";
 
@@ -659,6 +660,7 @@ function AutoGenerateTagsCard() {
 export default function AdminDashboardPage() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const { logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [newPromoCode, setNewPromoCode] = useState("");
   const [newPromoCredits, setNewPromoCredits] = useState("25");
@@ -1943,6 +1945,25 @@ export default function AdminDashboardPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
+      <div className="sticky top-0 z-[60] flex items-center justify-between gap-2 px-4 py-3 border-b bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur">
+        <Button
+          variant="outline"
+          onClick={async () => {
+            await logout();
+            setLocation("/customer/home");
+          }}
+          data-testid="button-switch-to-user"
+        >
+          Switch to User
+        </Button>
+        <Button
+          variant="default"
+          onClick={() => setLocation("/admin/dashboard")}
+          data-testid="button-switch-to-admin"
+        >
+          Switch to Admin
+        </Button>
+      </div>
 
       {/* Edit Provider Modal */}
       {editProvider.open && (

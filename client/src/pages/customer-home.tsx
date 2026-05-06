@@ -134,6 +134,7 @@ export default function CustomerHomePage() {
   const { canInstall, install: installPwa } = usePwaInstall();
   const { theme, toggleTheme } = useTheme();
   const [searchQuery, setSearchQuery] = useState("");
+  const isAdmin = user?.role === "admin" || user?.role === "mainadmin";
   // Filter UI state — sits between search bar and results.
   // `maxDistanceKm` caps how far a provider can be (default 50 km, the
   // value most providers actually serve in our data). `sameCityOnly`
@@ -1470,6 +1471,19 @@ export default function CustomerHomePage() {
                 {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
                 {theme === "dark" ? t("lightMode") : t("darkMode")}
               </Button>
+              {isAdmin && (
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start gap-3 text-primary"
+                  onClick={async () => {
+                    await logout();
+                    setLocation("/customer/home");
+                  }}
+                  data-testid="button-switch-to-user"
+                >
+                  <User className="w-4 h-4" /> Switch to User
+                </Button>
+              )}
 
               {/* Language Switcher */}
               <div className="pt-1">
