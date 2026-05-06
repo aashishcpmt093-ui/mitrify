@@ -1673,9 +1673,9 @@ export default function AdminDashboardPage() {
     },
     onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to save"}`, variant: "destructive" }),
   });
-  const [reportLogLimit, setReportLogLimit] = React.useState<number>(20);
-  const [reportLogStatus, setReportLogStatus] = React.useState<"all" | "sent" | "failed">("all");
-  const [reportLogSince, setReportLogSince] = React.useState<"all" | "today" | "week" | "month">("all");
+  const [reportLogLimit, setReportLogLimit] = useState<number>(20);
+  const [reportLogStatus, setReportLogStatus] = useState<"all" | "sent" | "failed">("all");
+  const [reportLogSince, setReportLogSince] = useState<"all" | "today" | "week" | "month">("all");
 
   const { data: aiReportLogData } = useQuery<{ id: number; sentAt: string; recipient: string; success: boolean; totalTokens: number; estimatedCost: string; peakTokens: number; exceededHours: number; errorMsg: string | null }[]>({
     queryKey: ["/api/admin/ai-report-log", reportLogLimit, reportLogStatus, reportLogSince],
@@ -1714,12 +1714,12 @@ export default function AdminDashboardPage() {
     },
   });
 
-  const [clearLogConfirm, setClearLogConfirm] = React.useState(false);
-  const [deleteLogConfirmId, setDeleteLogConfirmId] = React.useState<number | null>(null);
+  const [clearLogConfirm, setClearLogConfirm] = useState(false);
+  const [deleteLogConfirmId, setDeleteLogConfirmId] = useState<number | null>(null);
 
   type ReportLogEntry = { id: number; sentAt: string; recipient: string; success: boolean; totalTokens: number; estimatedCost: string; peakTokens: number; exceededHours: number; errorMsg: string | null };
 
-  const [pendingClearedLogEntries, setPendingClearedLogEntries] = React.useState<ReportLogEntry[]>([]);
+  const [pendingClearedLogEntries, setPendingClearedLogEntries] = useState<ReportLogEntry[]>([]);
 
   const restoreReportLogEntry = useMutation({
     mutationFn: async (entry: ReportLogEntry) => {
