@@ -3243,6 +3243,173 @@ export async function registerRoutes(
     }
   });
 
+  // ── MITRIFY AI CHAT ──────────────────────────────────────────────────────
+  const GEMINI_CHAT_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent`;
+
+  function getGeminiKeyForChat(): string | undefined {
+    return process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+  }
+
+  const USER_SYSTEM_PROMPT = `You are Mitrify AI, a helpful assistant for Mitrify — a service marketplace platform that connects customers with nearby service providers in India.
+
+About Mitrify:
+- Customers can search for service providers (plumbers, electricians, carpenters, etc.) nearby
+- Providers register and get discovered by customers
+- There is a credit system: users get free credits monthly, can buy more, and use credits to call providers
+- Boost, Pro, Premium subscription plans available for providers
+- Available in Hindi, English, and Hinglish
+- Website: mitrify.com
+
+Help users with:
+- Finding services and understanding the platform
+- Account, credits, subscriptions questions
+- How to register as provider
+- General world knowledge questions
+
+Be friendly, concise, and helpful. Respond in the same language the user writes in (Hindi/English/Hinglish).`;
+
+  const ADMIN_SYSTEM_PROMPT = `You are Mitrify AI, an intelligent admin assistant for the Mitrify service marketplace platform.
+
+You assist the admin with:
+- Platform data insights and analysis
+- Finding suspicious users (no mobile, fake profiles, unusual activity)
+- Understanding user/provider statistics
+- Recommendations for cleanup actions
+- General platform management guidance
+- Any questions about the platform
+
+Platform details:
+- Customers search for providers
+- Credit-based call system
+- Providers need verification
+- Admin can: delete users, block accounts, gift credits, manage subscriptions
+
+When admin asks to find/identify users, explain what filters to use in the Bulk Delete section.
+When admin asks to delete users, tell them to go to "Bulk Del" tab and use the appropriate filter.
+
+Be direct, analytical, and practical. Respond in the language the admin uses (Hindi/English/Hinglish).`;
+
+  app.post("/api/ai/chat", async (req, res) => {
+    try {
+      const geminiKey = getGeminiKeyForChat();
+      if (!geminiKey) {
+        return res.status(503).json({ reply: "AI abhi available nahi hai. GEMINI_API_KEY configure karo." });
+      }
+
+      const { message, history = [], isAdmin = false } = req.body;
+      if (!message || typeof message !== "string") {
+        return res.status(400).json({ message: "message required" });
+      }
+
+      const sessionAdmin = (req.session as any).adminLoggedIn || false;
+      const useAdminMode = isAdmin && sessionAdmin;
+
+      let systemText = useAdminMode ? ADMIN_SYSTEM_PROMPT : USER_SYSTEM_PROMPT;
+
+      if (useAdminMode) {
+        try {
+          const stats = await storage.getAdminStats();
+          systemText += `\n\nCurrent platform stats: Total providers: ${stats.totalProviders}, Total customers: ${stats.totalCustomers}, Total calls: ${stats.totalCalls}.`;
+        } catch {}
+      }
+
+      const contents: any[] = [
+        { role: "user", parts: [{ text: systemText }] },
+        { role: "model", parts: [{ text: "Understood. I'm ready to help." }] },
+      ];
+
+      const safeHistory = Array.isArray(history) ? history.slice(-8) : [];
+      for (const h of safeHistory) {
+        if (h.role && h.content && typeof h.content === "string") {
+          contents.push({ role: h.role === "assistant" ? "model" : "user", parts: [{ text: h.content }] });
+        }
+      }
+      contents.push({ role: "user", parts: [{ text: message }] });
+
+      const body = {
+        contents,
+        generationConfig: { maxOutputTokens: 1024, temperature: 0.7 },
+      };
+
+      const resp = await fetch(GEMINI_CHAT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-goog-api-key": geminiKey },
+        body: JSON.stringify(body),
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        console.error("Gemini chat error:", resp.status, errText);
+        return res.status(502).json({ reply: "AI service se response nahi mila. Thodi der baad try karo." });
+      }
+
+      const data = await resp.json() as any;
+      const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Kuch samajh nahi aaya. Dobara puchho.";
+      res.json({ reply });
+    } catch (err: any) {
+      console.error("AI chat error:", err);
+      res.status(500).json({ reply: "Kuch gadbad ho gayi. Dobara try karo." });
+    }
+  });
+
+  // ── ADMIN: BULK FILTER USERS ──────────────────────────────────────────────
+  app.get("/api/admin/bulk-filter-users", adminCheck, async (req, res) => {
+    try {
+      const filter = (req.query.filter as string) || "all";
+      const search = (req.query.search as string) || "";
+
+      const allProfiles = await storage.getProfilesByRole("customer");
+      const allProviders = await storage.getAllProviders();
+      const providerUserIds = new Set(allProviders.map(p => p.userId));
+
+      const allUsers = [
+        ...allProfiles,
+        ...(await storage.getProfilesByRole("provider")),
+      ];
+
+      const dedupedUsers = Array.from(new Map(allUsers.map(u => [u.userId, u])).values());
+
+      function isSuspiciousName(name: string | null): boolean {
+        if (!name || name.trim().length < 2) return true;
+        if (/^[0-9\s\W]+$/.test(name.trim())) return true;
+        const lname = name.toLowerCase().trim();
+        const fakeNames = ["test", "user", "admin", "provider", "customer", "demo", "abc", "xyz", "na", "n/a", "none", "null"];
+        if (fakeNames.includes(lname)) return true;
+        return false;
+      }
+
+      let filtered = dedupedUsers;
+
+      if (filter === "noMobile") {
+        filtered = dedupedUsers.filter(u => {
+          const mob = (u as any).mobile || (u as any).mobileNumber || "";
+          return !mob || mob.trim() === "";
+        });
+      } else if (filter === "noLocation") {
+        filtered = dedupedUsers.filter(u => {
+          const prov = allProviders.find(p => p.userId === u.userId);
+          if (!prov) return false;
+          return !prov.latitude || !prov.longitude;
+        });
+      } else if (filter === "suspiciousName") {
+        filtered = dedupedUsers.filter(u => isSuspiciousName(u.name));
+      }
+
+      if (search) {
+        const s = search.toLowerCase();
+        filtered = filtered.filter(u =>
+          (u.name || "").toLowerCase().includes(s) ||
+          (u.userId || "").toLowerCase().includes(s) ||
+          ((u as any).mobile || "").includes(s)
+        );
+      }
+
+      res.json(filtered.slice(0, 500));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Filter failed" });
+    }
+  });
+
   startBackupScheduler();
 
   return httpServer;
