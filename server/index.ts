@@ -73,11 +73,11 @@ httpServer.listen(
   },
   () => {
     log(`serving on port ${port}`);
-    const geminiKeyPresent = !!(process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY);
-    if (geminiKeyPresent) {
-      log(`[AI] Gemini API key configured — AI chat enabled`, "startup");
+    const aiProvider = process.env.GROQ_API_KEY ? "groq" : process.env.DEEPSEEK_API_KEY ? "deepseek" : (process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY) ? "gemini" : null;
+    if (aiProvider) {
+      log(`[AI] Provider: ${aiProvider} — AI chat enabled`, "startup");
     } else {
-      log(`[AI] WARNING: No GOOGLE_API_KEY or GEMINI_API_KEY found — AI chat will return 503`, "startup");
+      log(`[AI] WARNING: No AI key found. Set GROQ_API_KEY, DEEPSEEK_API_KEY, GOOGLE_API_KEY, or GEMINI_API_KEY.`, "startup");
     }
   },
 );

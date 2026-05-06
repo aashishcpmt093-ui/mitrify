@@ -3252,6 +3252,23 @@ export async function registerRoutes(
     return process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
   }
 
+  type AIProviderType = "groq" | "deepseek" | "gemini";
+  interface AIProvider { type: AIProviderType; key: string; model: string; baseUrl: string }
+
+  function getAIProvider(): AIProvider | null {
+    if (process.env.GROQ_API_KEY) {
+      return { type: "groq", key: process.env.GROQ_API_KEY, model: "llama-3.1-8b-instant", baseUrl: "https://api.groq.com/openai/v1" };
+    }
+    if (process.env.DEEPSEEK_API_KEY) {
+      return { type: "deepseek", key: process.env.DEEPSEEK_API_KEY, model: "deepseek-chat", baseUrl: "https://api.deepseek.com/v1" };
+    }
+    const geminiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+    if (geminiKey) {
+      return { type: "gemini", key: geminiKey, model: "gemini-2.0-flash", baseUrl: "" };
+    }
+    return null;
+  }
+
   // ── Rolling hourly token tracker (DB-backed for restart survival) ─────────
   // AI_TOKEN_CONFIG_KEY, AI_TOKEN_HOUR_THRESHOLD_DEFAULT, and getAiTokenThreshold
   // are imported from ./lib/aiConfig so the weekly report job can share them.
@@ -3322,15 +3339,17 @@ export async function registerRoutes(
 
   // Health check: is AI configured? Used to verify Railway env var setup.
   app.get("/api/ai/status", async (_req, res) => {
-    const configured = !!getGeminiKeyForChat();
+    const provider = getAIProvider();
+    const configured = !!provider;
     const hourlyTokens = getAiHourlyTokens();
     const hourlyThreshold = await getAiTokenThreshold();
     const thresholdExceeded = hourlyTokens >= hourlyThreshold;
     res.status(configured ? 200 : 503).json({
       ai: configured ? "enabled" : "disabled",
+      provider: provider?.type ?? "none",
       message: configured
-        ? "Gemini API key configured — AI chat is active"
-        : "No GOOGLE_API_KEY or GEMINI_API_KEY found — AI chat will return 503",
+        ? `${provider!.type} (${provider!.model}) configured — AI chat is active`
+        : "No AI key found. Set GROQ_API_KEY, DEEPSEEK_API_KEY, GOOGLE_API_KEY, or GEMINI_API_KEY.",
       hourlyTokens,
       hourlyThreshold,
       thresholdExceeded,
@@ -3738,11 +3757,84 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
     return data;
   }
 
+  // ── OpenAI-compatible provider (Groq / DeepSeek) ─────────────────────────
+  interface OAIMessage { role: string; content: string | null; tool_calls?: unknown[]; tool_call_id?: string }
+  interface OAIToolCallResult { text?: string; toolCall?: { name: string; args: Record<string, string>; id: string } }
+
+  async function callOpenAICompat(key: string, baseUrl: string, model: string, messages: OAIMessage[], tools?: unknown[]): Promise<OAIToolCallResult> {
+    const t0 = Date.now();
+    const body: Record<string, unknown> = { model, messages, max_tokens: 1024, temperature: 0.7 };
+    if (tools && tools.length > 0) body.tools = tools;
+    const resp = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      console.error(`[AI] OpenAI-compat call: ${Date.now() - t0}ms | FAILED ${resp.status} — ${errText.slice(0, 200)}`);
+      throw new Error(`AI API ${resp.status}`);
+    }
+    const data = await resp.json() as { choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+    const ms = Date.now() - t0;
+    const usage = data.usage;
+    const promptTok = usage?.prompt_tokens || 0;
+    const completionTok = usage?.completion_tokens || 0;
+    console.log(`[AI] OpenAI-compat call (${model}): ${ms}ms | prompt=${promptTok || "?"} | output=${completionTok || "?"} tokens`);
+    if (promptTok + completionTok > 0) recordAiTokenUsage(promptTok + completionTok);
+    const msg = data.choices?.[0]?.message;
+    if (msg?.tool_calls?.[0]) {
+      const tc = msg.tool_calls[0];
+      let args: Record<string, string> = {};
+      try { args = JSON.parse(tc.function.arguments); } catch { args = {}; }
+      return { toolCall: { name: tc.function.name, args, id: tc.id } };
+    }
+    return { text: msg?.content || "" };
+  }
+
+  const ADMIN_TOOLS_OPENAI = [
+    {
+      type: "function",
+      function: {
+        name: "list_users",
+        description: "Fetch and display users matching a filter criterion. Call this when admin asks to find, list, show, or wants to delete users with a specific characteristic.",
+        parameters: {
+          type: "object",
+          properties: {
+            filter: {
+              type: "string",
+              enum: VALID_AI_FILTERS,
+              description: "noMobile = users without mobile; noLocation = providers missing GPS; suspiciousName = fake/test names",
+            },
+          },
+          required: ["filter"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "delete_users",
+        description: "Permanently delete users identified by a snapshot token. Only call after admin explicitly confirms deletion.",
+        parameters: {
+          type: "object",
+          properties: {
+            snapshotToken: {
+              type: "string",
+              description: "The snapshot token from the list_users result.",
+            },
+          },
+          required: ["snapshotToken"],
+        },
+      },
+    },
+  ];
+
   app.post("/api/ai/chat", async (req, res) => {
     try {
-      const geminiKey = getGeminiKeyForChat();
-      if (!geminiKey) {
-        console.warn("[AI] /api/ai/chat called but no GOOGLE_API_KEY or GEMINI_API_KEY is configured — returning 503. Set the key in Railway environment variables.");
+      const provider = getAIProvider();
+      if (!provider) {
+        console.warn("[AI] /api/ai/chat: No AI key configured. Set GROQ_API_KEY, DEEPSEEK_API_KEY, GOOGLE_API_KEY, or GEMINI_API_KEY.");
         return res.status(503).json({ reply: "AI assistant is currently unavailable. Please try again later." });
       }
 
@@ -3759,29 +3851,36 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
       const sessionAdmin = (req.session as { adminLoggedIn?: boolean }).adminLoggedIn || false;
       const useAdminMode = isAdmin && sessionAdmin;
 
-      // ── Admin confirm-delete flow: frontend sends snapshotToken after admin confirms ──
-      // Deletion is executed server-side immediately; Gemini generates the reply text.
+      // ── Admin confirm-delete flow ─────────────────────────────────────────────
       if (useAdminMode && snapshotToken) {
         const snap = consumeDeleteSnapshot(snapshotToken);
         if (!snap) {
           return res.json({ reply: "Delete token expire ho gaya ya invalid hai. Dobara list karo aur confirm karo.", deletedCount: 0 });
         }
-        // Execute deletion directly — not gated on model behavior
         let deletedCount = 0;
         for (const userId of snap.userIds) {
           try { await storage.deleteProfile(userId); deletedCount++; } catch { /* skip individual failures */ }
         }
-        // Ask Gemini for a natural-language confirmation reply (optional — fallback if fails)
+        // Ask AI for natural-language confirmation
         const delReply = await (async () => {
           try {
-            const confirmContents: GeminiContent[] = [
-              { role: "user", parts: [{ text: ADMIN_SYSTEM_PROMPT }] },
-              { role: "model", parts: [{ text: "Understood. Ready to help." }] },
-              { role: "user", parts: [{ text: `delete_users tool executed: ${deletedCount} users with filter "${snap.filter}" deleted successfully. Generate a brief admin confirmation message.` }] },
-            ];
-            const cData = await callGemini(geminiKey, confirmContents, false);
-            const cPart = cData.candidates?.[0]?.content?.parts?.[0];
-            return (cPart && "text" in cPart ? cPart.text : null) ?? null;
+            const confirmMsg = `delete_users executed: ${deletedCount} users with filter "${snap.filter}" deleted. Generate a brief admin confirmation message in Hinglish.`;
+            if (provider.type === "gemini") {
+              const confirmContents: GeminiContent[] = [
+                { role: "user", parts: [{ text: ADMIN_SYSTEM_PROMPT }] },
+                { role: "model", parts: [{ text: "Understood. Ready to help." }] },
+                { role: "user", parts: [{ text: confirmMsg }] },
+              ];
+              const cData = await callGemini(provider.key, confirmContents, false);
+              const cPart = cData.candidates?.[0]?.content?.parts?.[0];
+              return (cPart && "text" in cPart ? cPart.text : null) ?? null;
+            } else {
+              const r = await callOpenAICompat(provider.key, provider.baseUrl, provider.model, [
+                { role: "system", content: ADMIN_SYSTEM_PROMPT },
+                { role: "user", content: confirmMsg },
+              ]);
+              return r.text || null;
+            }
           } catch { return null; }
         })();
         return res.json({ reply: delReply ?? `✅ ${deletedCount} users successfully delete ho gaye!`, deletedCount });
@@ -3795,92 +3894,138 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
         } catch { /* non-fatal */ }
       }
 
-      const contents: GeminiContent[] = [
-        { role: "user", parts: [{ text: systemText }] },
-        { role: "model", parts: [{ text: "Understood. Ready to help." }] },
-      ];
       const safeHistory = Array.isArray(history) ? history.slice(-8) : [];
+
+      // ── GEMINI path ───────────────────────────────────────────────────────────
+      if (provider.type === "gemini") {
+        const contents: GeminiContent[] = [
+          { role: "user", parts: [{ text: systemText }] },
+          { role: "model", parts: [{ text: "Understood. Ready to help." }] },
+        ];
+        for (const h of safeHistory) {
+          if (h.role && typeof h.content === "string") {
+            contents.push({ role: h.role === "assistant" ? "model" : "user", parts: [{ text: h.content }] });
+          }
+        }
+        contents.push({ role: "user", parts: [{ text: message }] });
+
+        if (useAdminMode) {
+          let firstData: GeminiResponse;
+          try {
+            firstData = await callGemini(provider.key, contents, true);
+          } catch {
+            return res.status(502).json({ reply: "AI service did not respond. Please try again in a moment." });
+          }
+          const firstPart = firstData.candidates?.[0]?.content?.parts?.[0];
+          if (firstPart && "functionCall" in firstPart) {
+            const fc = firstPart.functionCall;
+            if (fc.name === "list_users" && VALID_AI_FILTERS.includes(fc.args?.filter as AIUserFilter)) {
+              const filter = fc.args.filter as AIUserFilter;
+              let allUsers: AIUserEntry[] = [];
+              let toolResultText: string;
+              try {
+                allUsers = await fetchFilteredUsersForAI(filter);
+                toolResultText = allUsers.length > 0
+                  ? `Found ${allUsers.length} users with filter "${filter}". Showing list to admin.`
+                  : `No users found for filter "${filter}".`;
+              } catch {
+                toolResultText = `Error fetching users for filter "${filter}".`;
+              }
+              const snap = allUsers.length > 0 ? createDeleteSnapshot(filter, allUsers.map(u => u.userId)) : "";
+              const modelTurn: GeminiContent = firstData.candidates![0].content;
+              const toolResultTurn: GeminiContent = {
+                role: "user",
+                parts: [{ functionResponse: { name: "list_users", response: { result: toolResultText, snapshotToken: snap } } }],
+              };
+              let finalData: GeminiResponse;
+              try {
+                finalData = await callGemini(provider.key, [...contents, modelTurn, toolResultTurn], true);
+              } catch {
+                return res.status(502).json({ reply: "AI did not return a final response. Please try again." });
+              }
+              const replyPart = finalData.candidates?.[0]?.content?.parts?.[0];
+              const reply = (replyPart && "text" in replyPart ? replyPart.text : null) ?? "Users found. See the list below.";
+              const action: AIActionPayload = { type: "user_list", filter, previewUsers: allUsers.slice(0, 100), total: allUsers.length, snapshotToken: snap };
+              return res.json({ reply, action });
+            }
+          }
+          const textPart = firstPart && "text" in firstPart ? firstPart.text : null;
+          return res.json({ reply: textPart ?? "I could not understand that. Please try asking again." });
+        }
+
+        let userData: GeminiResponse;
+        try {
+          userData = await callGemini(provider.key, contents, false);
+        } catch {
+          return res.status(502).json({ reply: "AI service did not respond. Please try again in a moment." });
+        }
+        const userPart = userData.candidates?.[0]?.content?.parts?.[0];
+        const userReply = (userPart && "text" in userPart ? userPart.text : null) ?? "I could not understand that. Please try asking again.";
+        return res.json({ reply: userReply });
+      }
+
+      // ── OpenAI-compatible path (Groq / DeepSeek) ─────────────────────────────
+      const oaiMessages: OAIMessage[] = [{ role: "system", content: systemText }];
       for (const h of safeHistory) {
         if (h.role && typeof h.content === "string") {
-          contents.push({ role: h.role === "assistant" ? "model" : "user", parts: [{ text: h.content }] });
+          oaiMessages.push({ role: h.role === "assistant" ? "assistant" : "user", content: h.content });
         }
       }
-      contents.push({ role: "user", parts: [{ text: message }] });
+      oaiMessages.push({ role: "user", content: message });
 
-      // ── Admin mode: Gemini function-calling for list_users / delete_users ────
       if (useAdminMode) {
-        let firstData: GeminiResponse;
+        let firstResult: OAIToolCallResult;
         try {
-          firstData = await callGemini(geminiKey, contents, true);
+          firstResult = await callOpenAICompat(provider.key, provider.baseUrl, provider.model, oaiMessages, ADMIN_TOOLS_OPENAI);
         } catch {
           return res.status(502).json({ reply: "AI service did not respond. Please try again in a moment." });
         }
 
-        const firstPart = firstData.candidates?.[0]?.content?.parts?.[0];
-
-        if (firstPart && "functionCall" in firstPart) {
-          const fc = firstPart.functionCall;
-
-          // ── list_users tool ──────────────────────────────────────────────────
-          if (fc.name === "list_users" && VALID_AI_FILTERS.includes(fc.args?.filter as AIUserFilter)) {
-            const filter = fc.args.filter as AIUserFilter;
-            let allUsers: AIUserEntry[] = [];
-            let toolResultText: string;
-            try {
-              allUsers = await fetchFilteredUsersForAI(filter);
-              toolResultText = allUsers.length > 0
-                ? `Found ${allUsers.length} users with filter "${filter}". Showing list to admin.`
-                : `No users found for filter "${filter}".`;
-            } catch {
-              toolResultText = `Error fetching users for filter "${filter}".`;
-            }
-
-            const snapshotToken = allUsers.length > 0 ? createDeleteSnapshot(filter, allUsers.map(u => u.userId)) : "";
-
-            const modelTurn: GeminiContent = firstData.candidates![0].content;
-            const toolResultTurn: GeminiContent = {
-              role: "user",
-              parts: [{ functionResponse: { name: "list_users", response: { result: toolResultText, snapshotToken } } }],
-            };
-            let finalData: GeminiResponse;
-            try {
-              finalData = await callGemini(geminiKey, [...contents, modelTurn, toolResultTurn], true);
-            } catch {
-              return res.status(502).json({ reply: "AI did not return a final response. Please try again." });
-            }
-
-            const replyPart = finalData.candidates?.[0]?.content?.parts?.[0];
-            const reply = (replyPart && "text" in replyPart ? replyPart.text : null) ?? "Users found. See the list below.";
-            const action: AIActionPayload = {
-              type: "user_list",
-              filter,
-              previewUsers: allUsers.slice(0, 100),
-              total: allUsers.length,
-              snapshotToken,
-            };
-            return res.json({ reply, action });
+        if (firstResult.toolCall && firstResult.toolCall.name === "list_users" && VALID_AI_FILTERS.includes(firstResult.toolCall.args?.filter as AIUserFilter)) {
+          const filter = firstResult.toolCall.args.filter as AIUserFilter;
+          let allUsers: AIUserEntry[] = [];
+          let toolResultText: string;
+          try {
+            allUsers = await fetchFilteredUsersForAI(filter);
+            toolResultText = allUsers.length > 0
+              ? `Found ${allUsers.length} users with filter "${filter}".`
+              : `No users found for filter "${filter}".`;
+          } catch {
+            toolResultText = `Error fetching users for filter "${filter}".`;
           }
+          const snap = allUsers.length > 0 ? createDeleteSnapshot(filter, allUsers.map(u => u.userId)) : "";
+
+          const toolCallId = firstResult.toolCall.id;
+          const messagesWithTool: OAIMessage[] = [
+            ...oaiMessages,
+            { role: "assistant", content: null, tool_calls: [{ id: toolCallId, type: "function", function: { name: "list_users", arguments: JSON.stringify({ filter }) } }] },
+            { role: "tool", content: JSON.stringify({ result: toolResultText, snapshotToken: snap }), tool_call_id: toolCallId },
+          ];
+          let finalResult: OAIToolCallResult;
+          try {
+            finalResult = await callOpenAICompat(provider.key, provider.baseUrl, provider.model, messagesWithTool, ADMIN_TOOLS_OPENAI);
+          } catch {
+            return res.status(502).json({ reply: "AI did not return a final response. Please try again." });
+          }
+          const action: AIActionPayload = { type: "user_list", filter, previewUsers: allUsers.slice(0, 100), total: allUsers.length, snapshotToken: snap };
+          return res.json({ reply: finalResult.text || "Users found. See the list below.", action });
         }
 
-        // No function call — plain text reply
-        const textPart = firstPart && "text" in firstPart ? firstPart.text : null;
-        return res.json({ reply: textPart ?? "I could not understand that. Please try asking again." });
+        return res.json({ reply: firstResult.text ?? "I could not understand that. Please try asking again." });
       }
 
-      // ── User (non-admin) mode: plain chat ────────────────────────────────────
-      let userData: GeminiResponse;
+      // Non-admin plain chat
+      let result: OAIToolCallResult;
       try {
-        userData = await callGemini(geminiKey, contents, false);
+        result = await callOpenAICompat(provider.key, provider.baseUrl, provider.model, oaiMessages);
       } catch {
         return res.status(502).json({ reply: "AI service did not respond. Please try again in a moment." });
       }
-      const userPart = userData.candidates?.[0]?.content?.parts?.[0];
-      const userReply = (userPart && "text" in userPart ? userPart.text : null) ?? "I could not understand that. Please try asking again.";
-      res.json({ reply: userReply });
+      return res.json({ reply: result.text ?? "I could not understand that. Please try asking again." });
+
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      const keyPresent = !!getGeminiKeyForChat();
-      console.error(`[AI] /api/ai/chat unhandled error (key present: ${keyPresent}): ${errMsg}`, err instanceof Error ? err.stack : "");
+      console.error(`[AI] /api/ai/chat unhandled error: ${errMsg}`, err instanceof Error ? err.stack : "");
       res.status(500).json({ reply: "Something went wrong. Please try again in a moment." });
     }
   });
