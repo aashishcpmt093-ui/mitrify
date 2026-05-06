@@ -3302,7 +3302,6 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
     type: "user_list";
     filter: AIUserFilter;
     previewUsers: AIUserEntry[];
-    allUserIds: string[];
     total: number;
     snapshotToken: string;
   }
@@ -3452,62 +3451,31 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
       const useAdminMode = isAdmin && sessionAdmin;
 
       // ── Admin confirm-delete flow: frontend sends snapshotToken after admin confirms ──
+      // Deletion is executed server-side immediately; Gemini generates the reply text.
       if (useAdminMode && snapshotToken) {
         const snap = consumeDeleteSnapshot(snapshotToken);
         if (!snap) {
           return res.json({ reply: "Delete token expire ho gaya ya invalid hai. Dobara list karo aur confirm karo.", deletedCount: 0 });
         }
-        // Prime Gemini to call delete_users with the snapshot token (re-issued for this call)
-        const tempToken = createDeleteSnapshot(snap.filter, snap.userIds);
-        const deleteContents: GeminiContent[] = [
-          { role: "user", parts: [{ text: `${ADMIN_SYSTEM_PROMPT}\n\nAdmin has explicitly confirmed deletion of ${snap.userIds.length} users (filter: ${snap.filter}, snapshotToken: ${tempToken}). Call delete_users immediately.` }] },
-          { role: "model", parts: [{ text: "Understood. Proceeding with delete_users tool call." }] },
-          { role: "user", parts: [{ text: "Execute the deletion now." }] },
-        ];
-        let delData: GeminiResponse;
-        try {
-          delData = await callGemini(geminiKey, deleteContents, true);
-        } catch {
-          return res.status(502).json({ reply: "AI se response nahi mila.", deletedCount: 0 });
-        }
-        const delPart = delData.candidates?.[0]?.content?.parts?.[0];
-        if (delPart && "functionCall" in delPart && delPart.functionCall.name === "delete_users") {
-          const tokenFromAI = delPart.functionCall.args?.snapshotToken ?? "";
-          const snapToDelete = consumeDeleteSnapshot(tokenFromAI);
-          if (!snapToDelete) {
-            return res.json({ reply: "Delete token mismatch. Dobara try karo.", deletedCount: 0 });
-          }
-          let deletedCount = 0;
-          for (const userId of snapToDelete.userIds) {
-            try { await storage.deleteProfile(userId); deletedCount++; } catch { /* skip failed */ }
-          }
-          // Send tool result to Gemini for final confirmation reply
-          const confirmContents: GeminiContent[] = [
-            ...deleteContents,
-            delData.candidates![0].content,
-            {
-              role: "user",
-              parts: [{ functionResponse: { name: "delete_users", response: { result: `Successfully deleted ${deletedCount} users.` } } }],
-            },
-          ];
-          let confirmData: GeminiResponse;
-          try {
-            confirmData = await callGemini(geminiKey, confirmContents, true);
-          } catch {
-            return res.json({ reply: `✅ ${deletedCount} users delete ho gaye!`, deletedCount });
-          }
-          const confirmPart = confirmData.candidates?.[0]?.content?.parts?.[0];
-          const confirmReply = (confirmPart && "text" in confirmPart ? confirmPart.text : null) ?? `✅ ${deletedCount} users delete ho gaye!`;
-          return res.json({ reply: confirmReply, deletedCount });
-        }
-        // Gemini didn't call the tool — still execute delete
+        // Execute deletion directly — not gated on model behavior
         let deletedCount = 0;
         for (const userId of snap.userIds) {
-          try { await storage.deleteProfile(userId); deletedCount++; } catch { /* skip */ }
+          try { await storage.deleteProfile(userId); deletedCount++; } catch { /* skip individual failures */ }
         }
-        // Re-consume temp token if not used
-        consumeDeleteSnapshot(tempToken);
-        return res.json({ reply: `✅ ${deletedCount} users successfully delete ho gaye!`, deletedCount });
+        // Ask Gemini for a natural-language confirmation reply (optional — fallback if fails)
+        const delReply = await (async () => {
+          try {
+            const confirmContents: GeminiContent[] = [
+              { role: "user", parts: [{ text: ADMIN_SYSTEM_PROMPT }] },
+              { role: "model", parts: [{ text: "Understood. Ready to help." }] },
+              { role: "user", parts: [{ text: `delete_users tool executed: ${deletedCount} users with filter "${snap.filter}" deleted successfully. Generate a brief admin confirmation message.` }] },
+            ];
+            const cData = await callGemini(geminiKey, confirmContents, false);
+            const cPart = cData.candidates?.[0]?.content?.parts?.[0];
+            return (cPart && "text" in cPart ? cPart.text : null) ?? null;
+          } catch { return null; }
+        })();
+        return res.json({ reply: delReply ?? `✅ ${deletedCount} users successfully delete ho gaye!`, deletedCount });
       }
 
       let systemText = useAdminMode ? ADMIN_SYSTEM_PROMPT : USER_SYSTEM_PROMPT;
@@ -3578,7 +3546,6 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
               type: "user_list",
               filter,
               previewUsers: allUsers.slice(0, 100),
-              allUserIds: allUsers.map(u => u.userId),
               total: allUsers.length,
               snapshotToken,
             };
