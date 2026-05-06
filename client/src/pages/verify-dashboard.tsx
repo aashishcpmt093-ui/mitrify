@@ -593,10 +593,15 @@ export default function VerifyDashboard() {
                               <p className="text-xs text-muted-foreground">{pp.serviceName}</p>
                             )}
                           </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
+                          <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
                             {pp.source === "meta" && (
                               <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-xs font-semibold border border-orange-200 dark:border-orange-700/40">
                                 📣 Meta
+                              </span>
+                            )}
+                            {!pp.mobile && !(pp.mobileNumbers?.length > 0) && pp.status === "pending" && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 text-xs font-semibold border border-red-200 dark:border-red-700/40" title="No mobile number — call won't work after approval">
+                                📵 No Mobile
                               </span>
                             )}
                             {pp.groupLabel && (

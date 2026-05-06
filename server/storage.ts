@@ -1620,6 +1620,13 @@ export class DatabaseStorage implements IStorage {
         }
       }
 
+      // Build mobileNumbers: merge pp.mobileNumbers (verified array from UI)
+      // with pp.mobile (populated by every import path but never put in the
+      // array). Without this merge, Google Places / Excel imports always
+      // produce providers with mobileNumbers=[] even though pp.mobile is set.
+      const ppNums = ((pp.mobileNumbers as string[]) || []).filter(Boolean);
+      if (phone && !ppNums.includes(phone)) ppNums.unshift(phone);
+
       await this.createProvider({
         userId,
         serviceName: pp.serviceName,
@@ -1627,7 +1634,7 @@ export class DatabaseStorage implements IStorage {
         hashtags,
         radiusKm: pp.radiusKm || 10,
         approxCharge: pp.approxCharge || null,
-        mobileNumbers: (pp.mobileNumbers as string[]) || [],
+        mobileNumbers: ppNums,
         latitude: pp.latitude || null,
         longitude: pp.longitude || null,
         address: pp.address || null,
@@ -1859,6 +1866,8 @@ export class DatabaseStorage implements IStorage {
       const chunk = toInsert.slice(i, i + BATCH).map(rec => ({
         name: rec.name,
         mobile: rec.mobile,
+        // Pre-populate mobileNumbers array so approval always has a number.
+        mobileNumbers: rec.mobile ? [rec.mobile] : [],
         serviceName: "",
         addedBy: rec.addedBy,
         status: "pending" as const,
@@ -1940,6 +1949,9 @@ export class DatabaseStorage implements IStorage {
       const chunk = toInsert.slice(i, i + BATCH).map(rec => ({
         name: rec.name,
         mobile: rec.mobile || "",
+        // Also pre-populate mobileNumbers so approvePendingProvider has a
+        // consistent array even if the co-admin skips adding numbers manually.
+        mobileNumbers: rec.mobile ? [rec.mobile] : [],
         serviceName: rec.serviceName || "",
         address: rec.address || "",
         description: rec.description || null,

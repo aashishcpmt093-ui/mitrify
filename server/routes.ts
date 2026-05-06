@@ -2658,6 +2658,40 @@ export async function registerRoutes(
     }
   });
 
+  // Backfill mobileNumbers for already-approved providers whose mobileNumbers
+  // array is empty but whose provider profile has a mobile number stored.
+  // Safe to run multiple times (idempotent — only touches empty arrays).
+  app.post("/api/admin/backfill-provider-mobile-numbers", adminCheck, async (_req, res) => {
+    try {
+      const { db: rawDb } = await import("./db");
+      const { providers: providersTable, profiles: profilesTable } = await import("../shared/schema");
+      const { eq, sql: sqlExpr } = await import("drizzle-orm");
+
+      // Find providers with no mobile numbers who have a profile mobile set
+      const rows = await rawDb.execute(sqlExpr`
+        SELECT pr.user_id, p.mobile
+        FROM providers pr
+        JOIN profiles p ON p.user_id = pr.user_id AND p.role = 'provider'
+        WHERE array_length(pr.mobile_numbers, 1) IS NULL
+          AND p.mobile IS NOT NULL
+          AND p.mobile <> ''
+      `);
+
+      let updated = 0;
+      for (const row of rows.rows as Array<{ user_id: string; mobile: string }>) {
+        await rawDb
+          .update(providersTable)
+          .set({ mobileNumbers: [row.mobile] })
+          .where(eq(providersTable.userId, row.user_id));
+        updated++;
+      }
+
+      res.json({ ok: true, updated });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Backfill failed" });
+    }
+  });
+
   // Update pending provider fields (service + address) — with ownership check
   app.patch("/api/coadmin/pending-providers/:id", coAdminCheck, async (req, res) => {
     try {

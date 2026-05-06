@@ -3647,6 +3647,29 @@ export default function AdminDashboardPage() {
                 </div>
               )}
 
+              {/* Backfill existing providers missing mobileNumbers */}
+              <div className="rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/20 p-3 space-y-2">
+                <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">Fix: Purane Providers ka Mobile Number Restore Karein</p>
+                <p className="text-xs text-blue-600 dark:text-blue-400">Jo providers pehle import/approve hue aur unka call number missing tha — unhe profile mobile se automatically fix karo.</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full h-8 text-xs border-blue-300 text-blue-700 dark:border-blue-700 dark:text-blue-300"
+                  data-testid="button-backfill-mobile-numbers"
+                  onClick={async () => {
+                    try {
+                      const res = await fetch("/api/admin/backfill-provider-mobile-numbers", { method: "POST", credentials: "include" });
+                      const d = await res.json();
+                      toast({ title: `✅ ${d.updated} providers ke mobile numbers fix ho gaye` });
+                    } catch {
+                      toast({ title: "Backfill failed", variant: "destructive" });
+                    }
+                  }}
+                >
+                  Fix Missing Mobile Numbers
+                </Button>
+              </div>
+
               {/* Cleanup */}
               <div className="rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/20 p-3 space-y-2">
                 <p className="text-xs font-semibold text-red-800 dark:text-red-300">Cleanup: Delete No-Mobile Records</p>
