@@ -1684,7 +1684,10 @@ export default function AdminDashboardPage() {
       toast({ title: "✅ Report email sent!", description: "Check your inbox." });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-report-log"] });
     },
-    onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to send"}`, variant: "destructive" }),
+    onError: (err: any) => {
+      toast({ title: `❌ ${err.message || "Failed to send"}`, variant: "destructive" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-report-log"] });
+    },
   });
 
   const freezeCredits = useMutation({

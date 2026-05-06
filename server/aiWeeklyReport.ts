@@ -20,13 +20,33 @@ export async function sendAiWeeklyReport(): Promise<{ sent: boolean; error?: str
   try {
     const cfg = await storage.getAiWeeklyReportConfig();
     if (!cfg.enabled || !cfg.email) {
-      return { sent: false, error: "Weekly report disabled or no email configured" };
+      const errMsg = "Weekly report disabled or no email configured";
+      await storage.insertAiReportLog({
+        recipient: cfg.email || "not set",
+        success: false,
+        totalTokens: 0,
+        estimatedCost: "$0.0000",
+        peakTokens: 0,
+        exceededHours: 0,
+        errorMsg: errMsg,
+      }).catch(() => {});
+      return { sent: false, error: errMsg };
     }
 
     const transporter = makeMailer();
     if (!transporter) {
+      const errMsg = "Gmail SMTP not configured";
       console.warn("[AI Weekly Report] Gmail SMTP not configured — skipping email");
-      return { sent: false, error: "Gmail SMTP not configured" };
+      await storage.insertAiReportLog({
+        recipient: cfg.email,
+        success: false,
+        totalTokens: 0,
+        estimatedCost: "$0.0000",
+        peakTokens: 0,
+        exceededHours: 0,
+        errorMsg: errMsg,
+      }).catch(() => {});
+      return { sent: false, error: errMsg };
     }
 
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
