@@ -385,8 +385,11 @@ function applyMergeConflictResolution(sql: string): string {
     .map((line) => {
       const trimmed = line.trimStart();
       const upper = trimmed.toUpperCase();
-      // Skip lines that already carry a conflict clause (idempotent).
-      if (upper.includes("ON CONFLICT")) return line;
+      // Skip lines that already carry a conflict clause immediately before the
+      // final semicolon (idempotent). We check the *tail* of the statement so
+      // that string literals containing the text "on conflict" are not mistaken
+      // for an actual SQL ON CONFLICT clause.
+      if (/ON CONFLICT\s+DO\s+\w+\s*;[\t ]*$/i.test(line)) return line;
       if (upper.startsWith("INSERT INTO") && line.trimEnd().endsWith(";")) {
         const lastSemi = line.lastIndexOf(";");
         return line.slice(0, lastSemi) + " ON CONFLICT DO NOTHING;";
