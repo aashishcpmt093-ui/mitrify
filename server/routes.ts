@@ -3251,7 +3251,8 @@ export async function registerRoutes(
   }
 
   // ── Rolling hourly token tracker (DB-backed for restart survival) ─────────
-  const AI_TOKEN_HOUR_THRESHOLD = Number(process.env.AI_TOKEN_HOUR_THRESHOLD) || 100_000;
+  const AI_TOKEN_HOUR_THRESHOLD_DEFAULT = Number(process.env.AI_TOKEN_HOUR_THRESHOLD) || 100_000;
+  const AI_TOKEN_CONFIG_KEY = "ai_token_hour_threshold";
   const _aiTokenLog: Array<{ ts: number; tokens: number }> = [];
   let _aiTokenLogSeeded = false;
   let _lastTokenWarnTs = 0;
@@ -3283,7 +3284,24 @@ export async function registerRoutes(
     }
   }
 
-  function recordAiTokenUsage(tokens: number): void {
+  // Cache the threshold from DB for 60s to avoid a DB hit on every token record
+  let _aiThresholdCache: { value: number; expiresAt: number } | null = null;
+
+  async function getAiTokenThreshold(): Promise<number> {
+    const now = Date.now();
+    if (_aiThresholdCache && now < _aiThresholdCache.expiresAt) return _aiThresholdCache.value;
+    try {
+      const [row] = await db.select().from(siteContent).where(eq(siteContent.key, AI_TOKEN_CONFIG_KEY));
+      const dbVal = row ? Number((row.value as any)?.threshold ?? row.value) : NaN;
+      const value = Number.isFinite(dbVal) && dbVal > 0 ? dbVal : AI_TOKEN_HOUR_THRESHOLD_DEFAULT;
+      _aiThresholdCache = { value, expiresAt: now + 60_000 };
+      return value;
+    } catch {
+      return AI_TOKEN_HOUR_THRESHOLD_DEFAULT;
+    }
+  }
+
+  async function recordAiTokenUsage(tokens: number): Promise<void> {
     // Retry seeding if startup seed failed (fire-and-forget, idempotent)
     ensureAiTokenLogSeeded().catch(() => {});
     const now = Date.now();
@@ -3299,9 +3317,10 @@ export async function registerRoutes(
     storage.pruneOldAiTokenUsage(new Date(now - 2 * 60 * 60 * 1000)).catch(() => {});
     // Sum current hour and warn if threshold exceeded
     const hourTotal = _aiTokenLog.reduce((acc, e) => acc + e.tokens, 0);
-    if (hourTotal >= AI_TOKEN_HOUR_THRESHOLD && now - _lastTokenWarnTs >= AI_TOKEN_WARN_COOLDOWN_MS) {
+    const threshold = await getAiTokenThreshold();
+    if (hourTotal >= threshold && now - _lastTokenWarnTs >= AI_TOKEN_WARN_COOLDOWN_MS) {
       _lastTokenWarnTs = now;
-      console.warn(`[AI] WARNING: High token usage — ${hourTotal.toLocaleString()} tokens in last hour (threshold: ${AI_TOKEN_HOUR_THRESHOLD.toLocaleString()})`);
+      console.warn(`[AI] WARNING: High token usage — ${hourTotal.toLocaleString()} tokens in last hour (threshold: ${threshold.toLocaleString()})`);
     }
   }
 
@@ -3316,19 +3335,52 @@ export async function registerRoutes(
   ensureAiTokenLogSeeded().catch(() => {});
 
   // Health check: is AI configured? Used to verify Railway env var setup.
-  app.get("/api/ai/status", (_req, res) => {
+  app.get("/api/ai/status", async (_req, res) => {
     const configured = !!getGeminiKeyForChat();
     const hourlyTokens = getAiHourlyTokens();
-    const thresholdExceeded = hourlyTokens >= AI_TOKEN_HOUR_THRESHOLD;
+    const hourlyThreshold = await getAiTokenThreshold();
+    const thresholdExceeded = hourlyTokens >= hourlyThreshold;
     res.status(configured ? 200 : 503).json({
       ai: configured ? "enabled" : "disabled",
       message: configured
         ? "Gemini API key configured — AI chat is active"
         : "No GOOGLE_API_KEY or GEMINI_API_KEY found — AI chat will return 503",
       hourlyTokens,
-      hourlyThreshold: AI_TOKEN_HOUR_THRESHOLD,
+      hourlyThreshold,
       thresholdExceeded,
     });
+  });
+
+  // Admin: get AI config (threshold)
+  app.get("/api/admin/ai-config", adminCheck, async (_req, res) => {
+    try {
+      const threshold = await getAiTokenThreshold();
+      res.json({ threshold });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to read AI config" });
+    }
+  });
+
+  // Admin: update AI config (threshold)
+  app.put("/api/admin/ai-config", adminCheck, async (req, res) => {
+    try {
+      const raw = Number(req.body?.threshold);
+      if (!Number.isFinite(raw) || raw < 1000 || raw > 10_000_000) {
+        return res.status(400).json({ message: "Threshold must be between 1,000 and 10,000,000" });
+      }
+      const value = { threshold: Math.round(raw) };
+      const existing = await db.select().from(siteContent).where(eq(siteContent.key, AI_TOKEN_CONFIG_KEY));
+      if (existing.length > 0) {
+        await db.update(siteContent).set({ value, updatedAt: new Date() }).where(eq(siteContent.key, AI_TOKEN_CONFIG_KEY));
+      } else {
+        await db.insert(siteContent).values({ key: AI_TOKEN_CONFIG_KEY, value, updatedAt: new Date() });
+      }
+      // Bust the in-memory cache so the new value takes effect immediately
+      _aiThresholdCache = null;
+      res.json({ threshold: value.threshold });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to update AI config" });
+    }
   });
 
   const USER_SYSTEM_PROMPT = `You are Mitrify AI, a helpful assistant for Mitrify — a service marketplace platform that connects customers with nearby service providers in India.

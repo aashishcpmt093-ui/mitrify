@@ -1435,6 +1435,32 @@ export default function AdminDashboardPage() {
     },
     onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to save"}`, variant: "destructive" }),
   });
+  const [aiThresholdInput, setAiThresholdInput] = useState<string>("");
+  const { data: aiConfigData } = useQuery<{ threshold: number }>({
+    queryKey: ["/api/admin/ai-config"],
+    enabled: !!isAdmin,
+  });
+  useEffect(() => {
+    if (aiConfigData?.threshold !== undefined && aiThresholdInput === "") {
+      setAiThresholdInput(String(aiConfigData.threshold));
+    }
+  }, [aiConfigData]);
+  const saveAiConfig = useMutation({
+    mutationFn: async () => {
+      const threshold = Number(aiThresholdInput);
+      if (!Number.isFinite(threshold) || threshold < 1000 || threshold > 10_000_000) {
+        throw new Error("Threshold 1,000 se 10,000,000 ke beech honi chahiye");
+      }
+      return await apiRequest("PUT", "/api/admin/ai-config", { threshold }).then(r => r.json());
+    },
+    onSuccess: (data) => {
+      toast({ title: "✅ AI threshold saved!", description: `Naya threshold: ${Number(data.threshold).toLocaleString()} tokens/hr` });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-config"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/ai/status"] });
+    },
+    onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to save"}`, variant: "destructive" }),
+  });
+
   const freezeCredits = useMutation({
     mutationFn: async ({ userId, role, freeze }: { userId: string; role: string; freeze: boolean }) => {
       const res = await apiRequest("POST", `/api/admin/freeze-credits/${userId}/${role}`, { freeze }); return res.json();
@@ -2087,6 +2113,7 @@ export default function AdminDashboardPage() {
             { value: "creditpurchase", icon: Coins, label: "Credit Buy", count: purchaseCount,         iconBg: "bg-purple-100 dark:bg-purple-900/60",  iconColor: "text-purple-600 dark:text-purple-400",  activeBg: "bg-purple-600",  border: "border-purple-200 dark:border-purple-800" },
             { value: "duplicateentry", icon: Copy,  label: "Duplicate",  count: duplicateData?.length, iconBg: "bg-red-100 dark:bg-red-900/60",         iconColor: "text-red-600 dark:text-red-400",        activeBg: "bg-red-600",     border: "border-red-200 dark:border-red-800" },
             { value: "subscriptions", icon: Sparkles, label: "Plans",   count: undefined,             iconBg: "bg-amber-100 dark:bg-amber-900/60",     iconColor: "text-amber-600 dark:text-amber-400",    activeBg: "bg-amber-600",   border: "border-amber-200 dark:border-amber-800" },
+            { value: "ai",        icon: Sparkles,   label: "AI",         count: undefined,             iconBg: "bg-fuchsia-100 dark:bg-fuchsia-900/60",  iconColor: "text-fuchsia-600 dark:text-fuchsia-400", activeBg: "bg-fuchsia-600", border: "border-fuchsia-200 dark:border-fuchsia-800" },
             { value: "bulkdelete", icon: Trash2,   label: "Bulk Del",   count: undefined,             iconBg: "bg-rose-100 dark:bg-rose-900/60",        iconColor: "text-rose-600 dark:text-rose-400",       activeBg: "bg-rose-600",    border: "border-rose-200 dark:border-rose-800" },
             { value: "backup",    icon: Database,   label: "Backup",     count: undefined,             iconBg: "bg-amber-100 dark:bg-amber-900/60",     iconColor: "text-amber-600 dark:text-amber-400",    activeBg: "bg-amber-600",   border: "border-amber-200 dark:border-amber-800",
               onClick: () => {
@@ -4244,7 +4271,56 @@ export default function AdminDashboardPage() {
             <SubscriptionsAdminPanel />
           </TabsContent>
 
-          {/* ── BULK DELETE TAB ── */}
+          {/* ── AI TAB ── */}
+          <TabsContent value="ai" className="space-y-4">
+            <div className="bg-white dark:bg-slate-900 border border-fuchsia-200 dark:border-fuchsia-800/40 rounded-2xl p-5 space-y-4 shadow-sm">
+              <h3 className="font-bold text-base flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-fuchsia-100 dark:bg-fuchsia-900/40 flex items-center justify-center">
+                  <Sparkles className="w-4 h-4 text-fuchsia-600 dark:text-fuchsia-400" />
+                </div>
+                AI Token Alert Threshold
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Agar kisi ek ghante mein AI token usage is limit se zyada ho jaye, toh server console par warning log hogi.
+                AI chat band nahi hoga — sirf alert milega.
+              </p>
+              <div className="space-y-1.5">
+                <Label htmlFor="input-ai-threshold">Threshold (tokens per hour)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="input-ai-threshold"
+                    type="number"
+                    min={1000}
+                    max={10000000}
+                    step={1000}
+                    value={aiThresholdInput}
+                    onChange={e => setAiThresholdInput(e.target.value)}
+                    className="rounded-xl flex-1"
+                    placeholder="100000"
+                    data-testid="input-ai-threshold"
+                  />
+                  <Button
+                    onClick={() => saveAiConfig.mutate()}
+                    disabled={saveAiConfig.isPending}
+                    className="rounded-xl shrink-0"
+                    data-testid="button-save-ai-threshold"
+                  >
+                    <Save className="w-4 h-4 mr-2" />
+                    {saveAiConfig.isPending ? "Saving…" : "Save"}
+                  </Button>
+                </div>
+                {aiConfigData?.threshold !== undefined && (
+                  <p className="text-xs text-muted-foreground" data-testid="text-ai-threshold-current">
+                    Current: <span className="font-semibold text-fuchsia-600 dark:text-fuchsia-400">{aiConfigData.threshold.toLocaleString()}</span> tokens/hr
+                    {Number(process.env.AI_TOKEN_HOUR_THRESHOLD) > 0
+                      ? ` (env default overridden)`
+                      : ""}
+                  </p>
+                )}
+              </div>
+            </div>
+          </TabsContent>
+
           <TabsContent value="bulkdelete" className="space-y-3">
             <BulkDeletePanel />
           </TabsContent>
