@@ -1288,7 +1288,7 @@ export default function AdminDashboardPage() {
   const [metaLoading, setMetaLoading] = useState(false);
   const [metaResult, setMetaResult] = useState<{ imported: number; skipped: number; total: number; skippedNoMobile?: number } | null>(null);
 
-  const { data: isAdmin } = useQuery({
+  const { data: isAdmin, isLoading: isAdminLoading } = useQuery({
     queryKey: ["/api/admin/check"],
     queryFn: async () => {
       const res = await fetch("/api/admin/check", { credentials: "include" });
@@ -2339,6 +2339,11 @@ export default function AdminDashboardPage() {
     }
   };
 
+  if (isAdminLoading) return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+      <Loader2 className="w-8 h-8 animate-spin text-primary" />
+    </div>
+  );
   if (!isAdmin) return null;
 
   return (
