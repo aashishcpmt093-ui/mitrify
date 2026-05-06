@@ -3433,9 +3433,11 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/admin/ai-report-log", adminCheck, async (_req, res) => {
+  app.get("/api/admin/ai-report-log", adminCheck, async (req, res) => {
     try {
-      const logs = await storage.listAiReportLog(20);
+      const raw = parseInt(req.query.limit as string, 10);
+      const limit = Number.isFinite(raw) && raw > 0 ? Math.min(raw, 100) : 20;
+      const logs = await storage.listAiReportLog(limit);
       res.json(logs);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch report log" });

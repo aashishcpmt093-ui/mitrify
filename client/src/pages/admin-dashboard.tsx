@@ -1673,8 +1673,14 @@ export default function AdminDashboardPage() {
     },
     onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to save"}`, variant: "destructive" }),
   });
+  const [reportLogLimit, setReportLogLimit] = React.useState<number>(20);
   const { data: aiReportLogData } = useQuery<{ id: number; sentAt: string; recipient: string; success: boolean; totalTokens: number; estimatedCost: string; peakTokens: number; exceededHours: number; errorMsg: string | null }[]>({
-    queryKey: ["/api/admin/ai-report-log"],
+    queryKey: ["/api/admin/ai-report-log", reportLogLimit],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/ai-report-log?limit=${reportLogLimit}`, { credentials: "include" });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err?.message || "Failed to fetch report log"); }
+      return res.json();
+    },
     enabled: !!isAdmin,
   });
 
@@ -4755,7 +4761,21 @@ export default function AdminDashboardPage() {
             {/* ── Report History ── */}
             <div className="bg-white dark:bg-slate-900 border border-fuchsia-200 dark:border-fuchsia-800/40 rounded-2xl p-5 space-y-3 shadow-sm" data-testid="card-ai-report-log">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Report Send History</p>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Report Send History</p>
+                  <div className="flex items-center gap-1" data-testid="report-log-limit-selector">
+                    {([20, 50, 100] as const).map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => setReportLogLimit(n)}
+                        data-testid={`button-report-log-limit-${n}`}
+                        className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${reportLogLimit === n ? "bg-fuchsia-600 border-fuchsia-600 text-white" : "border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400 hover:border-fuchsia-400 hover:text-fuchsia-600 dark:hover:text-fuchsia-400"}`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 {aiReportLogData && aiReportLogData.length > 0 && (
                   clearLogConfirm ? (
                     <div className="flex items-center gap-2">
