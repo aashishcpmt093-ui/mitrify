@@ -165,6 +165,7 @@ export default function AIChat({ isAdmin = false }: AIChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [aiUnavailable, setAiUnavailable] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -195,11 +196,26 @@ export default function AIChat({ isAdmin = false }: AIChatProps) {
     setInput("");
     setLoading(true);
     try {
-      const res = await apiRequest("POST", "/api/ai/chat", {
-        message: text,
-        history: newMessages.slice(-10).map(m => ({ role: m.role, content: m.content })),
-        isAdmin: adminMode,
+      const res = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          message: text,
+          history: newMessages.slice(-10).map(m => ({ role: m.role, content: m.content })),
+          isAdmin: adminMode,
+        }),
       });
+      if (res.status === 503 || res.status === 502) {
+        setAiUnavailable(true);
+        setMessages(prev => [...prev, { role: "assistant", content: "__ai_unavailable__" }]);
+        return;
+      }
+      setAiUnavailable(false);
+      if (!res.ok) {
+        setMessages(prev => [...prev, { role: "assistant", content: "Kuch problem aa gayi. Dobara try karo." }]);
+        return;
+      }
       const data = await res.json();
       const assistantMsg: Message = {
         role: "assistant",
@@ -208,7 +224,8 @@ export default function AIChat({ isAdmin = false }: AIChatProps) {
       };
       setMessages(prev => [...prev, assistantMsg]);
     } catch {
-      setMessages(prev => [...prev, { role: "assistant", content: "Server se baat nahi ho payi. Thodi der baad try karo." }]);
+      setAiUnavailable(true);
+      setMessages(prev => [...prev, { role: "assistant", content: "__ai_unavailable__" }]);
     } finally {
       setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 100);
@@ -279,6 +296,24 @@ export default function AIChat({ isAdmin = false }: AIChatProps) {
             </div>
           </div>
 
+          {aiUnavailable && (
+            <div
+              className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950 border-b border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 text-xs font-medium"
+              data-testid="banner-ai-unavailable"
+            >
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              <span>AI is temporarily unavailable — please try again later</span>
+              <button
+                onClick={() => setAiUnavailable(false)}
+                className="ml-auto p-0.5 rounded hover:bg-amber-100 dark:hover:bg-amber-900 transition"
+                data-testid="button-ai-unavailable-dismiss"
+                aria-label="Dismiss"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
             {messages.map((m, i) => (
               <div
@@ -292,15 +327,25 @@ export default function AIChat({ isAdmin = false }: AIChatProps) {
                       <Bot className="w-3 h-3 text-white" />
                     </div>
                   )}
-                  <div
-                    className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap leading-relaxed ${
-                      m.role === "user"
-                        ? "bg-gradient-to-br from-violet-600 to-indigo-600 text-white rounded-br-sm"
-                        : "bg-slate-100 dark:bg-slate-800 text-foreground rounded-bl-sm"
-                    }`}
-                  >
-                    {m.content}
-                  </div>
+                  {m.content === "__ai_unavailable__" ? (
+                    <div
+                      className="flex items-center gap-1.5 max-w-[80%] px-3 py-2 rounded-2xl rounded-bl-sm text-sm bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300"
+                      data-testid={`msg-unavailable-${i}`}
+                    >
+                      <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span>AI abhi available nahi hai. Thodi der baad try karo.</span>
+                    </div>
+                  ) : (
+                    <div
+                      className={`max-w-[80%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap leading-relaxed ${
+                        m.role === "user"
+                          ? "bg-gradient-to-br from-violet-600 to-indigo-600 text-white rounded-br-sm"
+                          : "bg-slate-100 dark:bg-slate-800 text-foreground rounded-bl-sm"
+                      }`}
+                    >
+                      {m.content}
+                    </div>
+                  )}
                 </div>
 
                 {m.role === "assistant" && m.action && (
