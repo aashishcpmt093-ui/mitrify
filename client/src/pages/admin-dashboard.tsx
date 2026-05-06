@@ -1643,6 +1643,42 @@ export default function AdminDashboardPage() {
     onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to save"}`, variant: "destructive" }),
   });
 
+  const [weeklyReportEmail, setWeeklyReportEmail] = useState<string>("");
+  const [weeklyReportEnabled, setWeeklyReportEnabled] = useState<boolean>(false);
+  const { data: weeklyReportCfg } = useQuery<{ email: string; enabled: boolean }>({
+    queryKey: ["/api/admin/ai-weekly-report-config"],
+    enabled: !!isAdmin,
+  });
+  useEffect(() => {
+    if (weeklyReportCfg) {
+      setWeeklyReportEmail(weeklyReportCfg.email ?? "");
+      setWeeklyReportEnabled(weeklyReportCfg.enabled ?? false);
+    }
+  }, [weeklyReportCfg]);
+  const saveWeeklyReport = useMutation({
+    mutationFn: async () => {
+      if (weeklyReportEnabled && (!weeklyReportEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(weeklyReportEmail))) {
+        throw new Error("Valid email address required");
+      }
+      return await apiRequest("PUT", "/api/admin/ai-weekly-report-config", { email: weeklyReportEmail, enabled: weeklyReportEnabled }).then(r => r.json());
+    },
+    onSuccess: () => {
+      toast({ title: "✅ Weekly report settings saved!" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-weekly-report-config"] });
+    },
+    onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to save"}`, variant: "destructive" }),
+  });
+  const sendReportNow = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/ai-weekly-report/send-now", {});
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || "Failed to send");
+      return data;
+    },
+    onSuccess: () => toast({ title: "✅ Report email sent!", description: "Check your inbox." }),
+    onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to send"}`, variant: "destructive" }),
+  });
+
   const freezeCredits = useMutation({
     mutationFn: async ({ userId, role, freeze }: { userId: string; role: string; freeze: boolean }) => {
       const res = await apiRequest("POST", `/api/admin/freeze-credits/${userId}/${role}`, { freeze }); return res.json();
@@ -4504,6 +4540,77 @@ export default function AdminDashboardPage() {
                   </p>
                 )}
               </div>
+            </div>
+
+            {/* ── Weekly AI Cost Report ── */}
+            <div className="bg-white dark:bg-slate-900 border border-fuchsia-200 dark:border-fuchsia-800/40 rounded-2xl p-5 space-y-4 shadow-sm">
+              <h3 className="font-bold text-base flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-fuchsia-100 dark:bg-fuchsia-900/40 flex items-center justify-center">
+                  <Mail className="w-4 h-4 text-fuchsia-600 dark:text-fuchsia-400" />
+                </div>
+                Weekly AI Cost Report
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Har Somwar 9 AM IST pe ek email aayegi jisme 7 din ka token usage summary hoga — total tokens, peak hour, aur kitne ghante threshold cross ki.
+              </p>
+
+              <div className="flex items-center gap-3">
+                <Switch
+                  id="switch-weekly-report-enabled"
+                  checked={weeklyReportEnabled}
+                  onCheckedChange={setWeeklyReportEnabled}
+                  data-testid="switch-weekly-report-enabled"
+                />
+                <Label htmlFor="switch-weekly-report-enabled" className="cursor-pointer">
+                  {weeklyReportEnabled ? "Weekly report enabled" : "Weekly report disabled"}
+                </Label>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="input-weekly-report-email">Report recipient email</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="input-weekly-report-email"
+                    type="email"
+                    value={weeklyReportEmail}
+                    onChange={e => setWeeklyReportEmail(e.target.value)}
+                    className="rounded-xl flex-1"
+                    placeholder="admin@example.com"
+                    data-testid="input-weekly-report-email"
+                  />
+                  <Button
+                    onClick={() => saveWeeklyReport.mutate()}
+                    disabled={saveWeeklyReport.isPending}
+                    className="rounded-xl shrink-0"
+                    data-testid="button-save-weekly-report"
+                  >
+                    <Save className="w-4 h-4 mr-2" />
+                    {saveWeeklyReport.isPending ? "Saving…" : "Save"}
+                  </Button>
+                </div>
+                {weeklyReportCfg?.email && (
+                  <p className="text-xs text-muted-foreground" data-testid="text-weekly-report-current">
+                    Current:{" "}
+                    <span className="font-semibold text-fuchsia-600 dark:text-fuchsia-400">{weeklyReportCfg.email}</span>
+                    {" · "}
+                    <span className={weeklyReportCfg.enabled ? "text-green-600 dark:text-green-400" : "text-slate-500"}>
+                      {weeklyReportCfg.enabled ? "Enabled" : "Disabled"}
+                    </span>
+                  </p>
+                )}
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => sendReportNow.mutate()}
+                disabled={sendReportNow.isPending || !weeklyReportCfg?.email}
+                className="rounded-xl"
+                data-testid="button-send-report-now"
+              >
+                <Mail className="w-4 h-4 mr-2" />
+                {sendReportNow.isPending ? "Sending…" : "Send Report Now"}
+              </Button>
             </div>
           </TabsContent>
 

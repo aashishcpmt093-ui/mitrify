@@ -198,6 +198,10 @@ export interface IStorage {
   getAiTokenUsageSince(since: Date): Promise<AiTokenUsage[]>;
   getAiTokenUsageByHour(since: Date): Promise<{ hour: string; tokens: number }[]>;
   pruneOldAiTokenUsage(before: Date): Promise<void>;
+
+  // AI weekly report email config
+  getAiWeeklyReportConfig(): Promise<{ email: string; enabled: boolean }>;
+  setAiWeeklyReportConfig(cfg: { email: string; enabled: boolean }): Promise<void>;
 }
 
 function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -2504,6 +2508,27 @@ export class DatabaseStorage implements IStorage {
 
   async pruneOldAiTokenUsage(before: Date): Promise<void> {
     await db.delete(aiTokenUsage).where(lt(aiTokenUsage.ts, before));
+  }
+
+  async getAiWeeklyReportConfig(): Promise<{ email: string; enabled: boolean }> {
+    const [row] = await db.select().from(siteContent).where(eq(siteContent.key, "ai_weekly_report_config"));
+    if (!row || !row.value || typeof row.value !== "object" || Array.isArray(row.value)) {
+      return { email: "", enabled: false };
+    }
+    const val = row.value as Record<string, unknown>;
+    return {
+      email: typeof val.email === "string" ? val.email : "",
+      enabled: val.enabled === true,
+    };
+  }
+
+  async setAiWeeklyReportConfig(cfg: { email: string; enabled: boolean }): Promise<void> {
+    const [existing] = await db.select().from(siteContent).where(eq(siteContent.key, "ai_weekly_report_config"));
+    if (existing) {
+      await db.update(siteContent).set({ value: cfg, updatedAt: new Date() }).where(eq(siteContent.key, "ai_weekly_report_config"));
+    } else {
+      await db.insert(siteContent).values({ key: "ai_weekly_report_config", value: cfg, updatedAt: new Date() });
+    }
   }
 }
 

@@ -17,6 +17,8 @@ import multer from "multer";
 import * as XLSX from "xlsx";
 import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory, recordBackupHistory } from "./backupJob";
 import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverStaleJobs } from "./lib/auto-tags";
+import { startAiWeeklyReportScheduler, sendAiWeeklyReport } from "./aiWeeklyReport";
+import { AI_TOKEN_CONFIG_KEY, AI_TOKEN_HOUR_THRESHOLD_DEFAULT, getAiTokenThreshold, bustAiThresholdCache } from "./lib/aiConfig";
 import { searchGoogleFallback, searchSavedGoogleLeads } from "./googleFallbackSearch";
 // Per-admin daily quota for Google Places admin search. In-memory map of
 // `{ adminKey -> [timestampMs] }`. Resets on process restart (acceptable —
@@ -3251,8 +3253,8 @@ export async function registerRoutes(
   }
 
   // ── Rolling hourly token tracker (DB-backed for restart survival) ─────────
-  const AI_TOKEN_HOUR_THRESHOLD_DEFAULT = Number(process.env.AI_TOKEN_HOUR_THRESHOLD) || 100_000;
-  const AI_TOKEN_CONFIG_KEY = "ai_token_hour_threshold";
+  // AI_TOKEN_CONFIG_KEY, AI_TOKEN_HOUR_THRESHOLD_DEFAULT, and getAiTokenThreshold
+  // are imported from ./lib/aiConfig so the weekly report job can share them.
   const _aiTokenLog: Array<{ ts: number; tokens: number }> = [];
   let _aiTokenLogSeeded = false;
   let _lastTokenWarnTs = 0;
@@ -3284,22 +3286,6 @@ export async function registerRoutes(
     }
   }
 
-  // Cache the threshold from DB for 60s to avoid a DB hit on every token record
-  let _aiThresholdCache: { value: number; expiresAt: number } | null = null;
-
-  async function getAiTokenThreshold(): Promise<number> {
-    const now = Date.now();
-    if (_aiThresholdCache && now < _aiThresholdCache.expiresAt) return _aiThresholdCache.value;
-    try {
-      const [row] = await db.select().from(siteContent).where(eq(siteContent.key, AI_TOKEN_CONFIG_KEY));
-      const dbVal = row ? Number((row.value as any)?.threshold ?? row.value) : NaN;
-      const value = Number.isFinite(dbVal) && dbVal > 0 ? dbVal : AI_TOKEN_HOUR_THRESHOLD_DEFAULT;
-      _aiThresholdCache = { value, expiresAt: now + 60_000 };
-      return value;
-    } catch {
-      return AI_TOKEN_HOUR_THRESHOLD_DEFAULT;
-    }
-  }
 
   async function recordAiTokenUsage(tokens: number): Promise<void> {
     // Retry seeding if startup seed failed (fire-and-forget, idempotent)
@@ -3396,6 +3382,47 @@ export async function registerRoutes(
     }
   });
 
+  // Admin: get AI weekly report config
+  app.get("/api/admin/ai-weekly-report-config", adminCheck, async (_req, res) => {
+    try {
+      const cfg = await storage.getAiWeeklyReportConfig();
+      res.json(cfg);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to read AI weekly report config" });
+    }
+  });
+
+  // Admin: save AI weekly report config
+  app.put("/api/admin/ai-weekly-report-config", adminCheck, async (req, res) => {
+    try {
+      const { email, enabled } = req.body ?? {};
+      if (typeof email !== "string" || (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
+        return res.status(400).json({ message: "Valid email address required" });
+      }
+      if (enabled && !email.trim()) {
+        return res.status(400).json({ message: "Email address required when weekly report is enabled" });
+      }
+      await storage.setAiWeeklyReportConfig({ email: email.trim(), enabled: !!enabled });
+      res.json({ email: email.trim(), enabled: !!enabled });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to save AI weekly report config" });
+    }
+  });
+
+  // Admin: send weekly report right now (test / manual trigger)
+  app.post("/api/admin/ai-weekly-report/send-now", adminCheck, async (_req, res) => {
+    try {
+      const result = await sendAiWeeklyReport();
+      if (result.sent) {
+        res.json({ success: true });
+      } else {
+        res.status(400).json({ success: false, message: result.error });
+      }
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err?.message || "Failed to send report" });
+    }
+  });
+
   // Admin: update AI config (threshold)
   app.put("/api/admin/ai-config", adminCheck, async (req, res) => {
     try {
@@ -3411,7 +3438,7 @@ export async function registerRoutes(
         await db.insert(siteContent).values({ key: AI_TOKEN_CONFIG_KEY, value, updatedAt: new Date() });
       }
       // Bust the in-memory cache so the new value takes effect immediately
-      _aiThresholdCache = null;
+      bustAiThresholdCache();
       res.json({ threshold: value.threshold });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to update AI config" });
@@ -3813,6 +3840,7 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
   });
 
   startBackupScheduler();
+  startAiWeeklyReportScheduler();
 
   return httpServer;
 }
