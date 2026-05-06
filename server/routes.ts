@@ -3284,10 +3284,69 @@ Platform details:
 - Providers need verification
 - Admin can: delete users, block accounts, gift credits, manage subscriptions
 
-When admin asks to find/identify users, explain what filters to use in the Bulk Delete section.
-When admin asks to delete users, tell them to go to "Bulk Del" tab and use the appropriate filter.
+When admin asks to find users (no mobile, no location, suspicious names), I will automatically fetch and show them a user list with a delete button.
+When admin asks to delete users matching a filter, I will show the list and ask for confirmation before deleting.
 
 Be direct, analytical, and practical. Respond in the language the admin uses (Hindi/English/Hinglish).`;
+
+  function detectAdminAction(message: string): { filter: "noMobile" | "noLocation" | "suspiciousName"; intent: "list" | "delete" } | null {
+    const lower = message.toLowerCase();
+    const listWords = ["list", "show", "find", "dhundho", "batao", "nikalo", "check", "dekho", "kaun", "kitne", "count", "dikhao", "karo", "chahiye"];
+    const deleteWords = ["delete", "hatao", "remove", "clean", "saaf", "hata do", "hata", "del"];
+    const hasList = listWords.some(k => lower.includes(k));
+    const hasDelete = deleteWords.some(k => lower.includes(k));
+    if (!hasList && !hasDelete) return null;
+    const intent = hasDelete ? "delete" : "list";
+    if (lower.includes("no mobile") || lower.includes("bina mobile") || lower.includes("mobile nahi") || lower.includes("without mobile") || lower.includes("mobile number nahi") || lower.includes("mobile number nhi")) {
+      return { filter: "noMobile", intent };
+    }
+    if (lower.includes("no location") || lower.includes("bina location") || lower.includes("location nahi") || lower.includes("without location") || lower.includes("gps nahi") || lower.includes("location nhi")) {
+      return { filter: "noLocation", intent };
+    }
+    if (lower.includes("suspicious") || lower.includes("fake") || lower.includes("shak") || lower.includes("ganda naam") || lower.includes("random") || lower.includes("suspicious name") || lower.includes("test user") || lower.includes("galat naam")) {
+      return { filter: "suspiciousName", intent };
+    }
+    return null;
+  }
+
+  async function fetchFilteredUsersForAI(filter: "noMobile" | "noLocation" | "suspiciousName") {
+    function isSuspiciousName(name: string | null): boolean {
+      if (!name || name.trim().length < 2) return true;
+      if (/^[0-9\s\W]+$/.test(name.trim())) return true;
+      const lname = name.toLowerCase().trim();
+      const fakeNames = ["test", "user", "admin", "provider", "customer", "demo", "abc", "xyz", "na", "n/a", "none", "null"];
+      if (fakeNames.includes(lname)) return true;
+      return false;
+    }
+    const allProfiles = await storage.getProfilesByRole("customer");
+    const allProviders = await storage.getAllProviders();
+    const allUsers = [
+      ...allProfiles,
+      ...(await storage.getProfilesByRole("provider")),
+    ];
+    const dedupedUsers = Array.from(new Map(allUsers.map(u => [u.userId, u])).values());
+    let filtered = dedupedUsers;
+    if (filter === "noMobile") {
+      filtered = dedupedUsers.filter(u => {
+        const mob = (u as any).mobile || (u as any).mobileNumber || "";
+        return !mob || mob.trim() === "";
+      });
+    } else if (filter === "noLocation") {
+      filtered = dedupedUsers.filter(u => {
+        const prov = allProviders.find(p => p.userId === u.userId);
+        if (!prov) return false;
+        return !prov.latitude || !prov.longitude;
+      });
+    } else if (filter === "suspiciousName") {
+      filtered = dedupedUsers.filter(u => isSuspiciousName(u.name));
+    }
+    return filtered.map(u => ({
+      userId: u.userId,
+      name: u.name || null,
+      mobile: (u as any).mobile || (u as any).mobileNumber || null,
+      role: u.role || "customer",
+    }));
+  }
 
   app.post("/api/ai/chat", async (req, res) => {
     try {
@@ -3345,7 +3404,27 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
 
       const data = await resp.json() as any;
       const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Kuch samajh nahi aaya. Dobara puchho.";
-      res.json({ reply });
+
+      let action: any = undefined;
+      if (useAdminMode) {
+        const detected = detectAdminAction(message);
+        if (detected) {
+          try {
+            const users = await fetchFilteredUsersForAI(detected.filter);
+            action = {
+              type: "user_list",
+              filter: detected.filter,
+              intent: detected.intent,
+              users: users.slice(0, 150),
+              total: users.length,
+            };
+          } catch (e) {
+            console.error("AI action fetch error:", e);
+          }
+        }
+      }
+
+      res.json({ reply, action });
     } catch (err: any) {
       console.error("AI chat error:", err);
       res.status(500).json({ reply: "Kuch gadbad ho gayi. Dobara try karo." });
