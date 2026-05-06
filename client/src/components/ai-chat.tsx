@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Bot, X, Send, Loader2, ChevronDown, Trash2, Users, AlertTriangle, CheckCircle2 } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { Bot, X, Send, Loader2, ChevronDown, Trash2, Users, AlertTriangle, CheckCircle2, Activity } from "lucide-react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
-import { queryClient } from "@/lib/queryClient";
+import { useQuery } from "@tanstack/react-query";
 
 interface ActionUser {
   userId: string;
@@ -171,6 +171,17 @@ export default function AIChat({ isAdmin = false }: AIChatProps) {
 
   const adminMode = isAdmin || user?.role === "admin" || user?.role === "mainadmin";
 
+  const { data: aiStatus } = useQuery<{
+    ai: string;
+    hourlyTokens: number;
+    hourlyThreshold: number;
+    thresholdExceeded: boolean;
+  }>({
+    queryKey: ["/api/ai/status"],
+    enabled: adminMode && open,
+    refetchInterval: adminMode && open ? 30_000 : false,
+  });
+
   useEffect(() => {
     if (open && messages.length === 0) {
       setMessages([
@@ -275,6 +286,23 @@ export default function AIChat({ isAdmin = false }: AIChatProps) {
               <span className="font-bold text-white text-sm">Mitrify AI</span>
               {adminMode && (
                 <span className="text-[10px] bg-white/20 text-white px-2 py-0.5 rounded-full font-semibold">Admin</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {adminMode && aiStatus != null && (
+                <div
+                  className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                    aiStatus.thresholdExceeded
+                      ? "bg-red-500/80 text-white"
+                      : "bg-white/20 text-white"
+                  }`}
+                  data-testid="text-ai-hourly-tokens"
+                  title={`Threshold: ${aiStatus.hourlyThreshold.toLocaleString()} tokens/hr`}
+                >
+                  <Activity className="w-3 h-3" />
+                  {aiStatus.hourlyTokens.toLocaleString()} tok/hr
+                  {aiStatus.thresholdExceeded && <AlertTriangle className="w-3 h-3 ml-0.5" />}
+                </div>
               )}
             </div>
             <div className="flex items-center gap-1">

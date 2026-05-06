@@ -3250,14 +3250,44 @@ export async function registerRoutes(
     return process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
   }
 
+  // ── Rolling hourly token tracker ──────────────────────────────────────────
+  const AI_TOKEN_HOUR_THRESHOLD = Number(process.env.AI_TOKEN_HOUR_THRESHOLD) || 100_000;
+  const _aiTokenLog: Array<{ ts: number; tokens: number }> = [];
+  let _lastTokenWarnTs = 0;
+  const AI_TOKEN_WARN_COOLDOWN_MS = 10 * 60 * 1000; // warn at most once every 10 min
+
+  function recordAiTokenUsage(tokens: number): void {
+    const now = Date.now();
+    _aiTokenLog.push({ ts: now, tokens });
+    // Prune entries older than 1 hour
+    const cutoff = now - 60 * 60 * 1000;
+    while (_aiTokenLog.length > 0 && _aiTokenLog[0].ts < cutoff) _aiTokenLog.shift();
+    // Sum current hour
+    const hourTotal = _aiTokenLog.reduce((acc, e) => acc + e.tokens, 0);
+    if (hourTotal >= AI_TOKEN_HOUR_THRESHOLD && now - _lastTokenWarnTs >= AI_TOKEN_WARN_COOLDOWN_MS) {
+      _lastTokenWarnTs = now;
+      console.warn(`[AI] WARNING: High token usage — ${hourTotal.toLocaleString()} tokens in last hour (threshold: ${AI_TOKEN_HOUR_THRESHOLD.toLocaleString()})`);
+    }
+  }
+
+  function getAiHourlyTokens(): number {
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    return _aiTokenLog.filter(e => e.ts >= cutoff).reduce((acc, e) => acc + e.tokens, 0);
+  }
+
   // Health check: is AI configured? Used to verify Railway env var setup.
   app.get("/api/ai/status", (_req, res) => {
     const configured = !!getGeminiKeyForChat();
+    const hourlyTokens = getAiHourlyTokens();
+    const thresholdExceeded = hourlyTokens >= AI_TOKEN_HOUR_THRESHOLD;
     res.status(configured ? 200 : 503).json({
       ai: configured ? "enabled" : "disabled",
       message: configured
         ? "Gemini API key configured — AI chat is active"
         : "No GOOGLE_API_KEY or GEMINI_API_KEY found — AI chat will return 503",
+      hourlyTokens,
+      hourlyThreshold: AI_TOKEN_HOUR_THRESHOLD,
+      thresholdExceeded,
     });
   });
 
@@ -3443,7 +3473,10 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
     const data = await resp.json() as GeminiResponse;
     const ms = Date.now() - t0;
     const u = data.usageMetadata;
-    console.log(`[AI] Gemini call: ${ms}ms | prompt=${u?.promptTokenCount ?? "?"} tokens | output=${u?.candidatesTokenCount ?? "?"} tokens`);
+    const promptTok = u?.promptTokenCount ?? 0;
+    const outputTok = u?.candidatesTokenCount ?? 0;
+    console.log(`[AI] Gemini call: ${ms}ms | prompt=${promptTok || "?"} tokens | output=${outputTok || "?"} tokens`);
+    if (promptTok > 0 || outputTok > 0) recordAiTokenUsage(promptTok + outputTok);
     return data;
   }
 
