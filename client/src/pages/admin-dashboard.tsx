@@ -711,18 +711,11 @@ function AiTokenUsageChart() {
   function downloadCsv() {
     const dateTag = new Date().toISOString().slice(0, 10);
     const filename = `ai-token-usage-${hours}h-${dateTag}.csv`;
-    const lines = ["hour,tokens,exceeded_threshold"];
-    for (const row of chartData) {
-      const exceeded = threshold > 0 && row.tokens >= threshold;
-      lines.push(`${row.isoHour}:00:00Z,${row.tokens},${exceeded}`);
-    }
-    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
+    const url = `/api/admin/ai/token-usage?hours=${hours}&format=csv`;
     const a = document.createElement("a");
     a.href = url;
     a.download = filename;
     a.click();
-    URL.revokeObjectURL(url);
   }
 
   return (
@@ -755,7 +748,7 @@ function AiTokenUsageChart() {
           </Select>
           <button
             onClick={downloadCsv}
-            disabled={!data || chartData.every(r => r.tokens === 0)}
+            disabled={!data || isLoading || isError}
             title="Download CSV"
             data-testid="button-ai-chart-download-csv"
             className="h-8 w-8 flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-700 text-muted-foreground hover:text-fuchsia-600 dark:hover:text-fuchsia-400 hover:border-fuchsia-300 dark:hover:border-fuchsia-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
