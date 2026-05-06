@@ -3441,7 +3441,13 @@ export async function registerRoutes(
       const status: "all" | "sent" | "failed" =
         statusParam === "sent" ? "sent" : statusParam === "failed" ? "failed" : "all";
       const sinceParam = req.query.since as string | undefined;
-      const since = sinceParam ? new Date(sinceParam) : undefined;
+      let since: Date | undefined;
+      if (sinceParam) {
+        since = new Date(sinceParam);
+        if (Number.isNaN(since.getTime())) {
+          return res.status(400).json({ message: "Invalid 'since' date" });
+        }
+      }
       const logs = await storage.listAiReportLog(limit, status, since);
       res.json(logs);
     } catch (err: any) {
