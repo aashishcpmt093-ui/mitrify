@@ -384,10 +384,10 @@ function applyMergeConflictResolution(sql: string): string {
     .split("\n")
     .map((line) => {
       const trimmed = line.trimStart();
-      if (
-        trimmed.toUpperCase().startsWith("INSERT INTO") &&
-        line.trimEnd().endsWith(";")
-      ) {
+      const upper = trimmed.toUpperCase();
+      // Skip lines that already carry a conflict clause (idempotent).
+      if (upper.includes("ON CONFLICT")) return line;
+      if (upper.startsWith("INSERT INTO") && line.trimEnd().endsWith(";")) {
         const lastSemi = line.lastIndexOf(";");
         return line.slice(0, lastSemi) + " ON CONFLICT DO NOTHING;";
       }
