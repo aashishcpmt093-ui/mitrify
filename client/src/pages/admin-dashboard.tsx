@@ -2346,20 +2346,10 @@ export default function AdminDashboardPage() {
       <div className="sticky top-0 z-[60] flex items-center justify-between gap-2 px-4 py-3 border-b bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur">
         <Button
           variant="outline"
-          onClick={async () => {
-            await logout();
-            setLocation("/customer/home");
-          }}
+          onClick={() => setLocation("/customer/home")}
           data-testid="button-switch-to-user"
         >
           Switch to User
-        </Button>
-        <Button
-          variant="default"
-          onClick={() => setLocation("/admin/dashboard")}
-          data-testid="button-switch-to-admin"
-        >
-          Switch to Admin
         </Button>
       </div>
 
