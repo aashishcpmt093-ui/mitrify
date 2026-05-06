@@ -12,6 +12,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Cell,
 } from "recharts";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { useLocation } from "wouter";
 import { useRef, useState, useEffect, useMemo } from "react";
 import {
@@ -1697,16 +1698,46 @@ export default function AdminDashboardPage() {
   const [clearLogConfirm, setClearLogConfirm] = React.useState(false);
   const [deleteLogConfirmId, setDeleteLogConfirmId] = React.useState<number | null>(null);
 
+  type ReportLogEntry = { id: number; sentAt: string; recipient: string; success: boolean; totalTokens: number; estimatedCost: string; peakTokens: number; exceededHours: number; errorMsg: string | null };
+
+  const restoreReportLogEntry = useMutation({
+    mutationFn: async (entry: ReportLogEntry) => {
+      const res = await apiRequest("POST", "/api/admin/ai-report-log/restore", entry);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || "Failed to restore");
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-report-log"] });
+      toast({ title: "↩ Entry restored." });
+    },
+    onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to restore"}`, variant: "destructive" }),
+  });
+
   const deleteReportLogEntry = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await apiRequest("DELETE", `/api/admin/ai-report-log/${id}`, {});
+    mutationFn: async (entry: ReportLogEntry) => {
+      const res = await apiRequest("DELETE", `/api/admin/ai-report-log/${entry.id}`, {});
       const data = await res.json();
       if (!data.success) throw new Error(data.message || "Failed to delete");
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (_, deletedEntry) => {
       setDeleteLogConfirmId(null);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-report-log"] });
+      toast({
+        title: "Entry deleted",
+        description: "Tap Undo within 5 seconds to restore it.",
+        duration: 5000,
+        action: (
+          <ToastAction
+            altText="Undo delete"
+            data-testid="button-undo-delete-log"
+            onClick={() => restoreReportLogEntry.mutate(deletedEntry)}
+          >
+            Undo
+          </ToastAction>
+        ),
+      });
     },
     onError: (err: any) => {
       toast({ title: `❌ ${err.message || "Failed to delete"}`, variant: "destructive" });
@@ -4780,7 +4811,7 @@ export default function AdminDashboardPage() {
                               <button
                                 className="text-xs px-2 py-0.5 rounded bg-red-500 text-white hover:bg-red-600 disabled:opacity-50"
                                 disabled={deleteReportLogEntry.isPending}
-                                onClick={() => deleteReportLogEntry.mutate(entry.id)}
+                                onClick={() => deleteReportLogEntry.mutate(entry)}
                                 data-testid={`button-confirm-delete-log-${entry.id}`}
                               >
                                 {deleteReportLogEntry.isPending ? "…" : "Delete"}

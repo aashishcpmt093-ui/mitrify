@@ -3462,6 +3462,28 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/admin/ai-report-log/restore", adminCheck, async (req, res) => {
+    try {
+      const { recipient, success, totalTokens, estimatedCost, peakTokens, exceededHours, errorMsg, sentAt } = req.body;
+      if (typeof recipient !== "string" || typeof success !== "boolean") {
+        return res.status(400).json({ message: "Invalid entry data" });
+      }
+      await storage.insertAiReportLog({
+        recipient,
+        success,
+        totalTokens: Number(totalTokens) || 0,
+        estimatedCost: String(estimatedCost || ""),
+        peakTokens: Number(peakTokens) || 0,
+        exceededHours: Number(exceededHours) || 0,
+        errorMsg: errorMsg ?? null,
+        sentAt: sentAt ? new Date(sentAt) : new Date(),
+      });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to restore entry" });
+    }
+  });
+
   // Admin: update AI config (threshold)
   app.put("/api/admin/ai-config", adminCheck, async (req, res) => {
     try {
