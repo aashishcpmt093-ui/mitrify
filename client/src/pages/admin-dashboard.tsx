@@ -1719,6 +1719,8 @@ export default function AdminDashboardPage() {
 
   type ReportLogEntry = { id: number; sentAt: string; recipient: string; success: boolean; totalTokens: number; estimatedCost: string; peakTokens: number; exceededHours: number; errorMsg: string | null };
 
+  const [pendingClearedLogEntries, setPendingClearedLogEntries] = React.useState<ReportLogEntry[]>([]);
+
   const restoreReportLogEntry = useMutation({
     mutationFn: async (entry: ReportLogEntry) => {
       const res = await apiRequest("POST", "/api/admin/ai-report-log/restore", entry);
@@ -1769,6 +1771,24 @@ export default function AdminDashboardPage() {
     },
   });
 
+  const restoreBulkReportLog = useMutation({
+    mutationFn: async (entries: ReportLogEntry[]) => {
+      const res = await apiRequest("POST", "/api/admin/ai-report-log/restore-bulk", { entries });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || "Failed to restore");
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-report-log"] });
+      const { restored = 0, skipped = 0 } = data;
+      toast({
+        title: "↩ History restored.",
+        description: skipped > 0 ? `${restored} restored, ${skipped} skipped.` : `${restored} entr${restored === 1 ? "y" : "ies"} restored.`,
+      });
+    },
+    onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to restore"}`, variant: "destructive" }),
+  });
+
   const clearReportLog = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("DELETE", "/api/admin/ai-report-log", {});
@@ -1776,10 +1796,34 @@ export default function AdminDashboardPage() {
       if (!data.success) throw new Error(data.message || "Failed to clear");
       return data;
     },
-    onSuccess: () => {
-      toast({ title: "✅ Report history cleared." });
+    onSuccess: (data) => {
       setClearLogConfirm(false);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-report-log"] });
+      const cleared: ReportLogEntry[] = data.cleared ?? [];
+      setPendingClearedLogEntries(cleared);
+      if (cleared.length > 0) {
+        setTimeout(() => setPendingClearedLogEntries([]), 5000);
+      }
+      toast({
+        title: "✅ Report history cleared.",
+        description: cleared.length > 0 ? "Tap Undo within 5 seconds to restore all entries." : undefined,
+        duration: 5000,
+        action: cleared.length > 0 ? (
+          <ToastAction
+            altText="Undo clear history"
+            data-testid="button-undo-clear-report-log"
+            disabled={restoreBulkReportLog.isPending}
+            onClick={() => {
+              if (!restoreBulkReportLog.isPending && pendingClearedLogEntries.length > 0) {
+                restoreBulkReportLog.mutate(pendingClearedLogEntries);
+                setPendingClearedLogEntries([]);
+              }
+            }}
+          >
+            {restoreBulkReportLog.isPending ? "…" : "Undo"}
+          </ToastAction>
+        ) : undefined,
+      });
     },
     onError: (err: any) => {
       toast({ title: `❌ ${err.message || "Failed to clear"}`, variant: "destructive" });

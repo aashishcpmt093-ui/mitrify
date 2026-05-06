@@ -3457,8 +3457,9 @@ export async function registerRoutes(
 
   app.delete("/api/admin/ai-report-log", adminCheck, async (_req, res) => {
     try {
+      const allEntries = await storage.listAllAiReportLog();
       await storage.clearAiReportLog();
-      res.json({ success: true });
+      res.json({ success: true, cleared: allEntries });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to clear report log" });
     }
@@ -3472,6 +3473,35 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete entry" });
+    }
+  });
+
+  app.post("/api/admin/ai-report-log/restore-bulk", adminCheck, async (req, res) => {
+    try {
+      const { entries } = req.body;
+      if (!Array.isArray(entries) || entries.length === 0) {
+        return res.status(400).json({ message: "entries must be a non-empty array" });
+      }
+      let restored = 0;
+      let skipped = 0;
+      for (const entry of entries) {
+        const { recipient, success, totalTokens, estimatedCost, peakTokens, exceededHours, errorMsg, sentAt } = entry;
+        if (typeof recipient !== "string" || typeof success !== "boolean") { skipped++; continue; }
+        await storage.insertAiReportLog({
+          recipient,
+          success,
+          totalTokens: Number(totalTokens) || 0,
+          estimatedCost: String(estimatedCost || ""),
+          peakTokens: Number(peakTokens) || 0,
+          exceededHours: Number(exceededHours) || 0,
+          errorMsg: errorMsg ?? null,
+          sentAt: sentAt ? new Date(sentAt) : new Date(),
+        });
+        restored++;
+      }
+      res.json({ success: true, restored, skipped });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to restore entries" });
     }
   });
 

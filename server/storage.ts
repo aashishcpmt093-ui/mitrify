@@ -207,6 +207,7 @@ export interface IStorage {
   // AI weekly report email log
   insertAiReportLog(entry: InsertAiReportLog): Promise<void>;
   listAiReportLog(limit: number, status?: "all" | "sent" | "failed", since?: Date): Promise<AiReportLog[]>;
+  listAllAiReportLog(): Promise<AiReportLog[]>;
   clearAiReportLog(): Promise<void>;
   deleteAiReportLogEntry(id: number): Promise<void>;
   pruneOldAiReportLog(before: Date): Promise<void>;
@@ -2559,6 +2560,10 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(aiReportLog)
       .orderBy(desc(aiReportLog.sentAt))
       .limit(limit);
+  }
+
+  async listAllAiReportLog(): Promise<AiReportLog[]> {
+    return db.select().from(aiReportLog).orderBy(desc(aiReportLog.sentAt));
   }
 
   async clearAiReportLog(): Promise<void> {
