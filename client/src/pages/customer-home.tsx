@@ -136,13 +136,7 @@ export default function CustomerHomePage() {
   const { theme, toggleTheme } = useTheme();
   const [searchQuery, setSearchQuery] = useState("");
   const isAdmin = user?.role === "admin" || user?.role === "mainadmin";
-  const { data: adminSession } = useQuery<{ isAdmin: boolean }>({
-    queryKey: ["/api/admin/check"],
-    queryFn: async () => {
-      const res = await fetch("/api/admin/check", { credentials: "include" });
-      return res.json();
-    },
-  });
+  const isAdminSession = user?.authType === "admin" || user?.authType === "coadmin" || isAdmin;
   // Filter UI state — sits between search bar and results.
   // `maxDistanceKm` caps how far a provider can be (default 50 km, the
   // value most providers actually serve in our data). `sameCityOnly`
@@ -1479,7 +1473,7 @@ export default function CustomerHomePage() {
                 {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
                 {theme === "dark" ? t("lightMode") : t("darkMode")}
               </Button>
-              {adminSession?.isAdmin && (
+              {isAdminSession && (
                 <Button
                   variant="ghost"
                   className="w-full justify-start gap-3 text-primary"

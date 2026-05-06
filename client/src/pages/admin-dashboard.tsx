@@ -1293,8 +1293,9 @@ export default function AdminDashboardPage() {
     queryFn: async () => {
       const res = await fetch("/api/admin/check", { credentials: "include" });
       const data = await res.json();
-      return data.isAdmin;
+      return data.isAdmin as boolean;
     },
+    staleTime: Infinity,
   });
 
   useEffect(() => { if (isAdmin === false) setLocation("/admin/login"); }, [isAdmin]);
