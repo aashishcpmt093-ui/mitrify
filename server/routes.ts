@@ -3347,7 +3347,8 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
   type GeminiPart = GeminiTextPart | GeminiFunctionCallPart | GeminiFunctionResponsePart;
   interface GeminiContent { role: "user" | "model"; parts: GeminiPart[] }
   interface GeminiCandidate { content: GeminiContent }
-  interface GeminiResponse { candidates?: GeminiCandidate[] }
+  interface GeminiUsageMetadata { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number }
+  interface GeminiResponse { candidates?: GeminiCandidate[]; usageMetadata?: GeminiUsageMetadata }
 
   const VALID_AI_FILTERS: AIUserFilter[] = ["noMobile", "noLocation", "suspiciousName"];
 
@@ -3423,6 +3424,7 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
   };
 
   async function callGemini(key: string, contents: GeminiContent[], useAdminTools: boolean): Promise<GeminiResponse> {
+    const t0 = Date.now();
     const body: Record<string, unknown> = {
       contents,
       generationConfig: { maxOutputTokens: 1024, temperature: 0.7 },
@@ -3438,7 +3440,11 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
       console.error("Gemini API error:", resp.status, errText);
       throw new Error(`Gemini ${resp.status}`);
     }
-    return resp.json() as Promise<GeminiResponse>;
+    const data = await resp.json() as GeminiResponse;
+    const ms = Date.now() - t0;
+    const u = data.usageMetadata;
+    console.log(`[AI] Gemini call: ${ms}ms | prompt=${u?.promptTokenCount ?? "?"} tokens | output=${u?.candidatesTokenCount ?? "?"} tokens`);
+    return data;
   }
 
   app.post("/api/ai/chat", async (req, res) => {
