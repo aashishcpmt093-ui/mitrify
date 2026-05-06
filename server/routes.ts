@@ -3445,7 +3445,8 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
     try {
       const geminiKey = getGeminiKeyForChat();
       if (!geminiKey) {
-        return res.status(503).json({ reply: "AI abhi available nahi hai. GEMINI_API_KEY configure karo." });
+        console.warn("[AI] /api/ai/chat called but no GOOGLE_API_KEY or GEMINI_API_KEY is configured — returning 503. Set the key in Railway environment variables.");
+        return res.status(503).json({ reply: "AI assistant is currently unavailable. Please try again later." });
       }
 
       const { message, history = [], isAdmin = false, snapshotToken } = req.body as {
@@ -3515,7 +3516,7 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
         try {
           firstData = await callGemini(geminiKey, contents, true);
         } catch {
-          return res.status(502).json({ reply: "AI service se response nahi mila. Thodi der baad try karo." });
+          return res.status(502).json({ reply: "AI service did not respond. Please try again in a moment." });
         }
 
         const firstPart = firstData.candidates?.[0]?.content?.parts?.[0];
@@ -3548,11 +3549,11 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
             try {
               finalData = await callGemini(geminiKey, [...contents, modelTurn, toolResultTurn], true);
             } catch {
-              return res.status(502).json({ reply: "AI se final response nahi mila." });
+              return res.status(502).json({ reply: "AI did not return a final response. Please try again." });
             }
 
             const replyPart = finalData.candidates?.[0]?.content?.parts?.[0];
-            const reply = (replyPart && "text" in replyPart ? replyPart.text : null) ?? "Users mil gaye. Neeche list dekho.";
+            const reply = (replyPart && "text" in replyPart ? replyPart.text : null) ?? "Users found. See the list below.";
             const action: AIActionPayload = {
               type: "user_list",
               filter,
@@ -3566,7 +3567,7 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
 
         // No function call — plain text reply
         const textPart = firstPart && "text" in firstPart ? firstPart.text : null;
-        return res.json({ reply: textPart ?? "Kuch samajh nahi aaya. Dobara puchho." });
+        return res.json({ reply: textPart ?? "I could not understand that. Please try asking again." });
       }
 
       // ── User (non-admin) mode: plain chat ────────────────────────────────────
@@ -3574,14 +3575,16 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
       try {
         userData = await callGemini(geminiKey, contents, false);
       } catch {
-        return res.status(502).json({ reply: "AI service se response nahi mila. Thodi der baad try karo." });
+        return res.status(502).json({ reply: "AI service did not respond. Please try again in a moment." });
       }
       const userPart = userData.candidates?.[0]?.content?.parts?.[0];
-      const userReply = (userPart && "text" in userPart ? userPart.text : null) ?? "Kuch samajh nahi aaya. Dobara puchho.";
+      const userReply = (userPart && "text" in userPart ? userPart.text : null) ?? "I could not understand that. Please try asking again.";
       res.json({ reply: userReply });
     } catch (err: unknown) {
-      console.error("AI chat error:", err);
-      res.status(500).json({ reply: "Kuch gadbad ho gayi. Dobara try karo." });
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const keyPresent = !!getGeminiKeyForChat();
+      console.error(`[AI] /api/ai/chat unhandled error (key present: ${keyPresent}): ${errMsg}`, err instanceof Error ? err.stack : "");
+      res.status(500).json({ reply: "Something went wrong. Please try again in a moment." });
     }
   });
 
