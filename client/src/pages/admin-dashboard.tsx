@@ -708,6 +708,23 @@ function AiTokenUsageChart() {
   const totalTokens = chartData.reduce((s, r) => s + r.tokens, 0);
   const maxTokens = Math.max(...chartData.map(r => r.tokens), threshold, 1);
 
+  function downloadCsv() {
+    const dateTag = new Date().toISOString().slice(0, 10);
+    const filename = `ai-token-usage-${hours}h-${dateTag}.csv`;
+    const lines = ["hour,tokens,exceeded_threshold"];
+    for (const row of chartData) {
+      const exceeded = threshold > 0 && row.tokens >= threshold;
+      lines.push(`${row.isoHour}:00:00Z,${row.tokens},${exceeded}`);
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div
       className="bg-white dark:bg-slate-900 border border-fuchsia-200 dark:border-fuchsia-800/40 rounded-2xl p-5 space-y-4 shadow-sm"
@@ -736,6 +753,15 @@ function AiTokenUsageChart() {
               <SelectItem value="168">Last 7 days</SelectItem>
             </SelectContent>
           </Select>
+          <button
+            onClick={downloadCsv}
+            disabled={!data || chartData.every(r => r.tokens === 0)}
+            title="Download CSV"
+            data-testid="button-ai-chart-download-csv"
+            className="h-8 w-8 flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-700 text-muted-foreground hover:text-fuchsia-600 dark:hover:text-fuchsia-400 hover:border-fuchsia-300 dark:hover:border-fuchsia-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Download className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
 

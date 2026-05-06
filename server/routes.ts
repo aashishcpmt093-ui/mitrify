@@ -3362,12 +3362,34 @@ export async function registerRoutes(
   });
 
   // Admin: AI token usage history (grouped by hour)
+  // Supports ?format=csv for spreadsheet export.
   app.get("/api/admin/ai/token-usage", adminCheck, async (req, res) => {
     try {
       const hours = Math.min(Math.max(Number(req.query.hours) || 24, 1), 168);
       const since = new Date(Date.now() - hours * 60 * 60 * 1000);
       const rows = await storage.getAiTokenUsageByHour(since);
       const threshold = await getAiTokenThreshold();
+
+      if (req.query.format === "csv") {
+        const dateTag = new Date().toISOString().slice(0, 10);
+        const filename = `ai-token-usage-${hours}h-${dateTag}.csv`;
+        // Build all hourly buckets (zero-filled) for the requested range
+        const bucketMap = new Map<string, number>();
+        for (const r of rows) bucketMap.set(new Date(r.hour).toISOString().slice(0, 13), r.tokens);
+        const csvRows: string[] = ["hour,tokens,exceeded_threshold"];
+        for (let i = hours - 1; i >= 0; i--) {
+          const d = new Date();
+          d.setMinutes(0, 0, 0);
+          d.setHours(d.getHours() - i);
+          const isoHour = d.toISOString().slice(0, 13);
+          const tokens = bucketMap.get(isoHour) ?? 0;
+          csvRows.push(`${isoHour}:00:00Z,${tokens},${threshold > 0 && tokens >= threshold}`);
+        }
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        return res.send(csvRows.join("\n"));
+      }
+
       res.json({ rows, threshold, hours });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch token usage" });
