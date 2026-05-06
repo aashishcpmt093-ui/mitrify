@@ -41,7 +41,7 @@ function ActionCard({ action, onDeleted }: { action: ActionData; onDeleted: () =
   const { toast } = useToast();
   const [confirmed, setConfirmed] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [deleted, setDeleted] = useState(false);
+  const [deletedCount, setDeletedCount] = useState<number | null>(null);
   const [showAll, setShowAll] = useState(false);
 
   const displayUsers = showAll ? action.users : action.users.slice(0, 5);
@@ -53,12 +53,12 @@ function ActionCard({ action, onDeleted }: { action: ActionData; onDeleted: () =
     }
     setDeleting(true);
     try {
-      const res = await apiRequest("DELETE", "/api/admin/bulk-delete-profiles", {
-        userIds: action.users.map(u => u.userId),
+      const res = await apiRequest("POST", "/api/admin/ai-delete-by-filter", {
+        filter: action.filter,
       });
       const data = await res.json();
+      setDeletedCount(data.deleted ?? 0);
       toast({ title: `✅ ${data.deleted} users delete ho gaye!` });
-      setDeleted(true);
       queryClient.invalidateQueries({ queryKey: ["/api/admin/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/bulk-filter-users"] });
       onDeleted();
@@ -69,11 +69,11 @@ function ActionCard({ action, onDeleted }: { action: ActionData; onDeleted: () =
     }
   }
 
-  if (deleted) {
+  if (deletedCount !== null) {
     return (
       <div className="mt-2 flex items-center gap-2 text-green-600 text-xs font-medium bg-green-50 dark:bg-green-950 rounded-xl px-3 py-2">
         <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-        <span>{action.total} users delete ho gaye!</span>
+        <span>{deletedCount} users delete ho gaye!</span>
       </div>
     );
   }

@@ -3489,6 +3489,25 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
     }
   });
 
+  // ── ADMIN: AI FILTER-BASED DELETE (used by AI chat action cards) ─────────
+  app.post("/api/admin/ai-delete-by-filter", adminCheck, async (req, res) => {
+    try {
+      const { filter } = req.body as { filter: "noMobile" | "noLocation" | "suspiciousName" };
+      const validFilters = ["noMobile", "noLocation", "suspiciousName"];
+      if (!filter || !validFilters.includes(filter)) {
+        return res.status(400).json({ message: "Valid filter required: noMobile | noLocation | suspiciousName" });
+      }
+      const users = await fetchFilteredUsersForAI(filter);
+      let deleted = 0;
+      for (const u of users) {
+        try { await storage.deleteProfile(u.userId); deleted++; } catch {}
+      }
+      res.json({ deleted, total: users.length });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Delete failed" });
+    }
+  });
+
   startBackupScheduler();
 
   return httpServer;
