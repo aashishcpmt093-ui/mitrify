@@ -3437,7 +3437,7 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
     });
     if (!resp.ok) {
       const errText = await resp.text().catch(() => "");
-      console.error("Gemini API error:", resp.status, errText);
+      console.error(`[AI] Gemini call: ${Date.now() - t0}ms | FAILED ${resp.status} — ${errText.slice(0, 200)}`);
       throw new Error(`Gemini ${resp.status}`);
     }
     const data = await resp.json() as GeminiResponse;
