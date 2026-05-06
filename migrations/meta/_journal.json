@@ -29,6 +29,13 @@
       "when": 1778803200000,
       "tag": "0008_phone_dedupe_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1746533400000,
+      "tag": "0009_ai_token_usage",
+      "breakpoints": true
     }
   ]
 }

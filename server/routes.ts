@@ -3258,9 +3258,10 @@ export async function registerRoutes(
   const AI_TOKEN_WARN_COOLDOWN_MS = 10 * 60 * 1000; // warn at most once every 10 min
 
   // Seed in-memory log from DB on first use (or explicit call at startup).
+  // Flag is only set to true after a successful DB read so a transient DB error
+  // at startup does not permanently prevent seeding on the next call.
   async function ensureAiTokenLogSeeded(): Promise<void> {
     if (_aiTokenLogSeeded) return;
-    _aiTokenLogSeeded = true;
     try {
       const since = new Date(Date.now() - 60 * 60 * 1000);
       const rows = await storage.getAiTokenUsageSince(since);
@@ -3268,9 +3269,10 @@ export async function registerRoutes(
         _aiTokenLog.push({ ts: new Date(row.ts).getTime(), tokens: row.tokens });
       }
       _aiTokenLog.sort((a, b) => a.ts - b.ts);
+      _aiTokenLogSeeded = true;
       console.log(`[AI] Seeded hourly token log from DB: ${_aiTokenLog.length} entries, ${_aiTokenLog.reduce((s, e) => s + e.tokens, 0).toLocaleString()} tokens`);
     } catch (err) {
-      console.warn("[AI] Could not seed token log from DB:", err);
+      console.warn("[AI] Could not seed token log from DB (will retry on next call):", err);
     }
   }
 
