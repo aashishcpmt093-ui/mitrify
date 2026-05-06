@@ -8,6 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Cell,
+} from "recharts";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { useRef, useState, useEffect, useMemo } from "react";
@@ -655,6 +658,166 @@ function AutoGenerateTagsCard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// ── AI Token Usage Chart ─────────────────────────────────────────────────────
+function AiTokenUsageChart() {
+  const [hours, setHours] = useState<24 | 48 | 168>(24);
+
+  const { data, isLoading, isError } = useQuery<{
+    rows: { hour: string; tokens: number }[];
+    threshold: number;
+    hours: number;
+  }>({
+    queryKey: ["/api/admin/ai/token-usage", hours],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/ai/token-usage?hours=${hours}`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Failed to load token usage (${res.status})`);
+      return res.json();
+    },
+    refetchInterval: 60_000,
+  });
+
+  const chartData = useMemo(() => {
+    if (!data?.rows) return [];
+    const now = new Date();
+    const multiDay = hours > 24;
+    const buckets: { label: string; tooltipLabel: string; isoHour: string; tokens: number }[] = [];
+    for (let i = hours - 1; i >= 0; i--) {
+      const d = new Date(now);
+      d.setMinutes(0, 0, 0);
+      d.setHours(d.getHours() - i);
+      const isoHour = d.toISOString().slice(0, 13);
+      const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+      const dateStr = d.toLocaleDateString([], { month: "short", day: "numeric" });
+      const label = multiDay ? `${dateStr} ${timeStr}` : timeStr;
+      const tooltipLabel = `${dateStr}, ${timeStr}`;
+      buckets.push({ label, tooltipLabel, isoHour, tokens: 0 });
+    }
+    for (const row of data.rows) {
+      const rowHour = new Date(row.hour).toISOString().slice(0, 13);
+      const bucket = buckets.find(b => b.isoHour === rowHour);
+      if (bucket) bucket.tokens = row.tokens;
+    }
+    return buckets;
+  }, [data, hours]);
+
+  const threshold = data?.threshold ?? 0;
+  const totalTokens = chartData.reduce((s, r) => s + r.tokens, 0);
+  const maxTokens = Math.max(...chartData.map(r => r.tokens), threshold, 1);
+
+  return (
+    <div
+      className="bg-white dark:bg-slate-900 border border-fuchsia-200 dark:border-fuchsia-800/40 rounded-2xl p-5 space-y-4 shadow-sm"
+      data-testid="section-ai-token-chart"
+    >
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h3 className="font-bold text-base flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-fuchsia-100 dark:bg-fuchsia-900/40 flex items-center justify-center">
+            <Activity className="w-4 h-4 text-fuchsia-600 dark:text-fuchsia-400" />
+          </div>
+          Token Usage History
+        </h3>
+        <div className="flex items-center gap-2">
+          {totalTokens > 0 && (
+            <span className="text-xs text-muted-foreground" data-testid="text-ai-total-tokens">
+              Total: <span className="font-semibold text-fuchsia-600 dark:text-fuchsia-400">{totalTokens.toLocaleString()}</span>
+            </span>
+          )}
+          <Select value={String(hours)} onValueChange={v => setHours(Number(v) as 24 | 48 | 168)}>
+            <SelectTrigger className="h-8 rounded-xl text-xs w-28" data-testid="select-ai-chart-hours">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="24">Last 24 hrs</SelectItem>
+              <SelectItem value="48">Last 48 hrs</SelectItem>
+              <SelectItem value="168">Last 7 days</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center h-40">
+          <Loader2 className="w-6 h-6 animate-spin text-fuchsia-400" />
+        </div>
+      ) : isError ? (
+        <div className="flex flex-col items-center justify-center h-40 text-muted-foreground gap-2" data-testid="text-ai-chart-error">
+          <AlertTriangle className="w-8 h-8 opacity-40 text-red-400" />
+          <p className="text-sm">Could not load token usage data. Please try again.</p>
+        </div>
+      ) : chartData.every(r => r.tokens === 0) ? (
+        <div className="flex flex-col items-center justify-center h-40 text-muted-foreground gap-2" data-testid="text-ai-chart-empty">
+          <Sparkles className="w-8 h-8 opacity-30" />
+          <p className="text-sm">No token usage recorded in this period</p>
+        </div>
+      ) : (
+        <div className="h-52" data-testid="chart-ai-token-usage">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" vertical={false} />
+              <XAxis
+                dataKey="label"
+                tick={{ fontSize: 10, fill: "currentColor" }}
+                tickLine={false}
+                axisLine={false}
+                interval={hours <= 24 ? 3 : hours <= 48 ? 5 : 23}
+              />
+              <YAxis
+                tick={{ fontSize: 10, fill: "currentColor" }}
+                tickLine={false}
+                axisLine={false}
+                width={48}
+                tickFormatter={v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
+                domain={[0, Math.ceil(maxTokens * 1.1)]}
+              />
+              <Tooltip
+                formatter={(value: number) => [value.toLocaleString(), "Tokens"]}
+                labelFormatter={(_label, payload) => {
+                  const entry = payload?.[0]?.payload;
+                  return entry?.tooltipLabel ? `Hour: ${entry.tooltipLabel}` : `Hour: ${_label}`;
+                }}
+                contentStyle={{
+                  borderRadius: "12px",
+                  border: "1px solid rgba(192,132,252,0.4)",
+                  fontSize: "12px",
+                }}
+              />
+              {threshold > 0 && (
+                <ReferenceLine
+                  y={threshold}
+                  stroke="#f59e0b"
+                  strokeDasharray="4 4"
+                  label={{ value: "Threshold", position: "insideTopRight", fontSize: 10, fill: "#f59e0b" }}
+                />
+              )}
+              <Bar dataKey="tokens" radius={[4, 4, 0, 0]} maxBarSize={32}>
+                {chartData.map((entry, idx) => (
+                  <Cell
+                    key={idx}
+                    fill={entry.tokens >= threshold && threshold > 0 ? "#f87171" : "#c084fc"}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {threshold > 0 && (
+        <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+          <span className="flex items-center gap-1">
+            <span className="w-3 h-3 rounded-sm inline-block bg-[#c084fc]" />
+            Normal
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-3 h-3 rounded-sm inline-block bg-[#f87171]" />
+            Exceeded threshold ({threshold.toLocaleString()} tokens/hr)
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -4273,6 +4436,10 @@ export default function AdminDashboardPage() {
 
           {/* ── AI TAB ── */}
           <TabsContent value="ai" className="space-y-4">
+
+            {/* ── Token Usage Chart ── */}
+            <AiTokenUsageChart />
+
             <div className="bg-white dark:bg-slate-900 border border-fuchsia-200 dark:border-fuchsia-800/40 rounded-2xl p-5 space-y-4 shadow-sm">
               <h3 className="font-bold text-base flex items-center gap-2">
                 <div className="w-7 h-7 rounded-lg bg-fuchsia-100 dark:bg-fuchsia-900/40 flex items-center justify-center">

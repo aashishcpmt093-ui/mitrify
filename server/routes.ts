@@ -3361,6 +3361,19 @@ export async function registerRoutes(
     }
   });
 
+  // Admin: AI token usage history (grouped by hour)
+  app.get("/api/admin/ai/token-usage", adminCheck, async (req, res) => {
+    try {
+      const hours = Math.min(Math.max(Number(req.query.hours) || 24, 1), 168);
+      const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+      const rows = await storage.getAiTokenUsageByHour(since);
+      const threshold = await getAiTokenThreshold();
+      res.json({ rows, threshold, hours });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch token usage" });
+    }
+  });
+
   // Admin: update AI config (threshold)
   app.put("/api/admin/ai-config", adminCheck, async (req, res) => {
     try {

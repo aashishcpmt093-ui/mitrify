@@ -196,6 +196,7 @@ export interface IStorage {
   // AI token usage persistence (survives server restarts).
   insertAiTokenUsage(tokens: number): Promise<void>;
   getAiTokenUsageSince(since: Date): Promise<AiTokenUsage[]>;
+  getAiTokenUsageByHour(since: Date): Promise<{ hour: string; tokens: number }[]>;
   pruneOldAiTokenUsage(before: Date): Promise<void>;
 }
 
@@ -2486,6 +2487,19 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(aiTokenUsage)
       .where(gte(aiTokenUsage.ts, since))
       .orderBy(aiTokenUsage.ts);
+  }
+
+  async getAiTokenUsageByHour(since: Date): Promise<{ hour: string; tokens: number }[]> {
+    const rows = await db
+      .select({
+        hour: sql<string>`date_trunc('hour', ${aiTokenUsage.ts})::text`,
+        tokens: sql<number>`cast(sum(${aiTokenUsage.tokens}) as integer)`,
+      })
+      .from(aiTokenUsage)
+      .where(gte(aiTokenUsage.ts, since))
+      .groupBy(sql`date_trunc('hour', ${aiTokenUsage.ts})`)
+      .orderBy(sql`date_trunc('hour', ${aiTokenUsage.ts})`);
+    return rows;
   }
 
   async pruneOldAiTokenUsage(before: Date): Promise<void> {
