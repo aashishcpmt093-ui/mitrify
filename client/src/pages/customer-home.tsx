@@ -1419,7 +1419,7 @@ export default function CustomerHomePage() {
       )}
 
       {menuOpen && (
-        <div className="fixed inset-0 z-50 flex pointer-events-none">
+        <div className="fixed inset-0 z-50 flex">
           <div className="w-72 bg-card border-r shadow-xl h-full flex flex-col">
             <div className="p-4 border-b flex items-center justify-between">
               <div
