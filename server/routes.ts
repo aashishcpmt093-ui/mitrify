@@ -3256,27 +3256,36 @@ export async function registerRoutes(
   let _aiTokenLogSeeded = false;
   let _lastTokenWarnTs = 0;
   const AI_TOKEN_WARN_COOLDOWN_MS = 10 * 60 * 1000; // warn at most once every 10 min
+  // Capture process start time so seeding only loads rows written by PREVIOUS
+  // processes — rows this process writes go directly into _aiTokenLog, preventing
+  // double-counting if a Gemini call races with the startup seed query.
+  const _processStartTs = Date.now();
 
-  // Seed in-memory log from DB on first use (or explicit call at startup).
-  // Flag is only set to true after a successful DB read so a transient DB error
-  // at startup does not permanently prevent seeding on the next call.
+  // Seed in-memory log from DB. Only loads rows whose ts < _processStartTs so
+  // rows inserted by THIS process (already in _aiTokenLog) are never duplicated.
+  // Flag is set only after a successful read — transient DB errors are retried
+  // on the next recordAiTokenUsage() or getAiHourlyTokens() call.
   async function ensureAiTokenLogSeeded(): Promise<void> {
     if (_aiTokenLogSeeded) return;
     try {
-      const since = new Date(Date.now() - 60 * 60 * 1000);
+      const since = new Date(_processStartTs - 60 * 60 * 1000);
       const rows = await storage.getAiTokenUsageSince(since);
-      for (const row of rows) {
-        _aiTokenLog.push({ ts: new Date(row.ts).getTime(), tokens: row.tokens });
+      // Only include rows written before this process started (no race overlap)
+      const prevRows = rows.filter(r => new Date(r.ts).getTime() < _processStartTs);
+      for (const row of prevRows) {
+        _aiTokenLog.unshift({ ts: new Date(row.ts).getTime(), tokens: row.tokens });
       }
       _aiTokenLog.sort((a, b) => a.ts - b.ts);
       _aiTokenLogSeeded = true;
-      console.log(`[AI] Seeded hourly token log from DB: ${_aiTokenLog.length} entries, ${_aiTokenLog.reduce((s, e) => s + e.tokens, 0).toLocaleString()} tokens`);
+      console.log(`[AI] Seeded hourly token log from DB: ${prevRows.length} entries, ${prevRows.reduce((s, r) => s + r.tokens, 0).toLocaleString()} tokens`);
     } catch (err) {
       console.warn("[AI] Could not seed token log from DB (will retry on next call):", err);
     }
   }
 
   function recordAiTokenUsage(tokens: number): void {
+    // Retry seeding if startup seed failed (fire-and-forget, idempotent)
+    ensureAiTokenLogSeeded().catch(() => {});
     const now = Date.now();
     _aiTokenLog.push({ ts: now, tokens });
     // Prune in-memory entries older than 1 hour
@@ -3297,6 +3306,8 @@ export async function registerRoutes(
   }
 
   function getAiHourlyTokens(): number {
+    // Retry seeding if startup seed failed (fire-and-forget, idempotent)
+    ensureAiTokenLogSeeded().catch(() => {});
     const cutoff = Date.now() - 60 * 60 * 1000;
     return _aiTokenLog.filter(e => e.ts >= cutoff).reduce((acc, e) => acc + e.tokens, 0);
   }
