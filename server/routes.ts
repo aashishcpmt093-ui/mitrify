@@ -17,7 +17,7 @@ import multer from "multer";
 import * as XLSX from "xlsx";
 import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory, recordBackupHistory } from "./backupJob";
 import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverStaleJobs } from "./lib/auto-tags";
-import { startAiWeeklyReportScheduler, sendAiWeeklyReport } from "./aiWeeklyReport";
+import { startAiWeeklyReportScheduler, sendAiWeeklyReport, rescheduleAiWeeklyReport } from "./aiWeeklyReport";
 import { AI_TOKEN_CONFIG_KEY, AI_TOKEN_HOUR_THRESHOLD_DEFAULT, getAiTokenThreshold, bustAiThresholdCache } from "./lib/aiConfig";
 import { searchGoogleFallback, searchSavedGoogleLeads } from "./googleFallbackSearch";
 // Per-admin daily quota for Google Places admin search. In-memory map of
@@ -3395,15 +3395,25 @@ export async function registerRoutes(
   // Admin: save AI weekly report config
   app.put("/api/admin/ai-weekly-report-config", adminCheck, async (req, res) => {
     try {
-      const { email, enabled } = req.body ?? {};
+      const { email, enabled, sendDay, sendHour } = req.body ?? {};
       if (typeof email !== "string" || (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
         return res.status(400).json({ message: "Valid email address required" });
       }
       if (enabled && !email.trim()) {
         return res.status(400).json({ message: "Email address required when weekly report is enabled" });
       }
-      await storage.setAiWeeklyReportConfig({ email: email.trim(), enabled: !!enabled });
-      res.json({ email: email.trim(), enabled: !!enabled });
+      const day = typeof sendDay === "number" ? sendDay : 1;
+      const hour = typeof sendHour === "number" ? sendHour : 9;
+      if (day < 0 || day > 6 || !Number.isInteger(day)) {
+        return res.status(400).json({ message: "sendDay must be an integer 0–6" });
+      }
+      if (hour < 0 || hour > 23 || !Number.isInteger(hour)) {
+        return res.status(400).json({ message: "sendHour must be an integer 0–23" });
+      }
+      const cfg = { email: email.trim(), enabled: !!enabled, sendDay: day, sendHour: hour };
+      await storage.setAiWeeklyReportConfig(cfg);
+      rescheduleAiWeeklyReport(day, hour);
+      res.json(cfg);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to save AI weekly report config" });
     }
@@ -3849,7 +3859,7 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
   });
 
   startBackupScheduler();
-  startAiWeeklyReportScheduler();
+  startAiWeeklyReportScheduler().catch(err => console.error("[AI Weekly Report] Scheduler start failed:", err));
 
   return httpServer;
 }

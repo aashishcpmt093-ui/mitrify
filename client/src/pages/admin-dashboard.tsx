@@ -1645,7 +1645,9 @@ export default function AdminDashboardPage() {
 
   const [weeklyReportEmail, setWeeklyReportEmail] = useState<string>("");
   const [weeklyReportEnabled, setWeeklyReportEnabled] = useState<boolean>(false);
-  const { data: weeklyReportCfg } = useQuery<{ email: string; enabled: boolean }>({
+  const [weeklyReportDay, setWeeklyReportDay] = useState<number>(1);
+  const [weeklyReportHour, setWeeklyReportHour] = useState<number>(9);
+  const { data: weeklyReportCfg } = useQuery<{ email: string; enabled: boolean; sendDay: number; sendHour: number }>({
     queryKey: ["/api/admin/ai-weekly-report-config"],
     enabled: !!isAdmin,
   });
@@ -1653,6 +1655,8 @@ export default function AdminDashboardPage() {
     if (weeklyReportCfg) {
       setWeeklyReportEmail(weeklyReportCfg.email ?? "");
       setWeeklyReportEnabled(weeklyReportCfg.enabled ?? false);
+      setWeeklyReportDay(weeklyReportCfg.sendDay ?? 1);
+      setWeeklyReportHour(weeklyReportCfg.sendHour ?? 9);
     }
   }, [weeklyReportCfg]);
   const saveWeeklyReport = useMutation({
@@ -1660,7 +1664,7 @@ export default function AdminDashboardPage() {
       if (weeklyReportEnabled && (!weeklyReportEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(weeklyReportEmail))) {
         throw new Error("Valid email address required");
       }
-      return await apiRequest("PUT", "/api/admin/ai-weekly-report-config", { email: weeklyReportEmail, enabled: weeklyReportEnabled }).then(r => r.json());
+      return await apiRequest("PUT", "/api/admin/ai-weekly-report-config", { email: weeklyReportEmail, enabled: weeklyReportEnabled, sendDay: weeklyReportDay, sendHour: weeklyReportHour }).then(r => r.json());
     },
     onSuccess: () => {
       toast({ title: "✅ Weekly report settings saved!" });
@@ -4562,7 +4566,7 @@ export default function AdminDashboardPage() {
                 Weekly AI Cost Report
               </h3>
               <p className="text-sm text-muted-foreground">
-                Har Somwar 9 AM IST pe ek email aayegi jisme 7 din ka token usage summary hoga — total tokens, peak hour, aur kitne ghante threshold cross ki.
+                Ek email aayegi jisme 7 din ka token usage summary hoga — total tokens, peak hour, aur kitne ghante threshold cross ki. Neeche din aur time choose karo.
               </p>
 
               <div className="flex items-center gap-3">
@@ -4575,6 +4579,47 @@ export default function AdminDashboardPage() {
                 <Label htmlFor="switch-weekly-report-enabled" className="cursor-pointer">
                   {weeklyReportEnabled ? "Weekly report enabled" : "Weekly report disabled"}
                 </Label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="select-weekly-report-day">Send Day (IST)</Label>
+                  <Select
+                    value={String(weeklyReportDay)}
+                    onValueChange={v => setWeeklyReportDay(Number(v))}
+                  >
+                    <SelectTrigger id="select-weekly-report-day" className="rounded-xl" data-testid="select-weekly-report-day">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0">Sunday</SelectItem>
+                      <SelectItem value="1">Monday</SelectItem>
+                      <SelectItem value="2">Tuesday</SelectItem>
+                      <SelectItem value="3">Wednesday</SelectItem>
+                      <SelectItem value="4">Thursday</SelectItem>
+                      <SelectItem value="5">Friday</SelectItem>
+                      <SelectItem value="6">Saturday</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="select-weekly-report-hour">Send Time (IST)</Label>
+                  <Select
+                    value={String(weeklyReportHour)}
+                    onValueChange={v => setWeeklyReportHour(Number(v))}
+                  >
+                    <SelectTrigger id="select-weekly-report-hour" className="rounded-xl" data-testid="select-weekly-report-hour">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 24 }, (_, i) => (
+                        <SelectItem key={i} value={String(i)}>
+                          {i === 0 ? "12:00 AM" : i < 12 ? `${i}:00 AM` : i === 12 ? "12:00 PM" : `${i - 12}:00 PM`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               <div className="space-y-1.5">
@@ -4607,6 +4652,15 @@ export default function AdminDashboardPage() {
                     <span className={weeklyReportCfg.enabled ? "text-green-600 dark:text-green-400" : "text-slate-500"}>
                       {weeklyReportCfg.enabled ? "Enabled" : "Disabled"}
                     </span>
+                    {weeklyReportCfg.sendDay !== undefined && weeklyReportCfg.sendHour !== undefined && (
+                      <>
+                        {" · "}
+                        <span className="text-slate-500">
+                          {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][weeklyReportCfg.sendDay]}{" "}
+                          {weeklyReportCfg.sendHour === 0 ? "12:00 AM" : weeklyReportCfg.sendHour < 12 ? `${weeklyReportCfg.sendHour}:00 AM` : weeklyReportCfg.sendHour === 12 ? "12:00 PM" : `${weeklyReportCfg.sendHour - 12}:00 PM`} IST
+                        </span>
+                      </>
+                    )}
                   </p>
                 )}
               </div>

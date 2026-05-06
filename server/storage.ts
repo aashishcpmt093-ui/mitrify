@@ -201,8 +201,8 @@ export interface IStorage {
   pruneOldAiTokenUsage(before: Date): Promise<void>;
 
   // AI weekly report email config
-  getAiWeeklyReportConfig(): Promise<{ email: string; enabled: boolean }>;
-  setAiWeeklyReportConfig(cfg: { email: string; enabled: boolean }): Promise<void>;
+  getAiWeeklyReportConfig(): Promise<{ email: string; enabled: boolean; sendDay: number; sendHour: number }>;
+  setAiWeeklyReportConfig(cfg: { email: string; enabled: boolean; sendDay: number; sendHour: number }): Promise<void>;
 
   // AI weekly report email log
   insertAiReportLog(entry: InsertAiReportLog): Promise<void>;
@@ -2515,19 +2515,21 @@ export class DatabaseStorage implements IStorage {
     await db.delete(aiTokenUsage).where(lt(aiTokenUsage.ts, before));
   }
 
-  async getAiWeeklyReportConfig(): Promise<{ email: string; enabled: boolean }> {
+  async getAiWeeklyReportConfig(): Promise<{ email: string; enabled: boolean; sendDay: number; sendHour: number }> {
     const [row] = await db.select().from(siteContent).where(eq(siteContent.key, "ai_weekly_report_config"));
     if (!row || !row.value || typeof row.value !== "object" || Array.isArray(row.value)) {
-      return { email: "", enabled: false };
+      return { email: "", enabled: false, sendDay: 1, sendHour: 9 };
     }
     const val = row.value as Record<string, unknown>;
     return {
       email: typeof val.email === "string" ? val.email : "",
       enabled: val.enabled === true,
+      sendDay: typeof val.sendDay === "number" ? val.sendDay : 1,
+      sendHour: typeof val.sendHour === "number" ? val.sendHour : 9,
     };
   }
 
-  async setAiWeeklyReportConfig(cfg: { email: string; enabled: boolean }): Promise<void> {
+  async setAiWeeklyReportConfig(cfg: { email: string; enabled: boolean; sendDay: number; sendHour: number }): Promise<void> {
     const [existing] = await db.select().from(siteContent).where(eq(siteContent.key, "ai_weekly_report_config"));
     if (existing) {
       await db.update(siteContent).set({ value: cfg, updatedAt: new Date() }).where(eq(siteContent.key, "ai_weekly_report_config"));

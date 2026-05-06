@@ -5,6 +5,8 @@ import { getAiTokenThreshold } from "./lib/aiConfig";
 
 const AI_WEEKLY_COST_PER_1K = 0.000125;
 
+let currentTask: ReturnType<typeof cron.schedule> | null = null;
+
 function makeMailer(): nodemailer.Transporter | null {
   if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) return null;
   return nodemailer.createTransport({
@@ -159,9 +161,29 @@ export async function sendAiWeeklyReport(): Promise<{ sent: boolean; error?: str
   }
 }
 
-export function startAiWeeklyReportScheduler(): void {
-  // Every Monday at 9:00 AM IST = 3:30 AM UTC (IST = UTC+5:30)
-  cron.schedule("30 3 * * 1", () => {
+/**
+ * Build a cron expression for a given IST day and hour.
+ * IST = UTC+5:30, so IST hour h:00 = UTC (h-6+24)%24:30
+ */
+function buildCronExpression(day: number, hour: number): string {
+  const utcHour = (hour - 6 + 24) % 24;
+  return `30 ${utcHour} * * ${day}`;
+}
+
+/**
+ * Stop any existing scheduler and start a new one with the given day/hour (IST).
+ */
+export function rescheduleAiWeeklyReport(day: number, hour: number): void {
+  if (currentTask) {
+    currentTask.stop();
+    currentTask = null;
+  }
+
+  const expr = buildCronExpression(day, hour);
+  const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dayName = DAY_NAMES[day] ?? `day ${day}`;
+
+  currentTask = cron.schedule(expr, () => {
     console.log("[AI Weekly Report] Running scheduled weekly report...");
     sendAiWeeklyReport().then(result => {
       if (!result.sent) {
@@ -170,5 +192,10 @@ export function startAiWeeklyReportScheduler(): void {
     });
   }, { timezone: "UTC" });
 
-  console.log("[AI Weekly Report] Scheduler registered — runs every Monday 9:00 AM IST");
+  console.log(`[AI Weekly Report] Scheduler registered — runs every ${dayName} at ${hour}:00 IST (cron: ${expr})`);
+}
+
+export async function startAiWeeklyReportScheduler(): Promise<void> {
+  const cfg = await storage.getAiWeeklyReportConfig();
+  rescheduleAiWeeklyReport(cfg.sendDay, cfg.sendHour);
 }
