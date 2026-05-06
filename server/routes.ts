@@ -3423,6 +3423,15 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/admin/ai-report-log", adminCheck, async (_req, res) => {
+    try {
+      const logs = await storage.listAiReportLog(20);
+      res.json(logs);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch report log" });
+    }
+  });
+
   // Admin: update AI config (threshold)
   app.put("/api/admin/ai-config", adminCheck, async (req, res) => {
     try {

@@ -111,9 +111,30 @@ export async function sendAiWeeklyReport(): Promise<{ sent: boolean; error?: str
     });
 
     console.log(`[AI Weekly Report] Sent to ${cfg.email} — ${totalTokens.toLocaleString()} tokens, ${costStr} est. cost`);
+
+    await storage.insertAiReportLog({
+      recipient: cfg.email,
+      success: true,
+      totalTokens,
+      estimatedCost: costStr,
+      peakTokens: peakHour?.tokens ?? 0,
+      exceededHours,
+    }).catch(e => console.error("[AI Weekly Report] Failed to persist log:", e?.message));
+
     return { sent: true };
   } catch (err: any) {
     console.error("[AI Weekly Report] Failed to send:", err?.message || err);
+    // Best-effort log — don't let a log failure mask the original error
+    const cfg2 = await storage.getAiWeeklyReportConfig().catch(() => ({ email: "" }));
+    await storage.insertAiReportLog({
+      recipient: cfg2.email || "unknown",
+      success: false,
+      totalTokens: 0,
+      estimatedCost: "$0.0000",
+      peakTokens: 0,
+      exceededHours: 0,
+      errorMsg: err?.message || String(err),
+    }).catch(() => {});
     return { sent: false, error: err?.message || String(err) };
   }
 }

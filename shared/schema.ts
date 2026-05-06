@@ -535,3 +535,22 @@ export const aiTokenUsage = pgTable("ai_token_usage", {
 }));
 
 export type AiTokenUsage = typeof aiTokenUsage.$inferSelect;
+
+// Log of each weekly AI cost report email attempt (sent or failed).
+export const aiReportLog = pgTable("ai_report_log", {
+  id: serial("id").primaryKey(),
+  sentAt: timestamp("sent_at").notNull().defaultNow(),
+  recipient: text("recipient").notNull(),
+  success: boolean("success").notNull(),
+  totalTokens: integer("total_tokens").notNull().default(0),
+  estimatedCost: text("estimated_cost").notNull().default(""),
+  peakTokens: integer("peak_tokens").notNull().default(0),
+  exceededHours: integer("exceeded_hours").notNull().default(0),
+  errorMsg: text("error_msg"),
+}, (t) => ({
+  sentAtIdx: index("ai_report_log_sent_at_idx").on(t.sentAt),
+}));
+
+export type AiReportLog = typeof aiReportLog.$inferSelect;
+export const insertAiReportLogSchema = createInsertSchema(aiReportLog).omit({ id: true });
+export type InsertAiReportLog = z.infer<typeof insertAiReportLogSchema>;

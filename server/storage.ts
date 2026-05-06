@@ -3,9 +3,10 @@ import { findKnownPhones } from "./phoneDedupe";
 import {
   profiles, providers, calls, promoCodes, localUsers, credits, subscriptions, siteContent,
   coAdmins, pendingProviders, visitorStats, jobs, promoUsageLog, employees, searchLog,
-  salaryPayments, creditPayments, appNotifications, tagJobs, googlePlacesRuns, aiTokenUsage,
+  salaryPayments, creditPayments, appNotifications, tagJobs, googlePlacesRuns, aiTokenUsage, aiReportLog,
   DEFAULT_SUBSCRIPTION_PLAN_CONFIG,
-  type AiTokenUsage, type TagJob, type GooglePlacesRun, type InsertGooglePlacesRun,
+  type AiTokenUsage, type AiReportLog, type InsertAiReportLog,
+  type TagJob, type GooglePlacesRun, type InsertGooglePlacesRun,
   type Job,
   type Profile, type InsertProfile,
   type Provider, type InsertProvider,
@@ -202,6 +203,10 @@ export interface IStorage {
   // AI weekly report email config
   getAiWeeklyReportConfig(): Promise<{ email: string; enabled: boolean }>;
   setAiWeeklyReportConfig(cfg: { email: string; enabled: boolean }): Promise<void>;
+
+  // AI weekly report email log
+  insertAiReportLog(entry: InsertAiReportLog): Promise<void>;
+  listAiReportLog(limit: number): Promise<AiReportLog[]>;
 }
 
 function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -2529,6 +2534,14 @@ export class DatabaseStorage implements IStorage {
     } else {
       await db.insert(siteContent).values({ key: "ai_weekly_report_config", value: cfg, updatedAt: new Date() });
     }
+  }
+
+  async insertAiReportLog(entry: InsertAiReportLog): Promise<void> {
+    await db.insert(aiReportLog).values(entry);
+  }
+
+  async listAiReportLog(limit: number): Promise<AiReportLog[]> {
+    return db.select().from(aiReportLog).orderBy(desc(aiReportLog.sentAt)).limit(limit);
   }
 }
 

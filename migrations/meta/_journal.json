@@ -36,6 +36,13 @@
       "when": 1746533400000,
       "tag": "0009_ai_token_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1746620000000,
+      "tag": "0010_ai_report_log",
+      "breakpoints": true
     }
   ]
 }

@@ -1668,6 +1668,11 @@ export default function AdminDashboardPage() {
     },
     onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to save"}`, variant: "destructive" }),
   });
+  const { data: aiReportLogData } = useQuery<{ id: number; sentAt: string; recipient: string; success: boolean; totalTokens: number; estimatedCost: string; peakTokens: number; exceededHours: number; errorMsg: string | null }[]>({
+    queryKey: ["/api/admin/ai-report-log"],
+    enabled: !!isAdmin,
+  });
+
   const sendReportNow = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/admin/ai-weekly-report/send-now", {});
@@ -1675,7 +1680,10 @@ export default function AdminDashboardPage() {
       if (!data.success) throw new Error(data.message || "Failed to send");
       return data;
     },
-    onSuccess: () => toast({ title: "✅ Report email sent!", description: "Check your inbox." }),
+    onSuccess: () => {
+      toast({ title: "✅ Report email sent!", description: "Check your inbox." });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-report-log"] });
+    },
     onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to send"}`, variant: "destructive" }),
   });
 
@@ -4611,6 +4619,48 @@ export default function AdminDashboardPage() {
                 <Mail className="w-4 h-4 mr-2" />
                 {sendReportNow.isPending ? "Sending…" : "Send Report Now"}
               </Button>
+            </div>
+
+            {/* ── Report History ── */}
+            <div className="bg-white dark:bg-slate-900 border border-fuchsia-200 dark:border-fuchsia-800/40 rounded-2xl p-5 space-y-3 shadow-sm" data-testid="card-ai-report-log">
+              <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Report Send History</p>
+              {!aiReportLogData || aiReportLogData.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2" data-testid="text-ai-report-log-empty">No reports sent yet.</p>
+              ) : (
+                <div className="space-y-2" data-testid="list-ai-report-log">
+                  {aiReportLogData.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className={`rounded-xl border px-4 py-3 flex flex-col gap-1 ${entry.success ? "border-green-200 dark:border-green-800/40 bg-green-50/60 dark:bg-green-900/10" : "border-red-200 dark:border-red-800/40 bg-red-50/60 dark:bg-red-900/10"}`}
+                      data-testid={`row-ai-report-log-${entry.id}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-xs font-semibold ${entry.success ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
+                          {entry.success ? "✓ Sent" : "✗ Failed"}
+                        </span>
+                        <span className="text-xs text-muted-foreground" data-testid={`text-report-log-time-${entry.id}`}>
+                          {new Date(entry.sentAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-600 dark:text-slate-400">
+                        <span data-testid={`text-report-log-recipient-${entry.id}`}>To: <span className="font-medium">{entry.recipient}</span></span>
+                        {entry.success && (
+                          <>
+                            <span data-testid={`text-report-log-tokens-${entry.id}`}>{entry.totalTokens.toLocaleString()} tokens</span>
+                            <span data-testid={`text-report-log-cost-${entry.id}`}>{entry.estimatedCost} est.</span>
+                            {entry.exceededHours > 0 && (
+                              <span className="text-amber-600 dark:text-amber-400" data-testid={`text-report-log-exceeded-${entry.id}`}>{entry.exceededHours}h exceeded threshold</span>
+                            )}
+                          </>
+                        )}
+                        {!entry.success && entry.errorMsg && (
+                          <span className="text-red-600 dark:text-red-400 break-all" data-testid={`text-report-log-error-${entry.id}`}>{entry.errorMsg}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </TabsContent>
 
