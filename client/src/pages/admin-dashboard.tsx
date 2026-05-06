@@ -1732,9 +1732,14 @@ export default function AdminDashboardPage() {
           <ToastAction
             altText="Undo delete"
             data-testid="button-undo-delete-log"
-            onClick={() => restoreReportLogEntry.mutate(deletedEntry)}
+            disabled={restoreReportLogEntry.isPending}
+            onClick={() => {
+              if (!restoreReportLogEntry.isPending) {
+                restoreReportLogEntry.mutate(deletedEntry);
+              }
+            }}
           >
-            Undo
+            {restoreReportLogEntry.isPending ? "…" : "Undo"}
           </ToastAction>
         ),
       });
