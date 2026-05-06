@@ -1419,8 +1419,13 @@ export default function CustomerHomePage() {
       )}
 
       {menuOpen && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="w-72 bg-card border-r shadow-xl h-full flex flex-col">
+        <div className="fixed inset-0 z-50 flex pointer-events-auto">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setMenuOpen(false)}
+            data-testid="menu-backdrop"
+          />
+          <div className="relative z-10 w-72 bg-card border-r shadow-xl h-full flex flex-col pointer-events-auto">
             <div className="p-4 border-b flex items-center justify-between">
               <div
                 className="flex items-center gap-2 cursor-pointer"
