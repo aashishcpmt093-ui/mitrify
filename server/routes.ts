@@ -2664,7 +2664,7 @@ export async function registerRoutes(
   app.post("/api/admin/backfill-provider-mobile-numbers", adminCheck, async (_req, res) => {
     try {
       const { db: rawDb } = await import("./db");
-      const { providers: providersTable, profiles: profilesTable } = await import("../shared/schema");
+      const { providers: providersTable } = await import("../shared/schema");
       const { eq, sql: sqlExpr } = await import("drizzle-orm");
 
       // Find providers with no mobile numbers who have a profile mobile set

@@ -3660,9 +3660,10 @@ export default function AdminDashboardPage() {
                     try {
                       const res = await fetch("/api/admin/backfill-provider-mobile-numbers", { method: "POST", credentials: "include" });
                       const d = await res.json();
+                      if (!res.ok) throw new Error(d.message || "Backfill failed");
                       toast({ title: `✅ ${d.updated} providers ke mobile numbers fix ho gaye` });
-                    } catch {
-                      toast({ title: "Backfill failed", variant: "destructive" });
+                    } catch (err: any) {
+                      toast({ title: err.message || "Backfill failed", variant: "destructive" });
                     }
                   }}
                 >
