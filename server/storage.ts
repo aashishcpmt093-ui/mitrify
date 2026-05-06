@@ -3,9 +3,9 @@ import { findKnownPhones } from "./phoneDedupe";
 import {
   profiles, providers, calls, promoCodes, localUsers, credits, subscriptions, siteContent,
   coAdmins, pendingProviders, visitorStats, jobs, promoUsageLog, employees, searchLog,
-  salaryPayments, creditPayments, appNotifications, tagJobs, googlePlacesRuns,
+  salaryPayments, creditPayments, appNotifications, tagJobs, googlePlacesRuns, aiTokenUsage,
   DEFAULT_SUBSCRIPTION_PLAN_CONFIG,
-  type TagJob, type GooglePlacesRun, type InsertGooglePlacesRun,
+  type AiTokenUsage, type TagJob, type GooglePlacesRun, type InsertGooglePlacesRun,
   type Job,
   type Profile, type InsertProfile,
   type Provider, type InsertProvider,
@@ -192,6 +192,11 @@ export interface IStorage {
   // Google Places admin bulk-fetch run audit log (counts only, no places).
   createGooglePlacesRun(data: InsertGooglePlacesRun): Promise<GooglePlacesRun>;
   listRecentGooglePlacesRuns(limit: number): Promise<GooglePlacesRun[]>;
+
+  // AI token usage persistence (survives server restarts).
+  insertAiTokenUsage(tokens: number): Promise<void>;
+  getAiTokenUsageSince(since: Date): Promise<AiTokenUsage[]>;
+  pruneOldAiTokenUsage(before: Date): Promise<void>;
 }
 
 function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -2471,6 +2476,20 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(googlePlacesRuns)
       .orderBy(desc(googlePlacesRuns.startedAt))
       .limit(limit);
+  }
+
+  async insertAiTokenUsage(tokens: number): Promise<void> {
+    await db.insert(aiTokenUsage).values({ tokens, ts: new Date() });
+  }
+
+  async getAiTokenUsageSince(since: Date): Promise<AiTokenUsage[]> {
+    return db.select().from(aiTokenUsage)
+      .where(gte(aiTokenUsage.ts, since))
+      .orderBy(aiTokenUsage.ts);
+  }
+
+  async pruneOldAiTokenUsage(before: Date): Promise<void> {
+    await db.delete(aiTokenUsage).where(lt(aiTokenUsage.ts, before));
   }
 }
 

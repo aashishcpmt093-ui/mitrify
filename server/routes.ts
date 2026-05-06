@@ -3250,19 +3250,43 @@ export async function registerRoutes(
     return process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
   }
 
-  // ── Rolling hourly token tracker ──────────────────────────────────────────
+  // ── Rolling hourly token tracker (DB-backed for restart survival) ─────────
   const AI_TOKEN_HOUR_THRESHOLD = Number(process.env.AI_TOKEN_HOUR_THRESHOLD) || 100_000;
   const _aiTokenLog: Array<{ ts: number; tokens: number }> = [];
+  let _aiTokenLogSeeded = false;
   let _lastTokenWarnTs = 0;
   const AI_TOKEN_WARN_COOLDOWN_MS = 10 * 60 * 1000; // warn at most once every 10 min
+
+  // Seed in-memory log from DB on first use (or explicit call at startup).
+  async function ensureAiTokenLogSeeded(): Promise<void> {
+    if (_aiTokenLogSeeded) return;
+    _aiTokenLogSeeded = true;
+    try {
+      const since = new Date(Date.now() - 60 * 60 * 1000);
+      const rows = await storage.getAiTokenUsageSince(since);
+      for (const row of rows) {
+        _aiTokenLog.push({ ts: new Date(row.ts).getTime(), tokens: row.tokens });
+      }
+      _aiTokenLog.sort((a, b) => a.ts - b.ts);
+      console.log(`[AI] Seeded hourly token log from DB: ${_aiTokenLog.length} entries, ${_aiTokenLog.reduce((s, e) => s + e.tokens, 0).toLocaleString()} tokens`);
+    } catch (err) {
+      console.warn("[AI] Could not seed token log from DB:", err);
+    }
+  }
 
   function recordAiTokenUsage(tokens: number): void {
     const now = Date.now();
     _aiTokenLog.push({ ts: now, tokens });
-    // Prune entries older than 1 hour
+    // Prune in-memory entries older than 1 hour
     const cutoff = now - 60 * 60 * 1000;
     while (_aiTokenLog.length > 0 && _aiTokenLog[0].ts < cutoff) _aiTokenLog.shift();
-    // Sum current hour
+    // Persist to DB (fire-and-forget — never block the response)
+    storage.insertAiTokenUsage(tokens).catch((err) =>
+      console.warn("[AI] Failed to persist token usage to DB:", err)
+    );
+    // Prune old DB rows asynchronously (keep last 2 hours to be safe)
+    storage.pruneOldAiTokenUsage(new Date(now - 2 * 60 * 60 * 1000)).catch(() => {});
+    // Sum current hour and warn if threshold exceeded
     const hourTotal = _aiTokenLog.reduce((acc, e) => acc + e.tokens, 0);
     if (hourTotal >= AI_TOKEN_HOUR_THRESHOLD && now - _lastTokenWarnTs >= AI_TOKEN_WARN_COOLDOWN_MS) {
       _lastTokenWarnTs = now;
@@ -3274,6 +3298,9 @@ export async function registerRoutes(
     const cutoff = Date.now() - 60 * 60 * 1000;
     return _aiTokenLog.filter(e => e.ts >= cutoff).reduce((acc, e) => acc + e.tokens, 0);
   }
+
+  // Seed the log at startup so the first /api/ai/status call reflects DB data.
+  ensureAiTokenLogSeeded().catch(() => {});
 
   // Health check: is AI configured? Used to verify Railway env var setup.
   app.get("/api/ai/status", (_req, res) => {

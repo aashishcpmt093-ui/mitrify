@@ -524,3 +524,14 @@ export const insertGooglePlacesRunSchema = createInsertSchema(googlePlacesRuns).
 export type InsertGooglePlacesRun = z.infer<typeof insertGooglePlacesRunSchema>;
 
 export const NO_ALERT_NEEDED_MESSAGE = "No alert needed (backup succeeded)";
+
+// Persisted AI token usage — one row per Gemini call, used to survive restarts.
+export const aiTokenUsage = pgTable("ai_token_usage", {
+  id: serial("id").primaryKey(),
+  ts: timestamp("ts").notNull().defaultNow(),
+  tokens: integer("tokens").notNull(),
+}, (t) => ({
+  tsIdx: index("ai_token_usage_ts_idx").on(t.ts),
+}));
+
+export type AiTokenUsage = typeof aiTokenUsage.$inferSelect;
