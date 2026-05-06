@@ -24,7 +24,7 @@ export default function AdminLoginPage() {
       const data = await res.json();
       if (data.success) {
         localStorage.setItem("mitrify_admin_id", id);
-        await queryClient.invalidateQueries({ queryKey: ["/api/admin/check"] });
+        queryClient.setQueryData(["/api/admin/check"], true);
         await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
         setLocation("/admin/dashboard");
       } else {

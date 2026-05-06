@@ -1288,7 +1288,7 @@ export default function AdminDashboardPage() {
   const [metaLoading, setMetaLoading] = useState(false);
   const [metaResult, setMetaResult] = useState<{ imported: number; skipped: number; total: number; skippedNoMobile?: number } | null>(null);
 
-  const { data: isAdmin, isLoading: isAdminLoading } = useQuery({
+  const { data: isAdmin, isLoading: isAdminLoading, isFetching: isAdminFetching } = useQuery({
     queryKey: ["/api/admin/check"],
     queryFn: async () => {
       const res = await fetch("/api/admin/check", { credentials: "include" });
@@ -1298,7 +1298,9 @@ export default function AdminDashboardPage() {
     staleTime: Infinity,
   });
 
-  useEffect(() => { if (isAdmin === false) setLocation("/admin/login"); }, [isAdmin]);
+  useEffect(() => {
+    if (isAdmin === false && !isAdminFetching) setLocation("/admin/login");
+  }, [isAdmin, isAdminFetching]);
 
   // One-shot ref: ensures the last-selected stored backup is auto-restored
   // exactly once per Backup-tab visit, not on every render. Resets when the
