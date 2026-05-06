@@ -3250,6 +3250,17 @@ export async function registerRoutes(
     return process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
   }
 
+  // Health check: is AI configured? Used to verify Railway env var setup.
+  app.get("/api/ai/status", (_req, res) => {
+    const configured = !!getGeminiKeyForChat();
+    res.status(configured ? 200 : 503).json({
+      ai: configured ? "enabled" : "disabled",
+      message: configured
+        ? "Gemini API key configured — AI chat is active"
+        : "No GOOGLE_API_KEY or GEMINI_API_KEY found — AI chat will return 503",
+    });
+  });
+
   const USER_SYSTEM_PROMPT = `You are Mitrify AI, a helpful assistant for Mitrify — a service marketplace platform that connects customers with nearby service providers in India.
 
 About Mitrify:

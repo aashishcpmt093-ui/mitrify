@@ -27,6 +27,17 @@ The application is built with a modern web stack. The **frontend** uses React, T
 -   **Editable Contact Emails:** Contact emails displayed in customer and provider UIs are now editable via the admin panel.
 -   **Provider Subscriptions:** Boost (₹99/₹999), Pro (₹199/₹1999), Premium (₹499/₹4999) plans on monthly/yearly cycles via Cashfree. Plans grant search-result pinning and tick badges (white/yellow/green via `PlanTick`). Charging rules in `chargeAndCreateCall`: provider Premium = both sides 0; provider Pro = caller 1, provider 0; caller Premium = caller side 0 BUT provider must still be able to pay 1 (else `provider_no_balance`); Pro/Premium providers bypass the daily call cap; 0-credit calls still create rows. Cashfree `verify-payment` is idempotent per `order_id` (route-level pre-check + DB-level partial unique index `subs_payment_id_unique` on `payment_id WHERE NOT NULL` + `ON CONFLICT DO NOTHING` on the insert) and validates the paid amount against the live `subscription_plans` config before extending. Every paid event creates a NEW row so each payment is its own immutable history entry; same-tier purchases extend `endDate = max(now, prevEnd) + duration`, cross-tier purchases cancel the old plan and the new tier starts fresh from `now` (remaining time forfeited). All `createOrExtendSubscription` and `extendSubscription` mutations run inside a `db.transaction` with `pg_advisory_xact_lock(hashtext('sub:'+userId))` so concurrent paid/admin mutations cannot violate the single-active invariant; `getActiveSubscription` returns the lone `status='active'` row with the latest `endDate`. Active subscriptions whose `endDate` has passed are lazily transitioned to `expired` on every read path. Admin "Plans" tab edits prices/perks, lists all subscriptions with name/mobile/userId/paymentId search and status/plan filters, and supports grant/cancel/extend.
 
+## Railway Deployment — Required Environment Variables
+When deploying on Railway (or any external host), these env vars must be set in the service's Variables panel:
+- `DATABASE_URL` — PostgreSQL connection string
+- `GOOGLE_API_KEY` — Gemini API key (enables AI chat + auto-tags + Google Places)
+- `SESSION_SECRET` — random secret for express-session
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — Google OAuth
+- `CASHFREE_APP_ID` / `CASHFREE_SECRET_KEY` — Cashfree payments
+- `FIREBASE_*` — Firebase Phone Auth config
+
+AI chat (`/api/ai/chat`) reads `GOOGLE_API_KEY || GEMINI_API_KEY` and logs key status at startup.
+
 ## External Dependencies
 -   **Google OAuth 2.0:** For social authentication.
 -   **Firebase Phone Auth:** For SMS OTP verification.

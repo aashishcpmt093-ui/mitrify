@@ -29,7 +29,8 @@ export function log(message: string, source = "express") {
 }
 
 app.get("/health", (_req, res) => {
-  res.status(200).json({ status: "ok" });
+  const aiConfigured = !!(process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY);
+  res.status(200).json({ status: "ok", ai: aiConfigured ? "enabled" : "disabled" });
 });
 
 app.use((req, res, next) => {
@@ -72,6 +73,12 @@ httpServer.listen(
   },
   () => {
     log(`serving on port ${port}`);
+    const geminiKeyPresent = !!(process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY);
+    if (geminiKeyPresent) {
+      log(`[AI] Gemini API key configured — AI chat enabled`, "startup");
+    } else {
+      log(`[AI] WARNING: No GOOGLE_API_KEY or GEMINI_API_KEY found — AI chat will return 503`, "startup");
+    }
   },
 );
 
