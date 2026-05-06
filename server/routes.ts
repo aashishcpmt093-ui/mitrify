@@ -3451,6 +3451,17 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/admin/ai-report-log/:id", adminCheck, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+      await storage.deleteAiReportLogEntry(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to delete entry" });
+    }
+  });
+
   // Admin: update AI config (threshold)
   app.put("/api/admin/ai-config", adminCheck, async (req, res) => {
     try {

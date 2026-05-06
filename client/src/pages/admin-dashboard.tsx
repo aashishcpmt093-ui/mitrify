@@ -1695,6 +1695,25 @@ export default function AdminDashboardPage() {
   });
 
   const [clearLogConfirm, setClearLogConfirm] = React.useState(false);
+  const [deleteLogConfirmId, setDeleteLogConfirmId] = React.useState<number | null>(null);
+
+  const deleteReportLogEntry = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("DELETE", `/api/admin/ai-report-log/${id}`, {});
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || "Failed to delete");
+      return data;
+    },
+    onSuccess: () => {
+      setDeleteLogConfirmId(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-report-log"] });
+    },
+    onError: (err: any) => {
+      toast({ title: `❌ ${err.message || "Failed to delete"}`, variant: "destructive" });
+      setDeleteLogConfirmId(null);
+    },
+  });
+
   const clearReportLog = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("DELETE", "/api/admin/ai-report-log", {});
@@ -4752,9 +4771,39 @@ export default function AdminDashboardPage() {
                         <span className={`text-xs font-semibold ${entry.success ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
                           {entry.success ? "✓ Sent" : "✗ Failed"}
                         </span>
-                        <span className="text-xs text-muted-foreground" data-testid={`text-report-log-time-${entry.id}`}>
-                          {new Date(entry.sentAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground" data-testid={`text-report-log-time-${entry.id}`}>
+                            {new Date(entry.sentAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
+                          </span>
+                          {deleteLogConfirmId === entry.id ? (
+                            <span className="flex items-center gap-1">
+                              <button
+                                className="text-xs px-2 py-0.5 rounded bg-red-500 text-white hover:bg-red-600 disabled:opacity-50"
+                                disabled={deleteReportLogEntry.isPending}
+                                onClick={() => deleteReportLogEntry.mutate(entry.id)}
+                                data-testid={`button-confirm-delete-log-${entry.id}`}
+                              >
+                                {deleteReportLogEntry.isPending ? "…" : "Delete"}
+                              </button>
+                              <button
+                                className="text-xs px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600"
+                                onClick={() => setDeleteLogConfirmId(null)}
+                                data-testid={`button-cancel-delete-log-${entry.id}`}
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              className="text-muted-foreground hover:text-red-500 transition-colors p-0.5 rounded"
+                              onClick={() => setDeleteLogConfirmId(entry.id)}
+                              title="Delete this entry"
+                              data-testid={`button-delete-log-${entry.id}`}
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-600 dark:text-slate-400">
                         <span data-testid={`text-report-log-recipient-${entry.id}`}>To: <span className="font-medium">{entry.recipient}</span></span>

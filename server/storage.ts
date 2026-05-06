@@ -208,6 +208,7 @@ export interface IStorage {
   insertAiReportLog(entry: InsertAiReportLog): Promise<void>;
   listAiReportLog(limit: number): Promise<AiReportLog[]>;
   clearAiReportLog(): Promise<void>;
+  deleteAiReportLogEntry(id: number): Promise<void>;
   pruneOldAiReportLog(before: Date): Promise<void>;
 }
 
@@ -2550,6 +2551,10 @@ export class DatabaseStorage implements IStorage {
 
   async clearAiReportLog(): Promise<void> {
     await db.delete(aiReportLog);
+  }
+
+  async deleteAiReportLogEntry(id: number): Promise<void> {
+    await db.delete(aiReportLog).where(eq(aiReportLog.id, id));
   }
 
   async pruneOldAiReportLog(before: Date): Promise<void> {
