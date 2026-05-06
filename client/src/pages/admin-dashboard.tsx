@@ -43,7 +43,8 @@ const GOOGLE_PLACES_CALLS_PER_FETCH = 2;        // server merges anchor + page-2
 
 interface EditProviderState { open: boolean; profile: any | null; providerData: any | null; }
 
-function getInitials(name: string) {
+function getInitials(name: string | null | undefined) {
+  if (!name) return "?";
   return name
     .split(" ")
     .map((w) => w[0])
@@ -56,7 +57,8 @@ const AVATAR_COLORS = [
   "bg-violet-500", "bg-blue-500", "bg-emerald-500", "bg-orange-500",
   "bg-pink-500", "bg-teal-500", "bg-red-500", "bg-indigo-500",
 ];
-function avatarColor(name: string) {
+function avatarColor(name: string | null | undefined) {
+  if (!name) return AVATAR_COLORS[0];
   let sum = 0;
   for (let i = 0; i < name.length; i++) sum += name.charCodeAt(i);
   return AVATAR_COLORS[sum % AVATAR_COLORS.length];
@@ -1545,7 +1547,7 @@ export default function AdminDashboardPage() {
       return { ...p, _credit: cr };
     });
     const q = provSearch.toLowerCase();
-    if (q) list = list.filter((p) => p.name.toLowerCase().includes(q) || (p.mobile || "").includes(q) || (p.providerData?.serviceName || "").toLowerCase().includes(q));
+    if (q) list = list.filter((p) => (p.name || "").toLowerCase().includes(q) || (p.mobile || "").includes(q) || (p.providerData?.serviceName || "").toLowerCase().includes(q));
     if (provFilter === "blocked") list = list.filter((p) => p.isBlocked);
     else if (provFilter === "frozen") list = list.filter((p) => p._credit?.creditsFrozen);
     else if (provFilter === "suspicious") list = list.filter((p) => (p._credit?.purchasedCredits ?? 0) > 500);
@@ -1565,8 +1567,8 @@ export default function AdminDashboardPage() {
     };
     if (provAddedByFilter !== "all") list = list.filter((p) => normalizeAddedBy(p.providerData?.addedBy) === provAddedByFilter);
     if (provApprovedByFilter !== "all") list = list.filter((p) => normalizeApprovedBy(p.providerData?.approvedBy) === provApprovedByFilter);
-    if (provSort === "name_asc") list = [...list].sort((a, b) => a.name.localeCompare(b.name));
-    else if (provSort === "name_desc") list = [...list].sort((a, b) => b.name.localeCompare(a.name));
+    if (provSort === "name_asc") list = [...list].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    else if (provSort === "name_desc") list = [...list].sort((a, b) => (b.name || "").localeCompare(a.name || ""));
     else if (provSort === "credits_high") list = [...list].sort((a, b) => ((b._credit?.freeCredits ?? 0) + (b._credit?.purchasedCredits ?? 0)) - ((a._credit?.freeCredits ?? 0) + (a._credit?.purchasedCredits ?? 0)));
     else if (provSort === "credits_low") list = [...list].sort((a, b) => ((a._credit?.freeCredits ?? 0) + (a._credit?.purchasedCredits ?? 0)) - ((b._credit?.freeCredits ?? 0) + (b._credit?.purchasedCredits ?? 0)));
     else if (provSort === "newest") list = [...list].sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
@@ -5004,7 +5006,7 @@ export default function AdminDashboardPage() {
                 {/* Profile Header */}
                 <div className="flex items-center gap-4 py-4">
                   <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-white font-bold text-2xl shrink-0 ${avatarColor(coAdminStats.coAdmin.username)}`}>
-                    {coAdminStats.coAdmin.username[0]?.toUpperCase()}
+                    {(coAdminStats.coAdmin.username || "?")[0]?.toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
                     <h2 className="text-lg font-bold truncate">{coAdminStats.coAdmin.username}</h2>
@@ -5188,7 +5190,7 @@ export default function AdminDashboardPage() {
                       {coAdminStats.recentProviders.map((pp: any) => (
                         <div key={pp.id} className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl">
                           <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-white font-semibold text-sm shrink-0 ${avatarColor(pp.name)}`}>
-                            {pp.name[0]?.toUpperCase()}
+                            {(pp.name || "?")[0]?.toUpperCase()}
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium truncate">{pp.name}</p>

@@ -8,7 +8,42 @@ import { LanguageProvider } from "@/lib/language";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Component } from "react";
+import type { ReactNode, ErrorInfo } from "react";
+
+class AdminErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[AdminDashboard crash]", error.message, info.componentStack);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 p-8 gap-4">
+          <div className="text-red-500 font-bold text-lg">Dashboard Crash</div>
+          <pre className="bg-red-50 dark:bg-red-950 border border-red-200 rounded-lg p-4 text-xs text-red-800 dark:text-red-300 max-w-2xl w-full overflow-auto whitespace-pre-wrap">
+            {this.state.error.message}
+            {"\n\n"}
+            {this.state.error.stack}
+          </pre>
+          <button
+            className="px-4 py-2 bg-primary text-white rounded-lg text-sm"
+            onClick={() => { this.setState({ error: null }); window.location.reload(); }}
+          >
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 import WelcomePage from "@/pages/welcome";
 import LoginPage from "@/pages/login";
@@ -251,7 +286,9 @@ function Router() {
       <Route path="/payment/success" component={PaymentSuccessPage} />
       <Route path="/payment/cancel" component={PaymentCancelPage} />
 
-      <Route path="/admin/dashboard" component={AdminDashboardPage} />
+      <Route path="/admin/dashboard">
+        <AdminErrorBoundary><AdminDashboardPage /></AdminErrorBoundary>
+      </Route>
       <Route path="/coadmin/login" component={CoAdminLoginPage} />
       <Route path="/coadmin/dashboard" component={CoAdminDashboard} />
       <Route path="/verify/dashboard" component={VerifyDashboard} />
