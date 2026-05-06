@@ -3313,8 +3313,8 @@ export async function registerRoutes(
     storage.insertAiTokenUsage(tokens).catch((err) =>
       console.warn("[AI] Failed to persist token usage to DB:", err)
     );
-    // Prune old DB rows asynchronously (keep last 2 hours to be safe)
-    storage.pruneOldAiTokenUsage(new Date(now - 2 * 60 * 60 * 1000)).catch(() => {});
+    // Prune old DB rows asynchronously (keep last 8 days so 7-day chart has data)
+    storage.pruneOldAiTokenUsage(new Date(now - 8 * 24 * 60 * 60 * 1000)).catch(() => {});
     // Sum current hour and warn if threshold exceeded
     const hourTotal = _aiTokenLog.reduce((acc, e) => acc + e.tokens, 0);
     const threshold = await getAiTokenThreshold();
