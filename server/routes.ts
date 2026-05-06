@@ -3442,6 +3442,15 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/admin/ai-report-log", adminCheck, async (_req, res) => {
+    try {
+      await storage.clearAiReportLog();
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to clear report log" });
+    }
+  });
+
   // Admin: update AI config (threshold)
   app.put("/api/admin/ai-config", adminCheck, async (req, res) => {
     try {

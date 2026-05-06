@@ -1694,6 +1694,25 @@ export default function AdminDashboardPage() {
     },
   });
 
+  const [clearLogConfirm, setClearLogConfirm] = React.useState(false);
+  const clearReportLog = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("DELETE", "/api/admin/ai-report-log", {});
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || "Failed to clear");
+      return data;
+    },
+    onSuccess: () => {
+      toast({ title: "✅ Report history cleared." });
+      setClearLogConfirm(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-report-log"] });
+    },
+    onError: (err: any) => {
+      toast({ title: `❌ ${err.message || "Failed to clear"}`, variant: "destructive" });
+      setClearLogConfirm(false);
+    },
+  });
+
   const freezeCredits = useMutation({
     mutationFn: async ({ userId, role, freeze }: { userId: string; role: string; freeze: boolean }) => {
       const res = await apiRequest("POST", `/api/admin/freeze-credits/${userId}/${role}`, { freeze }); return res.json();
@@ -4680,7 +4699,45 @@ export default function AdminDashboardPage() {
 
             {/* ── Report History ── */}
             <div className="bg-white dark:bg-slate-900 border border-fuchsia-200 dark:border-fuchsia-800/40 rounded-2xl p-5 space-y-3 shadow-sm" data-testid="card-ai-report-log">
-              <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Report Send History</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Report Send History</p>
+                {aiReportLogData && aiReportLogData.length > 0 && (
+                  clearLogConfirm ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-red-600 dark:text-red-400">Clear all history?</span>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="h-6 text-xs px-2"
+                        disabled={clearReportLog.isPending}
+                        onClick={() => clearReportLog.mutate()}
+                        data-testid="button-confirm-clear-report-log"
+                      >
+                        {clearReportLog.isPending ? "Clearing…" : "Yes, clear"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 text-xs px-2"
+                        onClick={() => setClearLogConfirm(false)}
+                        data-testid="button-cancel-clear-report-log"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 text-xs px-2 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+                      onClick={() => setClearLogConfirm(true)}
+                      data-testid="button-clear-report-log"
+                    >
+                      Clear History
+                    </Button>
+                  )
+                )}
+              </div>
               {!aiReportLogData || aiReportLogData.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-2" data-testid="text-ai-report-log-empty">No reports sent yet.</p>
               ) : (

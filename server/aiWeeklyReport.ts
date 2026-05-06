@@ -158,6 +158,10 @@ export async function sendAiWeeklyReport(): Promise<{ sent: boolean; error?: str
       errorMsg: err?.message || String(err),
     }).catch(() => {});
     return { sent: false, error: err?.message || String(err) };
+  } finally {
+    // Auto-prune entries older than 90 days on every run (success, failure, or early exit)
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    await storage.pruneOldAiReportLog(ninetyDaysAgo).catch(e => console.error("[AI Weekly Report] Failed to prune old log entries:", e?.message));
   }
 }
 
