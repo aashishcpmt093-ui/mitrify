@@ -3410,13 +3410,15 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
         const detected = detectAdminAction(message);
         if (detected) {
           try {
-            const users = await fetchFilteredUsersForAI(detected.filter);
+            const allUsers = await fetchFilteredUsersForAI(detected.filter);
+            // Snapshot all IDs at list time — delete will use this exact set, no drift
             action = {
               type: "user_list",
               filter: detected.filter,
               intent: detected.intent,
-              users: users.slice(0, 150),
-              total: users.length,
+              previewUsers: allUsers.slice(0, 100),   // display only
+              allUserIds: allUsers.map(u => u.userId), // delete scope = exact snapshot
+              total: allUsers.length,
             };
           } catch (e) {
             console.error("AI action fetch error:", e);

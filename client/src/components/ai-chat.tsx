@@ -17,7 +17,8 @@ interface ActionData {
   type: "user_list";
   filter: "noMobile" | "noLocation" | "suspiciousName";
   intent: "list" | "delete";
-  users: ActionUser[];
+  previewUsers: ActionUser[];   // display only (up to 100)
+  allUserIds: string[];         // exact snapshot — used for delete, no drift
   total: number;
 }
 
@@ -44,7 +45,7 @@ function ActionCard({ action, onDeleted }: { action: ActionData; onDeleted: () =
   const [deletedCount, setDeletedCount] = useState<number | null>(null);
   const [showAll, setShowAll] = useState(false);
 
-  const displayUsers = showAll ? action.users : action.users.slice(0, 5);
+  const displayUsers = showAll ? action.previewUsers : action.previewUsers.slice(0, 5);
 
   async function handleDelete() {
     if (!confirmed) {
@@ -53,8 +54,9 @@ function ActionCard({ action, onDeleted }: { action: ActionData; onDeleted: () =
     }
     setDeleting(true);
     try {
-      const res = await apiRequest("POST", "/api/admin/ai-delete-by-filter", {
-        filter: action.filter,
+      // Use exact snapshot IDs captured at list time — same set admin reviewed
+      const res = await apiRequest("DELETE", "/api/admin/bulk-delete-profiles", {
+        userIds: action.allUserIds,
       });
       const data = await res.json();
       setDeletedCount(data.deleted ?? 0);
@@ -106,13 +108,13 @@ function ActionCard({ action, onDeleted }: { action: ActionData; onDeleted: () =
             ))}
           </div>
 
-          {action.users.length > 5 && (
+          {action.previewUsers.length > 5 && (
             <button
               onClick={() => setShowAll(s => !s)}
               className="w-full text-center text-violet-600 dark:text-violet-400 py-1.5 text-[11px] hover:bg-slate-50 dark:hover:bg-slate-800 transition font-medium"
               data-testid="button-ai-action-show-more"
             >
-              {showAll ? "Less dikhao ▲" : `+${action.users.length - 5} aur dekho ▼`}
+              {showAll ? "Less dikhao ▲" : `+${action.previewUsers.length - 5} aur dekho ▼`}
             </button>
           )}
 
