@@ -4776,6 +4776,33 @@ export default function AdminDashboardPage() {
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-3 flex-wrap">
                   <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Report Send History</p>
+                  {/* Status filter */}
+                  <div className="flex items-center gap-1" data-testid="report-log-status-filter">
+                    {(["all", "sent", "failed"] as const).map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => setReportLogStatus(s)}
+                        data-testid={`button-report-log-status-${s}`}
+                        className={`text-xs px-2 py-0.5 rounded-full border transition-colors capitalize ${reportLogStatus === s ? "bg-fuchsia-600 border-fuchsia-600 text-white" : "border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400 hover:border-fuchsia-400 hover:text-fuchsia-600 dark:hover:text-fuchsia-400"}`}
+                      >
+                        {s === "all" ? "All" : s === "sent" ? "✓ Sent" : "✗ Failed"}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Date range */}
+                  <div className="flex items-center gap-1" data-testid="report-log-date-filter">
+                    {(["all", "today", "week", "month"] as const).map((d) => (
+                      <button
+                        key={d}
+                        onClick={() => setReportLogSince(d)}
+                        data-testid={`button-report-log-since-${d}`}
+                        className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${reportLogSince === d ? "bg-slate-700 dark:bg-slate-300 border-slate-700 dark:border-slate-300 text-white dark:text-slate-900" : "border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400 hover:border-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
+                      >
+                        {d === "all" ? "All time" : d === "today" ? "Today" : d === "week" ? "7 days" : "30 days"}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Limit selector */}
                   <div className="flex items-center gap-1" data-testid="report-log-limit-selector">
                     {([20, 50, 100] as const).map((n) => (
                       <button

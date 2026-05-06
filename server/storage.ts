@@ -2550,9 +2550,15 @@ export class DatabaseStorage implements IStorage {
     if (status === "sent") conditions.push(eq(aiReportLog.success, true));
     if (status === "failed") conditions.push(eq(aiReportLog.success, false));
     if (since) conditions.push(gte(aiReportLog.sentAt, since));
-    const q = db.select().from(aiReportLog);
-    if (conditions.length > 0) q.where(and(...conditions));
-    return q.orderBy(desc(aiReportLog.sentAt)).limit(limit);
+    if (conditions.length > 0) {
+      return db.select().from(aiReportLog)
+        .where(and(...conditions))
+        .orderBy(desc(aiReportLog.sentAt))
+        .limit(limit);
+    }
+    return db.select().from(aiReportLog)
+      .orderBy(desc(aiReportLog.sentAt))
+      .limit(limit);
   }
 
   async clearAiReportLog(): Promise<void> {
