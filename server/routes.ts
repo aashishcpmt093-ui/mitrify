@@ -3484,6 +3484,21 @@ export async function registerRoutes(
     }
   });
 
+  app.delete("/api/admin/ai-report-log/prune", adminCheck, async (req, res) => {
+    try {
+      const daysParam = req.query.days as string | undefined;
+      const days = daysParam ? parseInt(daysParam, 10) : 90;
+      if (!Number.isFinite(days) || days < 1) {
+        return res.status(400).json({ message: "days must be a positive integer" });
+      }
+      const before = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      const pruned = await storage.pruneOldAiReportLog(before);
+      res.json({ success: true, pruned });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to prune report log" });
+    }
+  });
+
   app.delete("/api/admin/ai-report-log/:id", adminCheck, async (req, res) => {
     try {
       const id = parseInt(req.params.id, 10);

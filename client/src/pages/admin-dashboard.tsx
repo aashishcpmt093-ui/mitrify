@@ -1720,11 +1720,13 @@ export default function AdminDashboardPage() {
   });
 
   const [clearLogConfirm, setClearLogConfirm] = useState(false);
+  const [pruneLogConfirm, setPruneLogConfirm] = useState(false);
   const [deleteLogConfirmId, setDeleteLogConfirmId] = useState<number | null>(null);
 
   type ReportLogEntry = { id: number; sentAt: string; recipient: string; success: boolean; totalTokens: number; estimatedCost: string; peakTokens: number; exceededHours: number; errorMsg: string | null };
 
   const [pendingClearedLogEntries, setPendingClearedLogEntries] = useState<ReportLogEntry[]>([]);
+  const [pendingPrunedLogEntries, setPendingPrunedLogEntries] = useState<ReportLogEntry[]>([]);
 
   const restoreReportLogEntry = useMutation({
     mutationFn: async (entry: ReportLogEntry) => {
@@ -1833,6 +1835,48 @@ export default function AdminDashboardPage() {
     onError: (err: any) => {
       toast({ title: `❌ ${err.message || "Failed to clear"}`, variant: "destructive" });
       setClearLogConfirm(false);
+    },
+  });
+
+  const pruneReportLog = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("DELETE", "/api/admin/ai-report-log/prune?days=90", {});
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || "Failed to prune");
+      return data;
+    },
+    onSuccess: (data) => {
+      setPruneLogConfirm(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/ai-report-log"] });
+      const pruned: ReportLogEntry[] = data.pruned ?? [];
+      setPendingPrunedLogEntries(pruned);
+      if (pruned.length > 0) {
+        setTimeout(() => setPendingPrunedLogEntries([]), 5000);
+      }
+      toast({
+        title: pruned.length > 0 ? `✅ ${pruned.length} old entr${pruned.length === 1 ? "y" : "ies"} pruned.` : "✅ Nothing to prune.",
+        description: pruned.length > 0 ? "Tap Undo within 5 seconds to restore." : undefined,
+        duration: 5000,
+        action: pruned.length > 0 ? (
+          <ToastAction
+            altText="Undo prune old logs"
+            data-testid="button-undo-prune-report-log"
+            disabled={restoreBulkReportLog.isPending}
+            onClick={() => {
+              if (!restoreBulkReportLog.isPending && pendingPrunedLogEntries.length > 0) {
+                restoreBulkReportLog.mutate(pendingPrunedLogEntries);
+                setPendingPrunedLogEntries([]);
+              }
+            }}
+          >
+            {restoreBulkReportLog.isPending ? "…" : "Undo"}
+          </ToastAction>
+        ) : undefined,
+      });
+    },
+    onError: (err: any) => {
+      toast({ title: `❌ ${err.message || "Failed to prune"}`, variant: "destructive" });
+      setPruneLogConfirm(false);
     },
   });
 
@@ -4860,26 +4904,26 @@ export default function AdminDashboardPage() {
                     ))}
                   </div>
                 </div>
-                {aiReportLogData && aiReportLogData.length > 0 && (
-                  clearLogConfirm ? (
+                <div className="flex items-center gap-2">
+                  {pruneLogConfirm ? (
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-red-600 dark:text-red-400">Clear all history?</span>
+                      <span className="text-xs text-orange-600 dark:text-orange-400">Remove logs older than 90 days?</span>
                       <Button
                         size="sm"
                         variant="destructive"
                         className="h-6 text-xs px-2"
-                        disabled={clearReportLog.isPending}
-                        onClick={() => clearReportLog.mutate()}
-                        data-testid="button-confirm-clear-report-log"
+                        disabled={pruneReportLog.isPending}
+                        onClick={() => pruneReportLog.mutate()}
+                        data-testid="button-confirm-prune-report-log"
                       >
-                        {clearReportLog.isPending ? "Clearing…" : "Yes, clear"}
+                        {pruneReportLog.isPending ? "Pruning…" : "Yes, prune"}
                       </Button>
                       <Button
                         size="sm"
                         variant="ghost"
                         className="h-6 text-xs px-2"
-                        onClick={() => setClearLogConfirm(false)}
-                        data-testid="button-cancel-clear-report-log"
+                        onClick={() => setPruneLogConfirm(false)}
+                        data-testid="button-cancel-prune-report-log"
                       >
                         Cancel
                       </Button>
@@ -4888,14 +4932,50 @@ export default function AdminDashboardPage() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-6 text-xs px-2 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
-                      onClick={() => setClearLogConfirm(true)}
-                      data-testid="button-clear-report-log"
+                      className="h-6 text-xs px-2 text-orange-500 hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-900/20"
+                      onClick={() => { setPruneLogConfirm(true); setClearLogConfirm(false); }}
+                      data-testid="button-prune-report-log"
                     >
-                      Clear History
+                      Prune Old Logs
                     </Button>
-                  )
-                )}
+                  )}
+                  {aiReportLogData && aiReportLogData.length > 0 && !pruneLogConfirm && (
+                    clearLogConfirm ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-red-600 dark:text-red-400">Clear all history?</span>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="h-6 text-xs px-2"
+                          disabled={clearReportLog.isPending}
+                          onClick={() => clearReportLog.mutate()}
+                          data-testid="button-confirm-clear-report-log"
+                        >
+                          {clearReportLog.isPending ? "Clearing…" : "Yes, clear"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 text-xs px-2"
+                          onClick={() => setClearLogConfirm(false)}
+                          data-testid="button-cancel-clear-report-log"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 text-xs px-2 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+                        onClick={() => setClearLogConfirm(true)}
+                        data-testid="button-clear-report-log"
+                      >
+                        Clear History
+                      </Button>
+                    )
+                  )}
+                </div>
               </div>
               {!aiReportLogData || aiReportLogData.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-2" data-testid="text-ai-report-log-empty">No reports sent yet.</p>

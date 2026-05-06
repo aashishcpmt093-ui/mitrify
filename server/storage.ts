@@ -210,7 +210,7 @@ export interface IStorage {
   listAllAiReportLog(): Promise<AiReportLog[]>;
   clearAiReportLog(): Promise<void>;
   deleteAiReportLogEntry(id: number): Promise<void>;
-  pruneOldAiReportLog(before: Date): Promise<void>;
+  pruneOldAiReportLog(before: Date): Promise<AiReportLog[]>;
 }
 
 function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -2574,8 +2574,8 @@ export class DatabaseStorage implements IStorage {
     await db.delete(aiReportLog).where(eq(aiReportLog.id, id));
   }
 
-  async pruneOldAiReportLog(before: Date): Promise<void> {
-    await db.delete(aiReportLog).where(lt(aiReportLog.sentAt, before));
+  async pruneOldAiReportLog(before: Date): Promise<AiReportLog[]> {
+    return db.delete(aiReportLog).where(lt(aiReportLog.sentAt, before)).returning();
   }
 }
 
