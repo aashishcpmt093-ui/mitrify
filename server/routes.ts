@@ -3090,7 +3090,7 @@ export async function registerRoutes(
   // POST /api/admin/restore/gcs-preview — body: { gcsName, tables? }
   app.post("/api/admin/restore/gcs-preview", adminCheck, async (req, res) => {
     const gcsName = String(req.body?.gcsName || "").trim();
-    if (!gcsName || !/^[A-Za-z0-9._-]+\.sql$/.test(gcsName)) {
+    if (!gcsName || !/^[A-Za-z0-9._\-/]+\.sql$/.test(gcsName) || gcsName.includes("..")) {
       return res.status(400).json({ message: "Invalid gcsName" });
     }
     if (!isGCSConfigured()) {
@@ -3127,7 +3127,7 @@ export async function registerRoutes(
   // POST /api/admin/restore/gcs — body: { gcsName, tables? }
   app.post("/api/admin/restore/gcs", adminCheck, async (req, res) => {
     const gcsName = String(req.body?.gcsName || "").trim();
-    if (!gcsName || !/^[A-Za-z0-9._-]+\.sql$/.test(gcsName)) {
+    if (!gcsName || !/^[A-Za-z0-9._\-/]+\.sql$/.test(gcsName) || gcsName.includes("..")) {
       return res.status(400).json({ message: "Invalid gcsName" });
     }
     if (!isGCSConfigured()) {
