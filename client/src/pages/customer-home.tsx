@@ -782,19 +782,6 @@ export default function CustomerHomePage() {
   return (
     <div className="min-h-screen bg-background relative isolate" ref={contentRef} onScroll={handleScroll}>
       <WelcomePopup />
-      <div className="sticky top-0 z-50 border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <img src={logoImg} alt="Mitrify" className="h-6 w-6 shrink-0" />
-            <span className="truncate text-sm font-semibold">Mitrify</span>
-          </div>
-          {!isAuthenticated && (
-            <Button size="sm" onClick={handleGoToLogin} data-testid="button-top-login-signup">
-              {t("loginSignup")}
-            </Button>
-          )}
-        </div>
-      </div>
       {phoneSheet.open && (
         <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="phone-sheet">
           <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => setPhoneSheet({ open: false, providerId: "", providerName: "", numbers: [] })} />
@@ -1567,7 +1554,7 @@ export default function CustomerHomePage() {
         </div>
       )}
 
-      <header className="sticky top-0 z-40 bg-card border-b px-4 py-2.5">
+      <header className="sticky top-0 z-50 bg-card border-b px-4 py-2.5">
         <div className="flex items-center justify-between">
           <Button variant="ghost" size="icon" onClick={() => setMenuOpen(true)} data-testid="button-menu">
             <Menu className="w-5 h-5" />
@@ -1577,24 +1564,31 @@ export default function CustomerHomePage() {
             <span className="font-bold text-lg">Mitrify</span>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              className={`flex items-center gap-1.5 px-3 h-8 text-xs font-semibold ${isAuthenticated ? "border-amber-400 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20" : "border-muted text-muted-foreground opacity-50 cursor-not-allowed"}`}
-              onClick={() => { if (isAuthenticated) setJobMenuOpen(true); else setShowLoginPrompt(true); }}
-              disabled={!isAuthenticated}
-              data-testid="button-jobs"
-            >
-              <Briefcase className="w-3.5 h-3.5" /> Jobs
-            </Button>
-            <button
-              onClick={() => setLocationPickerOpen(true)}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              data-testid="button-open-location-picker"
-            >
-              <MapPin className="w-3.5 h-3.5" />
-              <span className="truncate max-w-[80px]">{locationLabel}</span>
-            </button>
+            {!isAuthenticated ? (
+              <Button size="sm" onClick={handleGoToLogin} data-testid="button-top-login-signup" className="h-8 text-xs px-3">
+                {t("loginSignup")}
+              </Button>
+            ) : (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex items-center gap-1.5 px-3 h-8 text-xs font-semibold border-amber-400 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+                  onClick={() => setJobMenuOpen(true)}
+                  data-testid="button-jobs"
+                >
+                  <Briefcase className="w-3.5 h-3.5" /> Jobs
+                </Button>
+                <button
+                  onClick={() => setLocationPickerOpen(true)}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                  data-testid="button-open-location-picker"
+                >
+                  <MapPin className="w-3.5 h-3.5" />
+                  <span className="truncate max-w-[80px]">{locationLabel}</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       </header>
