@@ -16,10 +16,9 @@ interface ActionUser {
 interface ActionData {
   type: "user_list";
   filter: "noMobile" | "noLocation" | "suspiciousName";
-  intent: "list" | "delete";
-  previewUsers: ActionUser[];   // display only (up to 100)
-  allUserIds: string[];         // exact snapshot — used for delete, no drift
+  previewUsers: ActionUser[];
   total: number;
+  snapshotToken: string;
 }
 
 interface Message {
@@ -38,7 +37,12 @@ const FILTER_LABELS: Record<string, string> = {
   suspiciousName: "Suspicious Name",
 };
 
-function ActionCard({ action, onDeleted }: { action: ActionData; onDeleted: () => void }) {
+interface ActionCardProps {
+  action: ActionData;
+  onConfirmDelete: (snapshotToken: string) => Promise<{ reply: string; deletedCount: number }>;
+}
+
+function ActionCard({ action, onConfirmDelete }: ActionCardProps) {
   const { toast } = useToast();
   const [confirmed, setConfirmed] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -54,16 +58,11 @@ function ActionCard({ action, onDeleted }: { action: ActionData; onDeleted: () =
     }
     setDeleting(true);
     try {
-      // Use exact snapshot IDs captured at list time — same set admin reviewed
-      const res = await apiRequest("DELETE", "/api/admin/bulk-delete-profiles", {
-        userIds: action.allUserIds,
-      });
-      const data = await res.json();
-      setDeletedCount(data.deleted ?? 0);
-      toast({ title: `✅ ${data.deleted} users delete ho gaye!` });
+      const { reply, deletedCount: count } = await onConfirmDelete(action.snapshotToken);
+      setDeletedCount(count);
+      toast({ title: `✅ ${count} users delete ho gaye!` });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/bulk-filter-users"] });
-      onDeleted();
     } catch {
       toast({ title: "Delete fail ho gaya. Dobara try karo.", variant: "destructive" });
     } finally {
@@ -145,7 +144,8 @@ function ActionCard({ action, onDeleted }: { action: ActionData; onDeleted: () =
             ) : (
               <button
                 onClick={handleDelete}
-                className="flex items-center gap-1.5 text-[11px] px-3 py-1 rounded-lg bg-red-50 dark:bg-red-950 hover:bg-red-100 dark:hover:bg-red-900 text-red-600 dark:text-red-400 font-semibold transition border border-red-200 dark:border-red-800 ml-auto"
+                disabled={!action.snapshotToken}
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1 rounded-lg bg-red-50 dark:bg-red-950 hover:bg-red-100 dark:hover:bg-red-900 text-red-600 dark:text-red-400 font-semibold transition border border-red-200 dark:border-red-800 ml-auto disabled:opacity-40 disabled:cursor-not-allowed"
                 data-testid="button-ai-action-delete"
               >
                 <Trash2 className="w-3 h-3" />
@@ -215,19 +215,24 @@ export default function AIChat({ isAdmin = false }: AIChatProps) {
     }
   }
 
+  async function confirmDelete(snapshotToken: string): Promise<{ reply: string; deletedCount: number }> {
+    const res = await apiRequest("POST", "/api/ai/chat", {
+      message: "Admin has confirmed. Please proceed with deletion.",
+      snapshotToken,
+      isAdmin: true,
+    });
+    const data = await res.json();
+    const reply = data.reply || "Delete complete.";
+    const deletedCount: number = typeof data.deletedCount === "number" ? data.deletedCount : 0;
+    setMessages(prev => [...prev, { role: "assistant", content: reply }]);
+    return { reply, deletedCount };
+  }
+
   function handleKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
-  }
-
-  function handleDeleted(idx: number) {
-    setMessages(prev => prev.map((m, i) =>
-      i === idx && m.action
-        ? { ...m, action: { ...m.action, previewUsers: [], allUserIds: [], total: 0 } }
-        : m
-    ));
   }
 
   return (
@@ -300,7 +305,10 @@ export default function AIChat({ isAdmin = false }: AIChatProps) {
 
                 {m.role === "assistant" && m.action && (
                   <div className="ml-8 w-[calc(100%-2rem)]">
-                    <ActionCard action={m.action} onDeleted={() => handleDeleted(i)} />
+                    <ActionCard
+                      action={m.action}
+                      onConfirmDelete={confirmDelete}
+                    />
                   </div>
                 )}
               </div>

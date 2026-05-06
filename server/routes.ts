@@ -3304,6 +3304,31 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
     previewUsers: AIUserEntry[];
     allUserIds: string[];
     total: number;
+    snapshotToken: string;
+  }
+
+  // In-memory snapshot store: list_users result saved by token for delete_users tool
+  const pendingDeleteSnapshots = new Map<string, { userIds: string[]; filter: AIUserFilter; createdAt: number }>();
+
+  function createDeleteSnapshot(filter: AIUserFilter, userIds: string[]): string {
+    const token = `dsnap_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    pendingDeleteSnapshots.set(token, { userIds, filter, createdAt: Date.now() });
+    const cutoff = Date.now() - 10 * 60 * 1000; // 10-min TTL
+    for (const [k, v] of pendingDeleteSnapshots.entries()) {
+      if (v.createdAt < cutoff) pendingDeleteSnapshots.delete(k);
+    }
+    return token;
+  }
+
+  function consumeDeleteSnapshot(token: string): { userIds: string[]; filter: AIUserFilter } | null {
+    const snap = pendingDeleteSnapshots.get(token);
+    if (!snap) return null;
+    if (Date.now() - snap.createdAt > 10 * 60 * 1000) {
+      pendingDeleteSnapshots.delete(token);
+      return null;
+    }
+    pendingDeleteSnapshots.delete(token); // one-time use
+    return { userIds: snap.userIds, filter: snap.filter };
   }
 
   interface GeminiTextPart { text: string }
@@ -3353,30 +3378,46 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
     }));
   }
 
-  const ADMIN_LIST_USERS_TOOL = {
-    function_declarations: [{
-      name: "list_users",
-      description: "Fetch and display users matching a filter criterion. Call this when admin asks to find, list, show, or wants to delete users with a specific characteristic.",
-      parameters: {
-        type: "OBJECT",
-        properties: {
-          filter: {
-            type: "STRING",
-            enum: VALID_AI_FILTERS,
-            description: "noMobile = users without a registered mobile number; noLocation = provider accounts missing GPS coordinates; suspiciousName = accounts with test/fake/random names",
+  const ADMIN_TOOLS = {
+    function_declarations: [
+      {
+        name: "list_users",
+        description: "Fetch and display users matching a filter criterion. Call this when admin asks to find, list, show, or wants to delete users with a specific characteristic.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            filter: {
+              type: "STRING",
+              enum: VALID_AI_FILTERS,
+              description: "noMobile = users without a registered mobile number; noLocation = provider accounts missing GPS coordinates; suspiciousName = accounts with test/fake/random names",
+            },
           },
+          required: ["filter"],
         },
-        required: ["filter"],
       },
-    }],
+      {
+        name: "delete_users",
+        description: "Permanently delete users identified by a snapshot token. Only call this after admin has explicitly confirmed deletion following a list_users result.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            snapshotToken: {
+              type: "STRING",
+              description: "The snapshot token from the list_users result, representing the exact set of users to delete.",
+            },
+          },
+          required: ["snapshotToken"],
+        },
+      },
+    ],
   };
 
-  async function callGemini(key: string, contents: GeminiContent[], withTools: boolean): Promise<GeminiResponse> {
+  async function callGemini(key: string, contents: GeminiContent[], useAdminTools: boolean): Promise<GeminiResponse> {
     const body: Record<string, unknown> = {
       contents,
       generationConfig: { maxOutputTokens: 1024, temperature: 0.7 },
     };
-    if (withTools) body.tools = [ADMIN_LIST_USERS_TOOL];
+    if (useAdminTools) body.tools = [ADMIN_TOOLS];
     const resp = await fetch(GEMINI_CHAT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-goog-api-key": key },
@@ -3397,10 +3438,11 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
         return res.status(503).json({ reply: "AI abhi available nahi hai. GEMINI_API_KEY configure karo." });
       }
 
-      const { message, history = [], isAdmin = false } = req.body as {
+      const { message, history = [], isAdmin = false, snapshotToken } = req.body as {
         message: unknown;
         history: Array<{ role: string; content: string }>;
         isAdmin: boolean;
+        snapshotToken?: string;
       };
       if (!message || typeof message !== "string") {
         return res.status(400).json({ message: "message required" });
@@ -3408,6 +3450,65 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
 
       const sessionAdmin = (req.session as { adminLoggedIn?: boolean }).adminLoggedIn || false;
       const useAdminMode = isAdmin && sessionAdmin;
+
+      // ── Admin confirm-delete flow: frontend sends snapshotToken after admin confirms ──
+      if (useAdminMode && snapshotToken) {
+        const snap = consumeDeleteSnapshot(snapshotToken);
+        if (!snap) {
+          return res.json({ reply: "Delete token expire ho gaya ya invalid hai. Dobara list karo aur confirm karo.", deletedCount: 0 });
+        }
+        // Prime Gemini to call delete_users with the snapshot token (re-issued for this call)
+        const tempToken = createDeleteSnapshot(snap.filter, snap.userIds);
+        const deleteContents: GeminiContent[] = [
+          { role: "user", parts: [{ text: `${ADMIN_SYSTEM_PROMPT}\n\nAdmin has explicitly confirmed deletion of ${snap.userIds.length} users (filter: ${snap.filter}, snapshotToken: ${tempToken}). Call delete_users immediately.` }] },
+          { role: "model", parts: [{ text: "Understood. Proceeding with delete_users tool call." }] },
+          { role: "user", parts: [{ text: "Execute the deletion now." }] },
+        ];
+        let delData: GeminiResponse;
+        try {
+          delData = await callGemini(geminiKey, deleteContents, true);
+        } catch {
+          return res.status(502).json({ reply: "AI se response nahi mila.", deletedCount: 0 });
+        }
+        const delPart = delData.candidates?.[0]?.content?.parts?.[0];
+        if (delPart && "functionCall" in delPart && delPart.functionCall.name === "delete_users") {
+          const tokenFromAI = delPart.functionCall.args?.snapshotToken ?? "";
+          const snapToDelete = consumeDeleteSnapshot(tokenFromAI);
+          if (!snapToDelete) {
+            return res.json({ reply: "Delete token mismatch. Dobara try karo.", deletedCount: 0 });
+          }
+          let deletedCount = 0;
+          for (const userId of snapToDelete.userIds) {
+            try { await storage.deleteProfile(userId); deletedCount++; } catch { /* skip failed */ }
+          }
+          // Send tool result to Gemini for final confirmation reply
+          const confirmContents: GeminiContent[] = [
+            ...deleteContents,
+            delData.candidates![0].content,
+            {
+              role: "user",
+              parts: [{ functionResponse: { name: "delete_users", response: { result: `Successfully deleted ${deletedCount} users.` } } }],
+            },
+          ];
+          let confirmData: GeminiResponse;
+          try {
+            confirmData = await callGemini(geminiKey, confirmContents, true);
+          } catch {
+            return res.json({ reply: `✅ ${deletedCount} users delete ho gaye!`, deletedCount });
+          }
+          const confirmPart = confirmData.candidates?.[0]?.content?.parts?.[0];
+          const confirmReply = (confirmPart && "text" in confirmPart ? confirmPart.text : null) ?? `✅ ${deletedCount} users delete ho gaye!`;
+          return res.json({ reply: confirmReply, deletedCount });
+        }
+        // Gemini didn't call the tool — still execute delete
+        let deletedCount = 0;
+        for (const userId of snap.userIds) {
+          try { await storage.deleteProfile(userId); deletedCount++; } catch { /* skip */ }
+        }
+        // Re-consume temp token if not used
+        consumeDeleteSnapshot(tempToken);
+        return res.json({ reply: `✅ ${deletedCount} users successfully delete ho gaye!`, deletedCount });
+      }
 
       let systemText = useAdminMode ? ADMIN_SYSTEM_PROMPT : USER_SYSTEM_PROMPT;
       if (useAdminMode) {
@@ -3429,7 +3530,7 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
       }
       contents.push({ role: "user", parts: [{ text: message }] });
 
-      // ── Admin mode: use Gemini function-calling for list_users tool ──────────
+      // ── Admin mode: Gemini function-calling for list_users / delete_users ────
       if (useAdminMode) {
         let firstData: GeminiResponse;
         try {
@@ -3442,6 +3543,8 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
 
         if (firstPart && "functionCall" in firstPart) {
           const fc = firstPart.functionCall;
+
+          // ── list_users tool ──────────────────────────────────────────────────
           if (fc.name === "list_users" && VALID_AI_FILTERS.includes(fc.args?.filter as AIUserFilter)) {
             const filter = fc.args.filter as AIUserFilter;
             let allUsers: AIUserEntry[] = [];
@@ -3449,17 +3552,18 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
             try {
               allUsers = await fetchFilteredUsersForAI(filter);
               toolResultText = allUsers.length > 0
-                ? `Found ${allUsers.length} users with filter "${filter}". Showing list to admin with delete option.`
+                ? `Found ${allUsers.length} users with filter "${filter}". Showing list to admin.`
                 : `No users found for filter "${filter}".`;
             } catch {
               toolResultText = `Error fetching users for filter "${filter}".`;
             }
 
-            // Tool result round-trip to Gemini
+            const snapshotToken = allUsers.length > 0 ? createDeleteSnapshot(filter, allUsers.map(u => u.userId)) : "";
+
             const modelTurn: GeminiContent = firstData.candidates![0].content;
             const toolResultTurn: GeminiContent = {
               role: "user",
-              parts: [{ functionResponse: { name: "list_users", response: { result: toolResultText } } }],
+              parts: [{ functionResponse: { name: "list_users", response: { result: toolResultText, snapshotToken } } }],
             };
             let finalData: GeminiResponse;
             try {
@@ -3476,6 +3580,7 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
               previewUsers: allUsers.slice(0, 100),
               allUserIds: allUsers.map(u => u.userId),
               total: allUsers.length,
+              snapshotToken,
             };
             return res.json({ reply, action });
           }
@@ -3557,25 +3662,6 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
       res.json(filtered.slice(0, 500));
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Filter failed" });
-    }
-  });
-
-  // ── ADMIN: AI FILTER-BASED DELETE (used by AI chat action cards) ─────────
-  app.post("/api/admin/ai-delete-by-filter", adminCheck, async (req, res) => {
-    try {
-      const { filter } = req.body as { filter: "noMobile" | "noLocation" | "suspiciousName" };
-      const validFilters = ["noMobile", "noLocation", "suspiciousName"];
-      if (!filter || !validFilters.includes(filter)) {
-        return res.status(400).json({ message: "Valid filter required: noMobile | noLocation | suspiciousName" });
-      }
-      const users = await fetchFilteredUsersForAI(filter);
-      let deleted = 0;
-      for (const u of users) {
-        try { await storage.deleteProfile(u.userId); deleted++; } catch {}
-      }
-      res.json({ deleted, total: users.length });
-    } catch (err: any) {
-      res.status(500).json({ message: err.message || "Delete failed" });
     }
   });
 
