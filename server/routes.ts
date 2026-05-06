@@ -1631,7 +1631,11 @@ export async function registerRoutes(
         orderTags,
       });
 
-      const cfMode = process.env.REPLIT_DEPLOYMENT === "1" ? "production" : "sandbox";
+      const cfMode =
+        (process.env.NODE_ENV === "production" ||
+         process.env.REPLIT_DEPLOYMENT === "1" ||
+         process.env.CASHFREE_ENV === "production")
+          ? "production" : "sandbox";
       res.json({
         paymentSessionId: order.payment_session_id,
         orderId: order.order_id,

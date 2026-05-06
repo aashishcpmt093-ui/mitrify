@@ -1,7 +1,10 @@
 const API_VERSION = "2023-08-01";
 
 function getBaseUrl(): string {
-  const isProduction = process.env.REPLIT_DEPLOYMENT === "1";
+  const isProduction =
+    process.env.NODE_ENV === "production" ||
+    process.env.REPLIT_DEPLOYMENT === "1" ||
+    process.env.CASHFREE_ENV === "production";
   return isProduction
     ? "https://api.cashfree.com/pg"
     : "https://sandbox.cashfree.com/pg";

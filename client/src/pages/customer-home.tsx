@@ -753,7 +753,11 @@ export default function CustomerHomePage() {
       return;
     }
 
-    const numbers = result.provider.mobileNumbers || [];
+    const mobileNums = result.provider.mobileNumbers || [];
+    const profileMobile = (result.profile as any)?.mobile;
+    const numbers = mobileNums.length > 0
+      ? mobileNums
+      : profileMobile ? [profileMobile] : [];
     if (numbers.length === 0) {
       toast({ title: t("noNumber"), description: "", variant: "destructive" });
       return;

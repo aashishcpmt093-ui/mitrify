@@ -242,15 +242,15 @@ export async function setupAuth(app: Express) {
 
     app.get("/api/auth/google/callback", (req, res, next) => {
       const strategyName = ensureGoogleStrategy(req.hostname);
-      passport.authenticate(strategyName, { failureRedirect: "/welcome" }, (err: any, user: any) => {
+      passport.authenticate(strategyName, { failureRedirect: "/welcome?error=google_auth_failed" }, (err: any, user: any) => {
         if (err || !user) {
           console.error("Google auth error:", err);
-          return res.redirect("/welcome");
+          return res.redirect("/welcome?error=google_auth_failed");
         }
         req.login(user, (loginErr) => {
           if (loginErr) {
             console.error("Session login error:", loginErr);
-            return res.redirect("/welcome");
+            return res.redirect("/welcome?error=session_error");
           }
           (req.session as any).localUserId = user.localUserId;
           req.session.save((saveErr) => {
@@ -359,15 +359,15 @@ export async function setupAuth(app: Express) {
 
     app.post("/api/auth/apple/callback", (req, res, next) => {
       const strategyName = ensureAppleStrategy(req.hostname);
-      passport.authenticate(strategyName, { failureRedirect: "/welcome" }, (err: any, user: any) => {
+      passport.authenticate(strategyName, { failureRedirect: "/welcome?error=apple_auth_failed" }, (err: any, user: any) => {
         if (err || !user) {
           console.error("Apple auth error:", err);
-          return res.redirect("/welcome");
+          return res.redirect("/welcome?error=apple_auth_failed");
         }
         req.login(user, (loginErr) => {
           if (loginErr) {
             console.error("Apple session login error:", loginErr);
-            return res.redirect("/welcome");
+            return res.redirect("/welcome?error=session_error");
           }
           (req.session as any).localUserId = user.localUserId;
           req.session.save((saveErr) => {

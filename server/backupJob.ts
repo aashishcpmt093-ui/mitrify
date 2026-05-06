@@ -318,7 +318,7 @@ export async function streamBackupSql(
         if (rowsRes.rows.length === 0) break;
         for (const row of rowsRes.rows) {
           const vals = cols.map((c) => sqlLiteral(row[c])).join(", ");
-          write(`INSERT INTO ${quoteIdent(table)} (${colList}) VALUES (${vals});\n`);
+          write(`INSERT INTO ${quoteIdent(table)} (${colList}) VALUES (${vals}) ON CONFLICT DO NOTHING;\n`);
           lastId = Number(row.id) || lastId;
         }
       }
@@ -332,7 +332,7 @@ export async function streamBackupSql(
         if (rowsRes.rows.length === 0) break;
         for (const row of rowsRes.rows) {
           const vals = cols.map((c) => sqlLiteral(row[c])).join(", ");
-          write(`INSERT INTO ${quoteIdent(table)} (${colList}) VALUES (${vals});\n`);
+          write(`INSERT INTO ${quoteIdent(table)} (${colList}) VALUES (${vals}) ON CONFLICT DO NOTHING;\n`);
         }
         offset += rowsRes.rows.length;
       }
@@ -375,13 +375,25 @@ export interface RestoreResult {
 /**
  * Transform INSERT statements in a dump so they become
  * INSERT ... ON CONFLICT DO NOTHING — enabling merge (idempotent) restores.
- * Only single-line INSERT statements are affected (which is all our dumps produce).
+ * Processes line-by-line and replaces the LAST semicolon on each INSERT line,
+ * so semicolons inside quoted string values are never mistaken for the
+ * statement terminator (the old regex `[^;]*?` would stop at the first `;`).
  */
 function applyMergeConflictResolution(sql: string): string {
-  return sql.replace(
-    /^(INSERT\s+INTO\s+\S[^;]*?)\s*;([ \t]*)$/gim,
-    "$1 ON CONFLICT DO NOTHING;$2",
-  );
+  return sql
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trimStart();
+      if (
+        trimmed.toUpperCase().startsWith("INSERT INTO") &&
+        line.trimEnd().endsWith(";")
+      ) {
+        const lastSemi = line.lastIndexOf(";");
+        return line.slice(0, lastSemi) + " ON CONFLICT DO NOTHING;";
+      }
+      return line;
+    })
+    .join("\n");
 }
 
 export interface PreviewTableEntry {

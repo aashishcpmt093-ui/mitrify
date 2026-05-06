@@ -4,6 +4,8 @@ import { Zap, LogIn, Shield, Moon, Sun, Sparkles, Phone, MapPin, UserCog, Eye } 
 import { useTheme } from "@/lib/theme";
 import { useLanguage } from "@/lib/language";
 import { queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { useEffect } from "react";
 import logoImg from "@assets/772B17C5-7738-43B8-B5C0-04A7F2A6561B_1773842365564.png";
 
 async function enterGuestMode() {
@@ -16,6 +18,34 @@ export default function WelcomePage() {
   const [, setLocation] = useLocation();
   const { theme, toggleTheme } = useTheme();
   const { t } = useLanguage();
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const error = params.get("error");
+    if (error === "google_auth_failed") {
+      toast({
+        title: "Google Login Failed",
+        description: "Google se login nahi ho saka. Please email/password se try karein ya Google Cloud Console mein callback URL check karein.",
+        variant: "destructive",
+      });
+    } else if (error === "apple_auth_failed") {
+      toast({
+        title: "Apple Login Failed",
+        description: "Apple se login nahi ho saka. Please email/password se try karein.",
+        variant: "destructive",
+      });
+    } else if (error === "session_error") {
+      toast({
+        title: "Session Error",
+        description: "Login session save nahi ho saka. Please dobara try karein.",
+        variant: "destructive",
+      });
+    }
+    if (error) {
+      window.history.replaceState({}, "", "/welcome");
+    }
+  }, []);
 
   return (
     <div className="min-h-screen flex flex-col relative overflow-hidden">
