@@ -3289,53 +3289,58 @@ When admin asks to delete users matching a filter, I will show the list and ask 
 
 Be direct, analytical, and practical. Respond in the language the admin uses (Hindi/English/Hinglish).`;
 
-  function detectAdminAction(message: string): { filter: "noMobile" | "noLocation" | "suspiciousName"; intent: "list" | "delete" } | null {
-    const lower = message.toLowerCase();
-    const listWords = ["list", "show", "find", "dhundho", "batao", "nikalo", "check", "dekho", "kaun", "kitne", "count", "dikhao", "karo", "chahiye"];
-    const deleteWords = ["delete", "hatao", "remove", "clean", "saaf", "hata do", "hata", "del"];
-    const hasList = listWords.some(k => lower.includes(k));
-    const hasDelete = deleteWords.some(k => lower.includes(k));
-    if (!hasList && !hasDelete) return null;
-    const intent = hasDelete ? "delete" : "list";
-    if (lower.includes("no mobile") || lower.includes("bina mobile") || lower.includes("mobile nahi") || lower.includes("without mobile") || lower.includes("mobile number nahi") || lower.includes("mobile number nhi")) {
-      return { filter: "noMobile", intent };
-    }
-    if (lower.includes("no location") || lower.includes("bina location") || lower.includes("location nahi") || lower.includes("without location") || lower.includes("gps nahi") || lower.includes("location nhi")) {
-      return { filter: "noLocation", intent };
-    }
-    if (lower.includes("suspicious") || lower.includes("fake") || lower.includes("shak") || lower.includes("ganda naam") || lower.includes("random") || lower.includes("suspicious name") || lower.includes("test user") || lower.includes("galat naam")) {
-      return { filter: "suspiciousName", intent };
-    }
-    return null;
+  type AIUserFilter = "noMobile" | "noLocation" | "suspiciousName";
+
+  interface AIUserEntry {
+    userId: string;
+    name: string | null;
+    mobile: string | null;
+    role: string;
   }
 
-  async function fetchFilteredUsersForAI(filter: "noMobile" | "noLocation" | "suspiciousName") {
+  interface AIActionPayload {
+    type: "user_list";
+    filter: AIUserFilter;
+    previewUsers: AIUserEntry[];
+    allUserIds: string[];
+    total: number;
+  }
+
+  interface GeminiTextPart { text: string }
+  interface GeminiFunctionCallPart { functionCall: { name: string; args: Record<string, string> } }
+  interface GeminiFunctionResponsePart { functionResponse: { name: string; response: Record<string, string> } }
+  type GeminiPart = GeminiTextPart | GeminiFunctionCallPart | GeminiFunctionResponsePart;
+  interface GeminiContent { role: "user" | "model"; parts: GeminiPart[] }
+  interface GeminiCandidate { content: GeminiContent }
+  interface GeminiResponse { candidates?: GeminiCandidate[] }
+
+  const VALID_AI_FILTERS: AIUserFilter[] = ["noMobile", "noLocation", "suspiciousName"];
+
+  async function fetchFilteredUsersForAI(filter: AIUserFilter): Promise<AIUserEntry[]> {
     function isSuspiciousName(name: string | null): boolean {
       if (!name || name.trim().length < 2) return true;
       if (/^[0-9\s\W]+$/.test(name.trim())) return true;
       const lname = name.toLowerCase().trim();
       const fakeNames = ["test", "user", "admin", "provider", "customer", "demo", "abc", "xyz", "na", "n/a", "none", "null"];
-      if (fakeNames.includes(lname)) return true;
-      return false;
+      return fakeNames.includes(lname);
     }
-    const allProfiles = await storage.getProfilesByRole("customer");
-    const allProviders = await storage.getAllProviders();
-    const allUsers = [
-      ...allProfiles,
-      ...(await storage.getProfilesByRole("provider")),
-    ];
+    const [customerProfiles, providerProfiles, allProviders] = await Promise.all([
+      storage.getProfilesByRole("customer"),
+      storage.getProfilesByRole("provider"),
+      storage.getAllProviders(),
+    ]);
+    const allUsers = [...customerProfiles, ...providerProfiles];
     const dedupedUsers = Array.from(new Map(allUsers.map(u => [u.userId, u])).values());
     let filtered = dedupedUsers;
     if (filter === "noMobile") {
       filtered = dedupedUsers.filter(u => {
-        const mob = (u as any).mobile || (u as any).mobileNumber || "";
+        const mob = String((u as Record<string, unknown>).mobile ?? (u as Record<string, unknown>).mobileNumber ?? "");
         return !mob || mob.trim() === "";
       });
     } else if (filter === "noLocation") {
       filtered = dedupedUsers.filter(u => {
         const prov = allProviders.find(p => p.userId === u.userId);
-        if (!prov) return false;
-        return !prov.latitude || !prov.longitude;
+        return prov ? (!prov.latitude || !prov.longitude) : false;
       });
     } else if (filter === "suspiciousName") {
       filtered = dedupedUsers.filter(u => isSuspiciousName(u.name));
@@ -3343,9 +3348,46 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
     return filtered.map(u => ({
       userId: u.userId,
       name: u.name || null,
-      mobile: (u as any).mobile || (u as any).mobileNumber || null,
-      role: u.role || "customer",
+      mobile: String((u as Record<string, unknown>).mobile ?? (u as Record<string, unknown>).mobileNumber ?? "") || null,
+      role: u.role ?? "customer",
     }));
+  }
+
+  const ADMIN_LIST_USERS_TOOL = {
+    function_declarations: [{
+      name: "list_users",
+      description: "Fetch and display users matching a filter criterion. Call this when admin asks to find, list, show, or wants to delete users with a specific characteristic.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          filter: {
+            type: "STRING",
+            enum: VALID_AI_FILTERS,
+            description: "noMobile = users without a registered mobile number; noLocation = provider accounts missing GPS coordinates; suspiciousName = accounts with test/fake/random names",
+          },
+        },
+        required: ["filter"],
+      },
+    }],
+  };
+
+  async function callGemini(key: string, contents: GeminiContent[], withTools: boolean): Promise<GeminiResponse> {
+    const body: Record<string, unknown> = {
+      contents,
+      generationConfig: { maxOutputTokens: 1024, temperature: 0.7 },
+    };
+    if (withTools) body.tools = [ADMIN_LIST_USERS_TOOL];
+    const resp = await fetch(GEMINI_CHAT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-goog-api-key": key },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      console.error("Gemini API error:", resp.status, errText);
+      throw new Error(`Gemini ${resp.status}`);
+    }
+    return resp.json() as Promise<GeminiResponse>;
   }
 
   app.post("/api/ai/chat", async (req, res) => {
@@ -3355,79 +3397,106 @@ Be direct, analytical, and practical. Respond in the language the admin uses (Hi
         return res.status(503).json({ reply: "AI abhi available nahi hai. GEMINI_API_KEY configure karo." });
       }
 
-      const { message, history = [], isAdmin = false } = req.body;
+      const { message, history = [], isAdmin = false } = req.body as {
+        message: unknown;
+        history: Array<{ role: string; content: string }>;
+        isAdmin: boolean;
+      };
       if (!message || typeof message !== "string") {
         return res.status(400).json({ message: "message required" });
       }
 
-      const sessionAdmin = (req.session as any).adminLoggedIn || false;
+      const sessionAdmin = (req.session as { adminLoggedIn?: boolean }).adminLoggedIn || false;
       const useAdminMode = isAdmin && sessionAdmin;
 
       let systemText = useAdminMode ? ADMIN_SYSTEM_PROMPT : USER_SYSTEM_PROMPT;
-
       if (useAdminMode) {
         try {
           const stats = await storage.getAdminStats();
-          systemText += `\n\nCurrent platform stats: Total providers: ${stats.totalProviders}, Total customers: ${stats.totalCustomers}, Total calls: ${stats.totalCalls}.`;
-        } catch {}
+          systemText += `\n\nCurrent stats: providers=${stats.totalProviders}, customers=${stats.totalCustomers}, calls=${stats.totalCalls}.`;
+        } catch { /* non-fatal */ }
       }
 
-      const contents: any[] = [
+      const contents: GeminiContent[] = [
         { role: "user", parts: [{ text: systemText }] },
-        { role: "model", parts: [{ text: "Understood. I'm ready to help." }] },
+        { role: "model", parts: [{ text: "Understood. Ready to help." }] },
       ];
-
       const safeHistory = Array.isArray(history) ? history.slice(-8) : [];
       for (const h of safeHistory) {
-        if (h.role && h.content && typeof h.content === "string") {
+        if (h.role && typeof h.content === "string") {
           contents.push({ role: h.role === "assistant" ? "model" : "user", parts: [{ text: h.content }] });
         }
       }
       contents.push({ role: "user", parts: [{ text: message }] });
 
-      const body = {
-        contents,
-        generationConfig: { maxOutputTokens: 1024, temperature: 0.7 },
-      };
-
-      const resp = await fetch(GEMINI_CHAT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-goog-api-key": geminiKey },
-        body: JSON.stringify(body),
-      });
-
-      if (!resp.ok) {
-        const errText = await resp.text().catch(() => "");
-        console.error("Gemini chat error:", resp.status, errText);
-        return res.status(502).json({ reply: "AI service se response nahi mila. Thodi der baad try karo." });
-      }
-
-      const data = await resp.json() as any;
-      const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Kuch samajh nahi aaya. Dobara puchho.";
-
-      let action: any = undefined;
+      // ── Admin mode: use Gemini function-calling for list_users tool ──────────
       if (useAdminMode) {
-        const detected = detectAdminAction(message);
-        if (detected) {
-          try {
-            const allUsers = await fetchFilteredUsersForAI(detected.filter);
-            // Snapshot all IDs at list time — delete will use this exact set, no drift
-            action = {
+        let firstData: GeminiResponse;
+        try {
+          firstData = await callGemini(geminiKey, contents, true);
+        } catch {
+          return res.status(502).json({ reply: "AI service se response nahi mila. Thodi der baad try karo." });
+        }
+
+        const firstPart = firstData.candidates?.[0]?.content?.parts?.[0];
+
+        if (firstPart && "functionCall" in firstPart) {
+          const fc = firstPart.functionCall;
+          if (fc.name === "list_users" && VALID_AI_FILTERS.includes(fc.args?.filter as AIUserFilter)) {
+            const filter = fc.args.filter as AIUserFilter;
+            let allUsers: AIUserEntry[] = [];
+            let toolResultText: string;
+            try {
+              allUsers = await fetchFilteredUsersForAI(filter);
+              toolResultText = allUsers.length > 0
+                ? `Found ${allUsers.length} users with filter "${filter}". Showing list to admin with delete option.`
+                : `No users found for filter "${filter}".`;
+            } catch {
+              toolResultText = `Error fetching users for filter "${filter}".`;
+            }
+
+            // Tool result round-trip to Gemini
+            const modelTurn: GeminiContent = firstData.candidates![0].content;
+            const toolResultTurn: GeminiContent = {
+              role: "user",
+              parts: [{ functionResponse: { name: "list_users", response: { result: toolResultText } } }],
+            };
+            let finalData: GeminiResponse;
+            try {
+              finalData = await callGemini(geminiKey, [...contents, modelTurn, toolResultTurn], true);
+            } catch {
+              return res.status(502).json({ reply: "AI se final response nahi mila." });
+            }
+
+            const replyPart = finalData.candidates?.[0]?.content?.parts?.[0];
+            const reply = (replyPart && "text" in replyPart ? replyPart.text : null) ?? "Users mil gaye. Neeche list dekho.";
+            const action: AIActionPayload = {
               type: "user_list",
-              filter: detected.filter,
-              intent: detected.intent,
-              previewUsers: allUsers.slice(0, 100),   // display only
-              allUserIds: allUsers.map(u => u.userId), // delete scope = exact snapshot
+              filter,
+              previewUsers: allUsers.slice(0, 100),
+              allUserIds: allUsers.map(u => u.userId),
               total: allUsers.length,
             };
-          } catch (e) {
-            console.error("AI action fetch error:", e);
+            return res.json({ reply, action });
           }
         }
+
+        // No function call — plain text reply
+        const textPart = firstPart && "text" in firstPart ? firstPart.text : null;
+        return res.json({ reply: textPart ?? "Kuch samajh nahi aaya. Dobara puchho." });
       }
 
-      res.json({ reply, action });
-    } catch (err: any) {
+      // ── User (non-admin) mode: plain chat ────────────────────────────────────
+      let userData: GeminiResponse;
+      try {
+        userData = await callGemini(geminiKey, contents, false);
+      } catch {
+        return res.status(502).json({ reply: "AI service se response nahi mila. Thodi der baad try karo." });
+      }
+      const userPart = userData.candidates?.[0]?.content?.parts?.[0];
+      const userReply = (userPart && "text" in userPart ? userPart.text : null) ?? "Kuch samajh nahi aaya. Dobara puchho.";
+      res.json({ reply: userReply });
+    } catch (err: unknown) {
       console.error("AI chat error:", err);
       res.status(500).json({ reply: "Kuch gadbad ho gayi. Dobara try karo." });
     }

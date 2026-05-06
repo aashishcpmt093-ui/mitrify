@@ -225,7 +225,7 @@ export default function AIChat({ isAdmin = false }: AIChatProps) {
   function handleDeleted(idx: number) {
     setMessages(prev => prev.map((m, i) =>
       i === idx && m.action
-        ? { ...m, action: { ...m.action, users: [], total: 0 } }
+        ? { ...m, action: { ...m.action, previewUsers: [], allUserIds: [], total: 0 } }
         : m
     ));
   }
