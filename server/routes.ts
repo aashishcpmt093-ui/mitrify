@@ -3437,7 +3437,12 @@ export async function registerRoutes(
     try {
       const raw = parseInt(req.query.limit as string, 10);
       const limit = Number.isFinite(raw) && raw > 0 ? Math.min(raw, 100) : 20;
-      const logs = await storage.listAiReportLog(limit);
+      const statusParam = req.query.status as string | undefined;
+      const status: "all" | "sent" | "failed" =
+        statusParam === "sent" ? "sent" : statusParam === "failed" ? "failed" : "all";
+      const sinceParam = req.query.since as string | undefined;
+      const since = sinceParam ? new Date(sinceParam) : undefined;
+      const logs = await storage.listAiReportLog(limit, status, since);
       res.json(logs);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch report log" });

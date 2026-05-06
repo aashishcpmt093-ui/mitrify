@@ -1674,10 +1674,23 @@ export default function AdminDashboardPage() {
     onError: (err: any) => toast({ title: `❌ ${err.message || "Failed to save"}`, variant: "destructive" }),
   });
   const [reportLogLimit, setReportLogLimit] = React.useState<number>(20);
+  const [reportLogStatus, setReportLogStatus] = React.useState<"all" | "sent" | "failed">("all");
+  const [reportLogSince, setReportLogSince] = React.useState<"all" | "today" | "week" | "month">("all");
+
   const { data: aiReportLogData } = useQuery<{ id: number; sentAt: string; recipient: string; success: boolean; totalTokens: number; estimatedCost: string; peakTokens: number; exceededHours: number; errorMsg: string | null }[]>({
-    queryKey: ["/api/admin/ai-report-log", reportLogLimit],
+    queryKey: ["/api/admin/ai-report-log", reportLogLimit, reportLogStatus, reportLogSince],
     queryFn: async () => {
-      const res = await fetch(`/api/admin/ai-report-log?limit=${reportLogLimit}`, { credentials: "include" });
+      const params = new URLSearchParams({ limit: String(reportLogLimit) });
+      if (reportLogStatus !== "all") params.set("status", reportLogStatus);
+      if (reportLogSince !== "all") {
+        const now = Date.now();
+        const sinceMs = reportLogSince === "today"
+          ? new Date(new Date().setHours(0, 0, 0, 0)).getTime()
+          : reportLogSince === "week" ? now - 7 * 24 * 60 * 60 * 1000
+          : now - 30 * 24 * 60 * 60 * 1000;
+        params.set("since", new Date(sinceMs).toISOString());
+      }
+      const res = await fetch(`/api/admin/ai-report-log?${params}`, { credentials: "include" });
       if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err?.message || "Failed to fetch report log"); }
       return res.json();
     },
