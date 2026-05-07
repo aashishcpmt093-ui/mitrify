@@ -252,6 +252,21 @@ export default function CustomerHomePage() {
     };
   }, []);
 
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("mitrify_new_customer_welcome") === "1") {
+        sessionStorage.removeItem("mitrify_new_customer_welcome");
+        setTimeout(() => {
+          toast({
+            title: "Mitrify mein aapka swagat hai! 🎉",
+            description: "Niche search karein aur apne kaam ka maahir dhundhein.",
+            duration: 6000,
+          });
+        }, 800);
+      }
+    } catch {}
+  }, []);
+
   const handleScroll = () => {
     if (contentRef.current) {
       const shouldShow = contentRef.current.scrollTop > 300;

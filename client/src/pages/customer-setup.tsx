@@ -170,6 +170,7 @@ export default function CustomerSetupPage() {
       }
 
       queryClient.invalidateQueries({ queryKey: ["/api/profiles/me"] });
+      try { sessionStorage.setItem("mitrify_new_customer_welcome", "1"); } catch {}
       setLocation("/customer/home");
     } catch (error: any) {
       toast({ title: t("setupSetupFail"), description: t("setupTryAgain"), variant: "destructive" });
