@@ -358,6 +358,10 @@ export async function setupAuth(app: Express) {
     });
 
     app.post("/api/auth/apple/callback", (req, res, next) => {
+      if (req.body?.error) {
+        console.warn("Apple callback received error from Apple:", req.body.error);
+        return res.redirect("/welcome?error=apple_auth_failed");
+      }
       const strategyName = ensureAppleStrategy(req.hostname);
       passport.authenticate(strategyName, { failureRedirect: "/welcome?error=apple_auth_failed" }, (err: any, user: any) => {
         if (err || !user) {
