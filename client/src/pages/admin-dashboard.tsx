@@ -2667,7 +2667,7 @@ export default function AdminDashboardPage() {
                     <SelectItem value="frozen">Frozen Credits</SelectItem>
                     <SelectItem value="suspicious">Suspicious</SelectItem>
                     <SelectItem value="no_mobile" data-testid="filter-option-no-mobile">
-                      No Call #{noMobileCount > 0 ? ` (${noMobileCount})` : ""}
+                      No call numbers{noMobileCount > 0 ? ` (${noMobileCount})` : ""}
                     </SelectItem>
                   </SelectContent>
                 </Select>
