@@ -54,6 +54,7 @@ export const providers = pgTable("providers", {
   address: text("address"),
   state: varchar("state", { length: 100 }),
   district: varchar("district", { length: 100 }),
+  pinCode: varchar("pin_code", { length: 10 }),
   profilePhoto: text("profile_photo"),
   isActive: boolean("is_active").default(true),
   isHidden: boolean("is_hidden").default(false),
