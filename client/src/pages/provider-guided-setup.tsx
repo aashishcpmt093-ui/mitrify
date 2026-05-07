@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useLocation } from "wouter";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { useLanguage } from "@/lib/language";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -12,7 +12,7 @@ import { Loader2, ChevronRight, ArrowLeft, Camera, AlertCircle } from "lucide-re
 import { sendFirebaseOtp, verifyFirebaseOtp } from "@/lib/firebase";
 import { Switch } from "@/components/ui/switch";
 
-const STEPS = [
+const ALL_STEPS = [
   { id: 1, question: "आपका नाम क्या है?" },
   { id: 2, question: "आप क्या काम करते हैं? (जैसे: Electrician, Plumber)" },
   { id: 3, question: "अपने काम के बारे में विस्तार से लिखो!" },
@@ -61,6 +61,7 @@ export default function ProviderGuidedSetupPage() {
   const { t } = useLanguage();
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [otpSent, setOtpSent] = useState(false);
   const [otpValue, setOtpValue] = useState("");
 
@@ -78,6 +79,51 @@ export default function ProviderGuidedSetupPage() {
   const [loginUsername, setLoginUsername] = useState(() => makeRandomUsername());
   const [loginPassword, setLoginPassword] = useState("");
   const [passwordSuggestion] = useState(() => makeRandomPassword());
+
+  // Edit mode state
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [originalMobile, setOriginalMobile] = useState("");
+  const [mobilePreVerified, setMobilePreVerified] = useState(false);
+
+  // In edit mode skip credentials & promo steps (9, 10, 12)
+  const STEPS = isEditMode
+    ? ALL_STEPS.filter(s => s.id !== 9 && s.id !== 10 && s.id !== 12)
+    : ALL_STEPS;
+
+  // Map visual step index → real step id
+  const currentStepId = STEPS[currentStep - 1]?.id ?? 1;
+
+  // Load existing data if user already has a provider profile
+  useEffect(() => {
+    async function loadExisting() {
+      try {
+        const [profileRes, providerRes] = await Promise.all([
+          fetch("/api/profiles/me?role=provider", { credentials: "include" }),
+          fetch("/api/providers/me", { credentials: "include" }),
+        ]);
+        if (profileRes.ok && providerRes.ok) {
+          const profile = await profileRes.json();
+          const provider = await providerRes.json();
+          if (profile && provider) {
+            setIsEditMode(true);
+            setName(profile.name || "");
+            setMobile(provider.mobileNumbers?.[0] || profile.mobile || "");
+            setOriginalMobile(provider.mobileNumbers?.[0] || profile.mobile || "");
+            setMobilePreVerified(true);
+            setServiceName(provider.serviceName || "");
+            setDescription(provider.description || "");
+            setApproxCharge(provider.approxCharge || "");
+            setAddress(provider.address || "");
+            setRadiusKm(String(provider.radiusKm || 10));
+            setProfilePhoto(provider.profilePhoto || null);
+            setIsHidden(provider.isHidden || false);
+          }
+        }
+      } catch {}
+      setInitialLoading(false);
+    }
+    loadExisting();
+  }, []);
 
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -114,37 +160,42 @@ export default function ProviderGuidedSetupPage() {
   };
 
   const handleNext = async () => {
-    if (currentStep === 1 && !name.trim()) {
+    if (currentStepId === 1 && !name.trim()) {
       toast({ title: "नाम भरिए!", variant: "destructive" });
       return;
     }
-    if (currentStep === 2 && !serviceName.trim()) {
+    if (currentStepId === 2 && !serviceName.trim()) {
       toast({ title: "काम का नाम भरिए!", variant: "destructive" });
       return;
     }
-    if (currentStep === 3 && !description.trim()) {
+    if (currentStepId === 3 && !description.trim()) {
       toast({ title: "विवरण लिखिए!", variant: "destructive" });
       return;
     }
-    if (currentStep === 4 && !approxCharge.trim()) {
+    if (currentStepId === 4 && !approxCharge.trim()) {
       toast({ title: "चार्ज भरिए!", variant: "destructive" });
       return;
     }
-    if (currentStep === 5 && !address.trim()) {
+    if (currentStepId === 5 && !address.trim()) {
       toast({ title: "पता भरिए!", variant: "destructive" });
       return;
     }
-    if (currentStep === 6 && !radiusKm.trim()) {
+    if (currentStepId === 6 && !radiusKm.trim()) {
       toast({ title: "दूरी भरिए!", variant: "destructive" });
       return;
     }
-    if (currentStep === 8) {
+    if (currentStepId === 8) {
       if (!mobile.trim()) {
         toast({ title: "मोबाइल नंबर भरिए!", variant: "destructive" });
         return;
       }
       if (mobile.length < 10) {
         toast({ title: "सही नंबर भरिए!", variant: "destructive" });
+        return;
+      }
+      // In edit mode, if mobile unchanged — skip OTP
+      if (isEditMode && mobile === originalMobile && mobilePreVerified) {
+        goToNextStep();
         return;
       }
       if (!otpSent) {
@@ -158,29 +209,31 @@ export default function ProviderGuidedSetupPage() {
         return;
       }
     }
-    if (currentStep === 9 && !loginUsername.trim()) {
+    if (currentStepId === 9 && !loginUsername.trim()) {
       toast({ title: "Username भरिए!", variant: "destructive" });
       return;
     }
-    if (currentStep === 9 && /\s/.test(loginUsername)) {
+    if (currentStepId === 9 && /\s/.test(loginUsername)) {
       toast({ title: "Username में space नहीं हो सकता!", variant: "destructive" });
       return;
     }
-    if (currentStep === 10 && !loginPassword.trim()) {
+    if (currentStepId === 10 && !loginPassword.trim()) {
       toast({ title: "Password भरिए!", variant: "destructive" });
       return;
     }
-    if (currentStep === 10 && loginPassword.length < 6) {
+    if (currentStepId === 10 && loginPassword.length < 6) {
       toast({ title: "Password कम से कम 6 अंक का हो!", variant: "destructive" });
       return;
     }
 
     if (currentStep < STEPS.length) {
-      setCurrentStep(currentStep + 1);
+      goToNextStep();
     } else {
       submitForm();
     }
   };
+
+  const goToNextStep = () => setCurrentStep(prev => prev + 1);
 
   const sendOtp = async () => {
     setLoading(true);
@@ -198,9 +251,10 @@ export default function ProviderGuidedSetupPage() {
   const verifyOtp = async () => {
     setLoading(true);
     try {
-      // Master OTP support
       if (otpValue.trim() === "77420") {
-        await submitForm();
+        setMobilePreVerified(true);
+        if (currentStep < STEPS.length) goToNextStep();
+        else submitForm();
         return;
       }
       const isValid = await verifyFirebaseOtp(otpValue);
@@ -208,7 +262,9 @@ export default function ProviderGuidedSetupPage() {
         toast({ title: "गलत OTP!", variant: "destructive" });
         return;
       }
-      await submitForm();
+      setMobilePreVerified(true);
+      if (currentStep < STEPS.length) goToNextStep();
+      else submitForm();
     } finally {
       setLoading(false);
     }
@@ -217,42 +273,62 @@ export default function ProviderGuidedSetupPage() {
   const submitForm = async () => {
     setLoading(true);
     try {
-      await apiRequest("POST", "/api/profiles", {
-        name,
-        mobile,
-        role: "provider",
-      });
-
-      await apiRequest("POST", "/api/providers", {
-        name,
-        serviceName,
-        description,
-        approxCharge: approxCharge || null,
-        mobileNumbers: [mobile],
-        radiusKm: parseInt(radiusKm) || 10,
-        address: address || null,
-        isActive: true,
-        isHidden,
-        profilePhoto: profilePhoto || null,
-      });
-
-      if (loginUsername && loginPassword) {
-        try {
-          await apiRequest("POST", "/api/local/set-credentials", { username: loginUsername, password: loginPassword });
-        } catch (err: any) {
-          console.error("Credentials error:", err);
+      if (isEditMode) {
+        // UPDATE existing profile + provider
+        await apiRequest("PUT", "/api/profiles/me", {
+          name,
+          mobile,
+          role: "provider",
+        });
+        await apiRequest("PUT", "/api/providers/me", {
+          serviceName,
+          description,
+          approxCharge: approxCharge || null,
+          mobileNumbers: [mobile],
+          radiusKm: parseInt(radiusKm) || 10,
+          address: address || null,
+          isHidden,
+          profilePhoto: profilePhoto || null,
+        });
+        queryClient.invalidateQueries({ queryKey: ["/api/profiles/me"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/providers/me"] });
+        toast({ title: "प्रोफाइल अपडेट हो गई! ✅" });
+        setLocation("/provider/dashboard");
+      } else {
+        // CREATE new profile + provider
+        await apiRequest("POST", "/api/profiles", {
+          name,
+          mobile,
+          role: "provider",
+        });
+        await apiRequest("POST", "/api/providers", {
+          name,
+          serviceName,
+          description,
+          approxCharge: approxCharge || null,
+          mobileNumbers: [mobile],
+          radiusKm: parseInt(radiusKm) || 10,
+          address: address || null,
+          isActive: true,
+          isHidden,
+          profilePhoto: profilePhoto || null,
+        });
+        if (loginUsername && loginPassword) {
+          try {
+            await apiRequest("POST", "/api/local/set-credentials", { username: loginUsername, password: loginPassword });
+          } catch (err: any) {
+            console.error("Credentials error:", err);
+          }
         }
+        if (promoInput.trim()) {
+          try {
+            await apiRequest("POST", "/api/promo-codes/apply", { code: promoInput.trim() });
+          } catch {}
+        }
+        queryClient.invalidateQueries({ queryKey: ["/api/profiles/me"] });
+        toast({ title: "प्रोफाइल बना दिया गया! स्वागत है!", description: loginUsername ? `Login ID: ${loginUsername}` : "" });
+        setLocation("/customer/home");
       }
-
-      if (promoInput.trim()) {
-        try {
-          await apiRequest("POST", "/api/promo-codes/apply", { code: promoInput.trim() });
-        } catch {}
-      }
-
-      queryClient.invalidateQueries({ queryKey: ["/api/profiles/me"] });
-      toast({ title: "प्रोफाइल बना दिया गया! स्वागत है!", description: loginUsername ? `Login ID: ${loginUsername}` : "" });
-      setLocation("/customer/home");
     } catch (error: any) {
       toast({ title: "कुछ गलत हुआ", description: error.message, variant: "destructive" });
     } finally {
@@ -262,7 +338,7 @@ export default function ProviderGuidedSetupPage() {
 
   const handlePrevious = () => {
     if (currentStep > 1) {
-      if (otpSent && currentStep === 10) {
+      if (otpSent && currentStepId === 8) {
         setOtpSent(false);
         setOtpValue("");
       } else {
@@ -270,6 +346,14 @@ export default function ProviderGuidedSetupPage() {
       }
     }
   };
+
+  if (initialLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   const step = STEPS[currentStep - 1];
 
@@ -287,6 +371,9 @@ export default function ProviderGuidedSetupPage() {
           >
             <ArrowLeft className="w-4 h-4" /> वापस
           </Button>
+          {isEditMode && (
+            <span className="ml-auto text-xs text-muted-foreground">प्रोफाइल संपादित करो</span>
+          )}
         </div>
 
         <Card>
@@ -305,7 +392,7 @@ export default function ProviderGuidedSetupPage() {
               }}
               className="space-y-4"
             >
-              {currentStep === 1 && (
+              {currentStepId === 1 && (
                 <Input
                   value={name}
                   onChange={e => setName(e.target.value)}
@@ -315,7 +402,7 @@ export default function ProviderGuidedSetupPage() {
                 />
               )}
 
-              {currentStep === 2 && (
+              {currentStepId === 2 && (
                 <Input
                   value={serviceName}
                   onChange={e => setServiceName(e.target.value)}
@@ -325,7 +412,7 @@ export default function ProviderGuidedSetupPage() {
                 />
               )}
 
-              {currentStep === 3 && (
+              {currentStepId === 3 && (
                 <Textarea
                   value={description}
                   onChange={e => setDescription(e.target.value)}
@@ -336,7 +423,7 @@ export default function ProviderGuidedSetupPage() {
                 />
               )}
 
-              {currentStep === 4 && (
+              {currentStepId === 4 && (
                 <Input
                   value={approxCharge}
                   onChange={e => setApproxCharge(e.target.value)}
@@ -346,7 +433,7 @@ export default function ProviderGuidedSetupPage() {
                 />
               )}
 
-              {currentStep === 5 && (
+              {currentStepId === 5 && (
                 <Input
                   value={address}
                   onChange={e => setAddress(e.target.value)}
@@ -356,7 +443,7 @@ export default function ProviderGuidedSetupPage() {
                 />
               )}
 
-              {currentStep === 6 && (
+              {currentStepId === 6 && (
                 <Input
                   type="number"
                   value={radiusKm}
@@ -367,7 +454,7 @@ export default function ProviderGuidedSetupPage() {
                 />
               )}
 
-              {currentStep === 7 && (
+              {currentStepId === 7 && (
                 <div className="space-y-3">
                   {profilePhoto ? (
                     <div className="relative w-24 h-24 mx-auto rounded-lg overflow-hidden">
@@ -398,18 +485,32 @@ export default function ProviderGuidedSetupPage() {
                 </div>
               )}
 
-              {currentStep === 8 && (
+              {currentStepId === 8 && (
                 <div className="space-y-3">
                   <Input
                     type="tel"
                     value={mobile}
-                    onChange={e => setMobile(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                    onChange={e => {
+                      const val = e.target.value.replace(/\D/g, "").slice(0, 10);
+                      setMobile(val);
+                      // If user changes the mobile, need fresh OTP
+                      if (val !== originalMobile) {
+                        setMobilePreVerified(false);
+                        setOtpSent(false);
+                        setOtpValue("");
+                      } else {
+                        setMobilePreVerified(true);
+                      }
+                    }}
                     placeholder="10 अंक"
                     disabled={otpSent}
                     autoFocus
                     maxLength={10}
                     data-testid="input-guided-mobile"
                   />
+                  {isEditMode && mobile === originalMobile && (
+                    <p className="text-xs text-green-600 dark:text-green-400">✓ पहले से verified नंबर — OTP की जरूरत नहीं</p>
+                  )}
                   {otpSent && (
                     <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                       <Label className="text-xs font-semibold text-blue-900 dark:text-blue-300 block mb-1">
@@ -427,7 +528,7 @@ export default function ProviderGuidedSetupPage() {
                 </div>
               )}
 
-              {currentStep === 9 && (
+              {currentStepId === 9 && (
                 <Input
                   value={loginUsername}
                   onChange={e => setLoginUsername(e.target.value.replace(/\s/g, ""))}
@@ -437,7 +538,7 @@ export default function ProviderGuidedSetupPage() {
                 />
               )}
 
-              {currentStep === 10 && (
+              {currentStepId === 10 && (
                 <div className="space-y-3">
                   <Input
                     type="password"
@@ -464,11 +565,11 @@ export default function ProviderGuidedSetupPage() {
                 </div>
               )}
 
-              {currentStep === 11 && (
+              {currentStepId === 11 && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between p-3 border rounded-lg">
                     <Label className="text-sm cursor-pointer">अपनी प्रोफाइल छिपाओ?</Label>
-                    <Switch checked={isHidden} onCheckedChange={setIsHidden} />
+                    <Switch checked={isHidden} onCheckedChange={setIsHidden} data-testid="switch-guided-hide" />
                   </div>
                   {isHidden && (
                     <div className="flex items-start gap-2.5 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
@@ -479,7 +580,7 @@ export default function ProviderGuidedSetupPage() {
                 </div>
               )}
 
-              {currentStep === 12 && (
+              {currentStepId === 12 && (
                 <Input
                   value={promoInput}
                   onChange={e => setPromoInput(e.target.value)}
@@ -507,12 +608,14 @@ export default function ProviderGuidedSetupPage() {
                   data-testid="button-guided-next"
                 >
                   {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-                  {currentStep === 8
-                    ? otpSent
-                      ? "पूरा करें"
-                      : "OTP भेजें"
+                  {currentStepId === 8
+                    ? (isEditMode && mobile === originalMobile)
+                      ? "आगे"
+                      : otpSent
+                        ? "पूरा करें"
+                        : "OTP भेजें"
                     : currentStep === STEPS.length
-                      ? "खत्म करो"
+                      ? isEditMode ? "सेव करो ✅" : "खत्म करो"
                       : "आगे"}
                   {currentStep < STEPS.length && <ChevronRight className="w-4 h-4" />}
                 </Button>

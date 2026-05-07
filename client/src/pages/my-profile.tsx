@@ -54,7 +54,7 @@ export default function MyProfilePage() {
     queryKey: ["/api/subscriptions/me"],
   });
 
-  const editProfileRoute = providerProfile ? "/provider/edit-profile" : "/customer/edit-profile";
+  const editProfileRoute = providerProfile ? "/provider/guided-setup" : "/customer/edit-profile";
   const activeSub = mySub?.active || null;
   const activePlan: SubscriptionPlan = (activeSub?.plan as SubscriptionPlan) || "none";
   const subDays = activeSub?.endDate
