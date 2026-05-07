@@ -216,7 +216,7 @@ function Router() {
     if (!user) return;
     const role = (user as any).role || (user as any).authType;
     const current = window.location.pathname;
-    if (current === "/" || current === "/welcome" || current === "/login" || current === "/select-role") {
+    if (current === "/" || current === "/welcome" || current === "/login") {
       if (role === "admin") setLocation("/admin/dashboard");
       else if (role === "coadmin") setLocation("/coadmin/dashboard");
       else setLocation("/customer/home");

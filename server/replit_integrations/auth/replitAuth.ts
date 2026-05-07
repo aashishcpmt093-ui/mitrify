@@ -247,17 +247,24 @@ export async function setupAuth(app: Express) {
           console.error("Google auth error:", err);
           return res.redirect("/welcome?error=google_auth_failed");
         }
-        req.login(user, (loginErr) => {
+        req.login(user, async (loginErr) => {
           if (loginErr) {
             console.error("Session login error:", loginErr);
             return res.redirect("/welcome?error=session_error");
           }
           (req.session as any).localUserId = user.localUserId;
+          let isNewUser = false;
+          try {
+            const existingProfile = await storage.getProfileByRole(user.localUserId, "customer");
+            isNewUser = !existingProfile;
+          } catch (e) {
+            console.error("Google callback: profile check error", e);
+          }
           req.session.save((saveErr) => {
             if (saveErr) {
               console.error("Session save error:", saveErr);
             }
-            res.redirect("/select-role");
+            res.redirect(isNewUser ? "/customer/setup" : "/select-role");
           });
         });
       })(req, res, next);
@@ -368,17 +375,24 @@ export async function setupAuth(app: Express) {
           console.error("Apple auth error:", err);
           return res.redirect("/welcome?error=apple_auth_failed");
         }
-        req.login(user, (loginErr) => {
+        req.login(user, async (loginErr) => {
           if (loginErr) {
             console.error("Apple session login error:", loginErr);
             return res.redirect("/welcome?error=session_error");
           }
           (req.session as any).localUserId = user.localUserId;
+          let isNewUser = false;
+          try {
+            const existingProfile = await storage.getProfileByRole(user.localUserId, "customer");
+            isNewUser = !existingProfile;
+          } catch (e) {
+            console.error("Apple callback: profile check error", e);
+          }
           req.session.save((saveErr) => {
             if (saveErr) {
               console.error("Apple session save error:", saveErr);
             }
-            res.redirect("/select-role");
+            res.redirect(isNewUser ? "/customer/setup" : "/select-role");
           });
         });
       })(req, res, next);
