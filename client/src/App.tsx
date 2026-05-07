@@ -45,7 +45,6 @@ class AdminErrorBoundary extends Component<{ children: ReactNode }, { error: Err
   }
 }
 
-import type { Profile } from "@shared/schema";
 import WelcomePage from "@/pages/welcome";
 import LoginPage from "@/pages/login";
 import SignupPage from "@/pages/signup";
@@ -187,56 +186,6 @@ function LoggedInRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// Guards customer pages: guests pass through; authenticated users without a
-// customer profile are sent to /customer/setup?incomplete=1 to complete setup.
-// Pass requireAuth=true for pages that also need login (unauthenticated → /welcome).
-function CustomerProfileRoute({
-  children,
-  requireAuth = false,
-}: {
-  children: React.ReactNode;
-  requireAuth?: boolean;
-}) {
-  const { isAuthenticated, isLoading } = useAuth();
-  const [, setLocation] = useLocation();
-
-  const { data: customerProfile, isLoading: profileLoading } = useQuery<Profile | null>({
-    queryKey: ["/api/profiles/me", "customer"],
-    queryFn: async () => {
-      const res = await fetch("/api/profiles/me?role=customer", { credentials: "include" });
-      if (!res.ok) return null;
-      return res.json() as Promise<Profile>;
-    },
-    enabled: isAuthenticated,
-    staleTime: 30_000,
-  });
-
-  useEffect(() => {
-    if (isLoading) return;
-    if (!isAuthenticated) {
-      if (requireAuth) setLocation("/welcome");
-      return;
-    }
-    if (profileLoading) return;
-    if (!customerProfile) {
-      setLocation("/customer/setup?incomplete=1");
-    }
-  }, [isLoading, isAuthenticated, profileLoading, customerProfile, requireAuth]);
-
-  if (isLoading || (isAuthenticated && profileLoading)) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="animate-pulse text-muted-foreground">Loading...</div>
-      </div>
-    );
-  }
-  if (!isAuthenticated) {
-    if (requireAuth) return null;
-    return <>{children}</>;
-  }
-  if (!customerProfile) return null;
-  return <>{children}</>;
-}
 
 function SetupRoute({ role, children }: { role: "customer" | "provider"; children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -300,26 +249,24 @@ function Router() {
         <SetupRoute role="provider"><ProviderGuidedSetupPage /></SetupRoute>
       </Route>
 
-      {/* Search page — open to all including guests; authenticated users without a profile → /customer/setup */}
-      <Route path="/customer/home">
-        <CustomerProfileRoute><CustomerHomePage /></CustomerProfileRoute>
-      </Route>
+      {/* Search page — open to all including guests */}
+      <Route path="/customer/home" component={CustomerHomePage} />
 
-      {/* Protected customer pages — login + customer profile required */}
+      {/* Protected customer pages — login required */}
       <Route path="/customer/history">
-        <CustomerProfileRoute requireAuth><CustomerHistoryPage /></CustomerProfileRoute>
+        <LoggedInRoute><CustomerHistoryPage /></LoggedInRoute>
       </Route>
       <Route path="/notifications">
         <LoggedInRoute><NotificationsPage /></LoggedInRoute>
       </Route>
       <Route path="/my-profile">
-        <CustomerProfileRoute requireAuth><MyProfilePage /></CustomerProfileRoute>
+        <LoggedInRoute><MyProfilePage /></LoggedInRoute>
       </Route>
       <Route path="/customer/balance">
-        <CustomerProfileRoute requireAuth><CustomerBalancePage /></CustomerProfileRoute>
+        <LoggedInRoute><CustomerBalancePage /></LoggedInRoute>
       </Route>
       <Route path="/customer/edit-profile">
-        <CustomerProfileRoute requireAuth><EditProfilePage /></CustomerProfileRoute>
+        <LoggedInRoute><EditProfilePage /></LoggedInRoute>
       </Route>
 
       {/* Provider pages — login + provider profile required */}
@@ -334,7 +281,7 @@ function Router() {
       </Route>
 
       <Route path="/subscriptions">
-        <CustomerProfileRoute requireAuth><SubscriptionsPage /></CustomerProfileRoute>
+        <LoggedInRoute><SubscriptionsPage /></LoggedInRoute>
       </Route>
       <Route path="/payment/checkout" component={CashfreeCheckoutPage} />
       <Route path="/payment/success" component={PaymentSuccessPage} />

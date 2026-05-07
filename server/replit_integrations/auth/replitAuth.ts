@@ -264,7 +264,7 @@ export async function setupAuth(app: Express) {
             if (saveErr) {
               console.error("Session save error:", saveErr);
             }
-            res.redirect(isNewUser ? "/customer/setup" : "/select-role");
+            res.redirect("/provider/guided-setup");
           });
         });
       })(req, res, next);
@@ -392,7 +392,7 @@ export async function setupAuth(app: Express) {
             if (saveErr) {
               console.error("Apple session save error:", saveErr);
             }
-            res.redirect(isNewUser ? "/customer/setup" : "/select-role");
+            res.redirect("/provider/guided-setup");
           });
         });
       })(req, res, next);

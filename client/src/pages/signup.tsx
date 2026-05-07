@@ -145,7 +145,7 @@ export default function SignupPage() {
       markShowWelcomePopup();
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
       toast({ title: t("signupAccountCreated") });
-      setLocation("/select-role");
+      setLocation("/provider/guided-setup");
     } catch {
       toast({ title: t("signupRegFail"), variant: "destructive" });
     } finally {
