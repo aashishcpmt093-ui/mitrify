@@ -95,6 +95,7 @@ export default function ProviderGuidedSetupPage() {
   const [password, setPassword] = useState("");
   const [passwordSuggestion] = useState(() => makeRandomPassword());
   const [promoCode, setPromoCode] = useState("");
+  const [profileVisibility, setProfileVisibility] = useState<"public" | "hide_mobile" | "hide_profile">("public");
 
   // ─── Load existing data (edit mode) ──────────────────────────────
   useEffect(() => {
@@ -118,6 +119,8 @@ export default function ProviderGuidedSetupPage() {
             setAddress(provider.address || "");
             setPinCode(provider.pinCode || "");
             setTags((provider.hashtags || []).join(" "));
+            const vis = provider.profileVisibility || (provider.isHidden ? "hide_profile" : "public");
+            setProfileVisibility(vis as "public" | "hide_mobile" | "hide_profile");
             const existingNums: string[] = provider.mobileNumbers || [];
             setOriginalMobiles(existingNums);
             if (existingNums.length > 0) {
@@ -227,6 +230,8 @@ export default function ProviderGuidedSetupPage() {
       const verifiedNums = mobiles.filter(m => m.verified && m.number.trim()).map(m => m.number.trim());
       const hashtagArr = tags.split(/[\s,]+/).map(t => t.trim()).filter(t => t.startsWith("#") ? t.length > 1 : t.length > 0).map(t => t.startsWith("#") ? t : `#${t}`).filter(Boolean);
 
+      const isHidden = profileVisibility === "hide_profile";
+
       if (isEditMode) {
         await apiRequest("PUT", "/api/profiles/me", { name, role: "provider" });
         await apiRequest("PUT", "/api/providers/me", {
@@ -234,6 +239,7 @@ export default function ProviderGuidedSetupPage() {
           hashtags: hashtagArr, address: address || null, state: state || null,
           district: district || null, pinCode: pinCode || null,
           profilePhoto: profilePhoto || null,
+          profileVisibility, isHidden,
         });
         queryClient.invalidateQueries({ queryKey: ["/api/profiles/me"] });
         queryClient.invalidateQueries({ queryKey: ["/api/providers/me"] });
@@ -245,7 +251,7 @@ export default function ProviderGuidedSetupPage() {
           name, serviceName, description: description || null, mobileNumbers: verifiedNums,
           hashtags: hashtagArr, address: address || null, state: state || null,
           district: district || null, pinCode: pinCode || null, radiusKm: 20,
-          isActive: true, isHidden: false, profilePhoto: profilePhoto || null,
+          isActive: true, isHidden, profileVisibility, profilePhoto: profilePhoto || null,
         });
         if (username.trim() && password.trim()) {
           try {
@@ -724,6 +730,50 @@ export default function ProviderGuidedSetupPage() {
             )}
           </div>
         )}
+
+        {/* ── 12. Profile Visibility ── */}
+        <div className="space-y-2">
+          <Label className="font-semibold hindi-text">प्रोफाइल visibility (optional)</Label>
+          <p className="text-xs text-muted-foreground hindi-text">आप चाहो तो अपना नंबर या पूरी profile छुपा सकते हो</p>
+          <div className="grid grid-cols-1 gap-2">
+            {([
+              { value: "public",       icon: "🌐", label: "Public",            sub: "सब दिखेगा (default)" },
+              { value: "hide_mobile",  icon: "📵", label: "Mobile Hide",       sub: "Mobile नंबर नहीं दिखेगा" },
+              { value: "hide_profile", icon: "🔒", label: "Profile Hide",      sub: "पूरी profile छुपाओ" },
+            ] as const).map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setProfileVisibility(opt.value)}
+                data-testid={`button-visibility-${opt.value}`}
+                className={`flex items-center gap-3 p-3 rounded-xl border-2 text-left transition-all ${
+                  profileVisibility === opt.value
+                    ? "border-primary bg-primary/10"
+                    : "border-muted bg-card hover:border-primary/40"
+                }`}
+              >
+                <span className="text-2xl">{opt.icon}</span>
+                <div>
+                  <p className="font-semibold text-sm">{opt.label}</p>
+                  <p className="text-xs text-muted-foreground hindi-text">{opt.sub}</p>
+                </div>
+                {profileVisibility === opt.value && (
+                  <CheckCircle2 className="w-5 h-5 text-primary ml-auto shrink-0" />
+                )}
+              </button>
+            ))}
+          </div>
+          {profileVisibility === "hide_profile" && (
+            <p className="text-xs text-red-600 dark:text-red-400 hindi-text">
+              ⚠️ Profile hide होने पर लोग आपको search में नहीं देख पाएंगे
+            </p>
+          )}
+          {profileVisibility === "hide_mobile" && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 hindi-text">
+              ℹ️ लोग आपको देख सकते हैं लेकिन नंबर नहीं दिखेगा
+            </p>
+          )}
+        </div>
 
         {/* ── 13. Promo / Referral (only new users) ── */}
         {!isEditMode && (

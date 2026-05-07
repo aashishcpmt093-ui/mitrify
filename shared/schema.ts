@@ -58,6 +58,7 @@ export const providers = pgTable("providers", {
   profilePhoto: text("profile_photo"),
   isActive: boolean("is_active").default(true),
   isHidden: boolean("is_hidden").default(false),
+  profileVisibility: varchar("profile_visibility", { length: 20 }).default("public"),
   addedBy: varchar("added_by", { length: 100 }).default("self"),
   approvedBy: varchar("approved_by", { length: 100 }),
   createdAt: timestamp("created_at").defaultNow(),
