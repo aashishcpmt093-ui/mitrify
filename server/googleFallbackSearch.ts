@@ -371,7 +371,7 @@ export async function searchSavedGoogleLeads(opts: {
     const phone = normalizePhone(r.mobile || "");
     if (phone.length < 10) continue;
     if (r.latitude == null || r.longitude == null) continue;
-    const distanceKm = haversineKm(opts.lat, opts.lng, r.latitude, r.longitude);
+    const distanceKm = haversineKm(opts.lat as number, opts.lng as number, r.latitude as number, r.longitude as number);
     if (!Number.isFinite(distanceKm) || distanceKm > MAX_DISTANCE_KM) continue;
     out.push({
       placeId: `pending:${r.id}`,

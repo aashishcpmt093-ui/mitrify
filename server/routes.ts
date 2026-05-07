@@ -2875,6 +2875,33 @@ export async function registerRoutes(
     res.json({ configured: !!process.env.BACKUP_ALERT_WEBHOOK });
   });
 
+  // GET /api/admin/system-health — show status of all required env vars / services
+  app.get("/api/admin/system-health", adminCheck, (_req, res) => {
+    const e = process.env;
+    const googleOauth   = !!(e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET);
+    const cashfree      = !!(e.CASHFREE_APP_ID && e.CASHFREE_SECRET_KEY);
+    const ai            = !!(e.GOOGLE_API_KEY || e.GEMINI_API_KEY);
+    const gcs           = !!(e.GCS_SERVICE_ACCOUNT_KEY && e.GCS_BUCKET_NAME);
+    const gmail         = !!(e.GMAIL_USER && e.GMAIL_APP_PASSWORD);
+    const apple         = !!(e.APPLE_TEAM_ID && e.APPLE_CLIENT_ID && e.APPLE_KEY_ID && e.APPLE_PRIVATE_KEY);
+    const sessionSecret = !!e.SESSION_SECRET;
+    const cashfreeMode  = (e.NODE_ENV === "production" || e.REPLIT_DEPLOYMENT === "1" || e.CASHFREE_ENV === "production") ? "production" : "sandbox";
+    const nodeEnv       = e.NODE_ENV || "development";
+    res.json({
+      nodeEnv,
+      cashfreeMode,
+      services: {
+        google_oauth:   { ok: googleOauth,   label: "Google OAuth",      missing: googleOauth   ? [] : ["GOOGLE_CLIENT_ID","GOOGLE_CLIENT_SECRET"] },
+        cashfree:       { ok: cashfree,      label: "Cashfree Payments", missing: cashfree      ? [] : ["CASHFREE_APP_ID","CASHFREE_SECRET_KEY"] },
+        ai:             { ok: ai,            label: "AI (Gemini)",       missing: ai            ? [] : ["GEMINI_API_KEY (or GOOGLE_API_KEY)"] },
+        gcs_backup:     { ok: gcs,           label: "GCS Backup",        missing: gcs           ? [] : ["GCS_SERVICE_ACCOUNT_KEY","GCS_BUCKET_NAME"] },
+        gmail_smtp:     { ok: gmail,         label: "Gmail SMTP",        missing: gmail         ? [] : ["GMAIL_USER","GMAIL_APP_PASSWORD"] },
+        apple_signin:   { ok: apple,         label: "Apple Sign-In",     missing: apple         ? [] : ["APPLE_TEAM_ID","APPLE_CLIENT_ID","APPLE_KEY_ID","APPLE_PRIVATE_KEY"] },
+        session_secret: { ok: sessionSecret, label: "Session Secret",    missing: sessionSecret ? [] : ["SESSION_SECRET"] },
+      },
+    });
+  });
+
   // POST /api/admin/backup/test-alert — send a test alert to the configured webhook
   app.post("/api/admin/backup/test-alert", adminCheck, async (_req, res) => {
     let sent = false;
