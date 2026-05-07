@@ -248,6 +248,13 @@ export default function VerifyDashboard() {
       openEdit(pp);
       return;
     }
+    const hasNoMobile = !pp.mobile && !(pp.mobileNumbers?.length > 0);
+    if (hasNoMobile) {
+      const proceed = window.confirm(
+        `⚠️ "${pp.name}" ke paas koi call number nahi hai.\n\nCustomers unhe call nahi kar paayenge.\n\nFir bhi approve karein?`
+      );
+      if (!proceed) return;
+    }
     if (window.confirm(`"${pp.name}" (${pp.serviceName}) ko approve karke LIVE karna chahte hain?`)) {
       updateStatus.mutate({ id: pp.id, status: "approved" }, {
         onSuccess: () => toast({ title: `${pp.name} ab live hai!` }),
