@@ -1566,6 +1566,7 @@ export default function AdminDashboardPage() {
     else if (provFilter === "frozen") list = list.filter((p) => p._credit?.creditsFrozen);
     else if (provFilter === "suspicious") list = list.filter((p) => (p._credit?.purchasedCredits ?? 0) > 500);
     else if (provFilter === "active") list = list.filter((p) => !p.isBlocked);
+    else if (provFilter === "no_mobile") list = list.filter((p) => !p.mobileNumbers?.length);
     const normalizeAddedBy = (value: any) => {
       const v = String(value || "self").toLowerCase();
       if (v === "bulk-import" || v === "meta" || v === "self" || v === "mainadmin") return v;
@@ -1589,6 +1590,11 @@ export default function AdminDashboardPage() {
     else if (provSort === "oldest") list = [...list].sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime());
     return list;
   }, [providersList, allCredits, provSearch, provFilter, provAddedByFilter, provApprovedByFilter, provSort]);
+
+  const noMobileCount = useMemo(
+    () => (providersList ?? []).filter((p: any) => !p.mobileNumbers?.length).length,
+    [providersList],
+  );
 
   const saveAbout = useMutation({
     mutationFn: async () => await apiRequest("PUT", "/api/admin/content/about", { value: aboutForm }).then(r => r.json()),
@@ -2660,6 +2666,9 @@ export default function AdminDashboardPage() {
                     <SelectItem value="blocked">Blocked</SelectItem>
                     <SelectItem value="frozen">Frozen Credits</SelectItem>
                     <SelectItem value="suspicious">Suspicious</SelectItem>
+                    <SelectItem value="no_mobile" data-testid="filter-option-no-mobile">
+                      No Call #{noMobileCount > 0 ? ` (${noMobileCount})` : ""}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 <Select value={provSort} onValueChange={setProvSort}>
@@ -2700,11 +2709,23 @@ export default function AdminDashboardPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-muted-foreground">
-                  Showing <span className="font-semibold text-foreground">{filteredProviders.length}</span> of <span className="font-semibold text-foreground">{providersList?.length ?? 0}</span> providers
-                </p>
-                <Button variant="outline" size="sm" className="h-7 text-xs rounded-lg" onClick={() => handleExport("providers")} data-testid="button-export-providers">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <p className="text-xs text-muted-foreground">
+                    Showing <span className="font-semibold text-foreground">{filteredProviders.length}</span> of <span className="font-semibold text-foreground">{providersList?.length ?? 0}</span> providers
+                  </p>
+                  {noMobileCount > 0 && provFilter !== "no_mobile" && (
+                    <button
+                      className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700 hover:bg-amber-200 dark:hover:bg-amber-800/60 transition-colors flex-shrink-0"
+                      onClick={() => setProvFilter("no_mobile")}
+                      data-testid="badge-no-mobile-count"
+                      title="Click to filter providers missing call numbers"
+                    >
+                      ⚠ {noMobileCount} no call#
+                    </button>
+                  )}
+                </div>
+                <Button variant="outline" size="sm" className="h-7 text-xs rounded-lg flex-shrink-0" onClick={() => handleExport("providers")} data-testid="button-export-providers">
                   <Download className="w-3 h-3 mr-1" /> Export CSV
                 </Button>
               </div>
