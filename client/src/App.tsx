@@ -45,6 +45,7 @@ class AdminErrorBoundary extends Component<{ children: ReactNode }, { error: Err
   }
 }
 
+import type { Profile } from "@shared/schema";
 import WelcomePage from "@/pages/welcome";
 import LoginPage from "@/pages/login";
 import SignupPage from "@/pages/signup";
@@ -199,12 +200,12 @@ function CustomerProfileRoute({
   const { isAuthenticated, isLoading } = useAuth();
   const [, setLocation] = useLocation();
 
-  const { data: customerProfile, isLoading: profileLoading } = useQuery<any | null>({
+  const { data: customerProfile, isLoading: profileLoading } = useQuery<Profile | null>({
     queryKey: ["/api/profiles/me", "customer"],
     queryFn: async () => {
       const res = await fetch("/api/profiles/me?role=customer", { credentials: "include" });
       if (!res.ok) return null;
-      return res.json();
+      return res.json() as Promise<Profile>;
     },
     enabled: isAuthenticated,
     staleTime: 30_000,
@@ -333,7 +334,7 @@ function Router() {
       </Route>
 
       <Route path="/subscriptions">
-        <LoggedInRoute><SubscriptionsPage /></LoggedInRoute>
+        <CustomerProfileRoute requireAuth><SubscriptionsPage /></CustomerProfileRoute>
       </Route>
       <Route path="/payment/checkout" component={CashfreeCheckoutPage} />
       <Route path="/payment/success" component={PaymentSuccessPage} />
