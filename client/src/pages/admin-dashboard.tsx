@@ -1566,7 +1566,7 @@ export default function AdminDashboardPage() {
     else if (provFilter === "frozen") list = list.filter((p) => p._credit?.creditsFrozen);
     else if (provFilter === "suspicious") list = list.filter((p) => (p._credit?.purchasedCredits ?? 0) > 500);
     else if (provFilter === "active") list = list.filter((p) => !p.isBlocked);
-    else if (provFilter === "no_mobile") list = list.filter((p) => !p.mobileNumbers?.length);
+    else if (provFilter === "no_mobile") list = list.filter((p) => !p.providerData?.mobileNumbers?.length);
     const normalizeAddedBy = (value: any) => {
       const v = String(value || "self").toLowerCase();
       if (v === "bulk-import" || v === "meta" || v === "self" || v === "mainadmin") return v;
@@ -1592,7 +1592,7 @@ export default function AdminDashboardPage() {
   }, [providersList, allCredits, provSearch, provFilter, provAddedByFilter, provApprovedByFilter, provSort]);
 
   const noMobileCount = useMemo(
-    () => (providersList ?? []).filter((p: any) => !p.mobileNumbers?.length).length,
+    () => (providersList ?? []).filter((p: any) => !p.providerData?.mobileNumbers?.length).length,
     [providersList],
   );
 
