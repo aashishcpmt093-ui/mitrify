@@ -865,6 +865,8 @@ export default function AdminDashboardPage() {
   const [editRadiusKm, setEditRadiusKm] = useState("");
   const [editAddress, setEditAddress] = useState("");
   const [editHidden, setEditHidden] = useState(false);
+  const [focusMobileOnOpen, setFocusMobileOnOpen] = useState(false);
+  const mobileNumbersInputRef = useRef<HTMLInputElement>(null);
 
   const [provSearch, setProvSearch] = useState("");
   const [provFilter, setProvFilter] = useState("all");
@@ -1970,14 +1972,26 @@ export default function AdminDashboardPage() {
     onError: () => { toast({ title: "Update failed", variant: "destructive" }); },
   });
 
-  const openEditProvider = (p: any) => {
+  const openEditProvider = (p: any, focusMobile = false) => {
     setEditName(p.name); setEditMobile(p.mobile || ""); setEditServiceName(p.providerData?.serviceName || "");
     setEditDescription(p.providerData?.description || ""); setEditHashtags(p.providerData?.hashtags?.join(", ") || "");
     setEditApproxCharge(p.providerData?.approxCharge || ""); setEditMobileNumbers(p.providerData?.mobileNumbers?.join(", ") || "");
     setEditRadiusKm(String(p.providerData?.radiusKm || 10)); setEditAddress(p.providerData?.address || "");
     setEditHidden(p.providerData?.isHidden || false);
+    setFocusMobileOnOpen(focusMobile);
     setEditProvider({ open: true, profile: p, providerData: p.providerData });
   };
+
+  useEffect(() => {
+    if (editProvider.open && focusMobileOnOpen && mobileNumbersInputRef.current) {
+      const timer = setTimeout(() => {
+        mobileNumbersInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        mobileNumbersInputRef.current?.focus();
+        setFocusMobileOnOpen(false);
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [editProvider.open, focusMobileOnOpen]);
   const handleExport = (type: string) => { window.open(`/api/admin/export/${type}`, "_blank"); };
   const handleLogout = async () => { await apiRequest("POST", "/api/admin/logout"); setLocation("/"); };
 
@@ -2445,7 +2459,13 @@ export default function AdminDashboardPage() {
                 <div className="space-y-2"><Label>Radius (KM)</Label><Input type="number" value={editRadiusKm} onChange={e => setEditRadiusKm(e.target.value)} data-testid="input-edit-radius" /></div>
                 <div className="space-y-2"><Label>Approx Charge</Label><Input value={editApproxCharge} onChange={e => setEditApproxCharge(e.target.value)} data-testid="input-edit-charge" /></div>
               </div>
-              <div className="space-y-2"><Label>Mobile Numbers (comma separated)</Label><Input value={editMobileNumbers} onChange={e => setEditMobileNumbers(e.target.value)} data-testid="input-edit-mobiles" /></div>
+              <div className="space-y-2">
+                <Label>Mobile Numbers (comma separated)</Label>
+                {(!editMobileNumbers.trim()) && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />No mobile numbers yet — add at least one below</p>
+                )}
+                <Input ref={mobileNumbersInputRef} value={editMobileNumbers} onChange={e => setEditMobileNumbers(e.target.value)} placeholder="e.g. 9876543210, 9123456789" data-testid="input-edit-mobiles" className={!editMobileNumbers.trim() ? "border-amber-400 dark:border-amber-500 focus-visible:ring-amber-400" : ""} />
+              </div>
               <div className="space-y-2"><Label>Address / Service Area</Label><Input value={editAddress} onChange={e => setEditAddress(e.target.value)} placeholder="e.g. MG Road, Bangalore" data-testid="input-edit-address" /></div>
               <Button className="w-full" onClick={() => updateProviderProfile.mutate()} disabled={updateProviderProfile.isPending || !editName.trim()} data-testid="button-save-provider">
                 <Save className="w-4 h-4 mr-2" />{updateProviderProfile.isPending ? "Saving..." : "Save Changes"}
@@ -2722,6 +2742,15 @@ export default function AdminDashboardPage() {
                         {cr?.creditsFrozen && <Badge className="text-blue-600 bg-blue-100 dark:bg-blue-900/30 border-blue-200 text-xs px-1.5 py-0 h-5 rounded-md"><Snowflake className="w-2.5 h-2.5 mr-0.5" />Frozen</Badge>}
                         {p.providerData?.isHidden && <Badge className="text-purple-600 bg-purple-100 dark:bg-purple-900/30 border-purple-200 text-xs px-1.5 py-0 h-5 rounded-md"><EyeOff className="w-2.5 h-2.5 mr-0.5" />Hidden</Badge>}
                         {p.isBlocked && <Badge variant="destructive" className="text-xs px-1.5 py-0 h-5 rounded-md">Blocked</Badge>}
+                        {(!p.providerData?.mobileNumbers || p.providerData.mobileNumbers.length === 0) && (
+                          <button
+                            data-testid={`badge-no-mobile-${p.id}`}
+                            onClick={() => { openEditProvider(p, true); setSelectedProviderDetail(null); }}
+                            className="inline-flex items-center gap-0.5 text-xs px-1.5 py-0 h-5 rounded-md font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700 hover:bg-amber-200 dark:hover:bg-amber-800/60 transition-colors"
+                          >
+                            <Phone className="w-2.5 h-2.5 mr-0.5" />No mobile — add number
+                          </button>
+                        )}
                       </div>
                     </div>
                     <div className="p-5 space-y-4">
@@ -2885,6 +2914,9 @@ export default function AdminDashboardPage() {
                       <p className="text-xs text-muted-foreground truncate">{p.mobile || "No mobile"}</p>
                       <span className="text-slate-300 dark:text-slate-600 text-xs flex-shrink-0">·</span>
                       <span className="text-xs text-amber-600 font-semibold flex-shrink-0 flex items-center gap-0.5"><Coins className="w-2.5 h-2.5" />{totalCredits}</span>
+                      {(!p.providerData?.mobileNumbers || p.providerData.mobileNumbers.length === 0) && (
+                        <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 rounded px-1 flex-shrink-0" data-testid={`badge-list-no-mobile-${p.id}`}>No call#</span>
+                      )}
                     </div>
                   </div>
                   <div className="text-slate-300 dark:text-slate-600 flex-shrink-0">›</div>
