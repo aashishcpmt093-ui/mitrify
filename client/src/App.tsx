@@ -138,6 +138,8 @@ function AuthenticatedRoute({ children }: { children: React.ReactNode }) {
       return res.json();
     },
     enabled: isAuthenticated,
+    staleTime: 1000 * 60 * 5,
+    retry: false,
   });
 
   useEffect(() => {
@@ -153,7 +155,7 @@ function AuthenticatedRoute({ children }: { children: React.ReactNode }) {
     }
   }, [profileLoading, isAuthenticated, roleProfile]);
 
-  if (isLoading || profileLoading) {
+  if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="animate-pulse text-muted-foreground">Loading...</div>
@@ -161,6 +163,7 @@ function AuthenticatedRoute({ children }: { children: React.ReactNode }) {
     );
   }
   if (!isAuthenticated) return null;
+  if (profileLoading && roleProfile === undefined) return <>{children}</>;
   return <>{children}</>;
 }
 

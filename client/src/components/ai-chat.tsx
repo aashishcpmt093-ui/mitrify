@@ -219,7 +219,7 @@ export default function AIChat({ isAdmin = false }: AIChatProps) {
       });
       if (res.status === 503 || res.status === 502) {
         setAiUnavailable(true);
-        setMessages(prev => [...prev, { role: "assistant", content: "__ai_unavailable__" }]);
+        setMessages(prev => [...prev, { role: "assistant", content: "AI abhi temporarily unavailable hai. Thodi der baad try karo." }]);
         return;
       }
       setAiUnavailable(false);
@@ -236,7 +236,7 @@ export default function AIChat({ isAdmin = false }: AIChatProps) {
       setMessages(prev => [...prev, assistantMsg]);
     } catch {
       setAiUnavailable(true);
-      setMessages(prev => [...prev, { role: "assistant", content: "__ai_unavailable__" }]);
+      setMessages(prev => [...prev, { role: "assistant", content: "AI abhi temporarily unavailable hai. Thodi der baad try karo." }]);
     } finally {
       setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 100);
