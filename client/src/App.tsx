@@ -186,6 +186,57 @@ function LoggedInRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Guards customer pages: guests pass through; authenticated users without a
+// customer profile are sent to /customer/setup?incomplete=1 to complete setup.
+// Pass requireAuth=true for pages that also need login (unauthenticated → /welcome).
+function CustomerProfileRoute({
+  children,
+  requireAuth = false,
+}: {
+  children: React.ReactNode;
+  requireAuth?: boolean;
+}) {
+  const { isAuthenticated, isLoading } = useAuth();
+  const [, setLocation] = useLocation();
+
+  const { data: customerProfile, isLoading: profileLoading } = useQuery<any | null>({
+    queryKey: ["/api/profiles/me", "customer"],
+    queryFn: async () => {
+      const res = await fetch("/api/profiles/me?role=customer", { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: isAuthenticated,
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!isAuthenticated) {
+      if (requireAuth) setLocation("/welcome");
+      return;
+    }
+    if (profileLoading) return;
+    if (!customerProfile) {
+      setLocation("/customer/setup?incomplete=1");
+    }
+  }, [isLoading, isAuthenticated, profileLoading, customerProfile, requireAuth]);
+
+  if (isLoading || (isAuthenticated && profileLoading)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+  if (!isAuthenticated) {
+    if (requireAuth) return null;
+    return <>{children}</>;
+  }
+  if (!customerProfile) return null;
+  return <>{children}</>;
+}
+
 function SetupRoute({ role, children }: { role: "customer" | "provider"; children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
   const [, setLocation] = useLocation();
@@ -248,24 +299,26 @@ function Router() {
         <SetupRoute role="provider"><ProviderGuidedSetupPage /></SetupRoute>
       </Route>
 
-      {/* Search page — open to all including guests */}
-      <Route path="/customer/home" component={CustomerHomePage} />
+      {/* Search page — open to all including guests; authenticated users without a profile → /customer/setup */}
+      <Route path="/customer/home">
+        <CustomerProfileRoute><CustomerHomePage /></CustomerProfileRoute>
+      </Route>
 
-      {/* Protected customer pages — login required */}
+      {/* Protected customer pages — login + customer profile required */}
       <Route path="/customer/history">
-        <LoggedInRoute><CustomerHistoryPage /></LoggedInRoute>
+        <CustomerProfileRoute requireAuth><CustomerHistoryPage /></CustomerProfileRoute>
       </Route>
       <Route path="/notifications">
         <LoggedInRoute><NotificationsPage /></LoggedInRoute>
       </Route>
       <Route path="/my-profile">
-        <LoggedInRoute><MyProfilePage /></LoggedInRoute>
+        <CustomerProfileRoute requireAuth><MyProfilePage /></CustomerProfileRoute>
       </Route>
       <Route path="/customer/balance">
-        <LoggedInRoute><CustomerBalancePage /></LoggedInRoute>
+        <CustomerProfileRoute requireAuth><CustomerBalancePage /></CustomerProfileRoute>
       </Route>
       <Route path="/customer/edit-profile">
-        <LoggedInRoute><EditProfilePage /></LoggedInRoute>
+        <CustomerProfileRoute requireAuth><EditProfilePage /></CustomerProfileRoute>
       </Route>
 
       {/* Provider pages — login + provider profile required */}

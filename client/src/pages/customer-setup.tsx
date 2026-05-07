@@ -16,6 +16,7 @@ export default function CustomerSetupPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { t } = useLanguage();
+  const isIncomplete = new URLSearchParams(window.location.search).get("incomplete") === "1";
   const [name, setName] = useState("");
   const [mobileNumbers, setMobileNumbers] = useState<string[]>([]);
   const [promoInput, setPromoInput] = useState("");
@@ -190,8 +191,8 @@ export default function CustomerSetupPage() {
       <div className="w-14 h-14 mb-4">
         <img src={logoImg} alt="Mitrify" className="w-14 h-14 object-contain" />
       </div>
-      <h2 className="text-xl font-bold mb-1">{t("setupTitle")}</h2>
-      <p className="text-muted-foreground mb-6 text-sm">{t("setupSubtitle")}</p>
+      <h2 className="text-xl font-bold mb-1">{isIncomplete ? t("setupIncompleteTitle") : t("setupTitle")}</h2>
+      <p className="text-muted-foreground mb-6 text-sm">{isIncomplete ? t("setupIncompleteSubtitle") : t("setupSubtitle")}</p>
 
       <Card className="w-full max-w-sm">
         <CardContent className="pt-6">

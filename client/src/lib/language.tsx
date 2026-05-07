@@ -309,6 +309,8 @@ const T = {
     // Customer setup
     setupTitle: "Complete Your Profile",
     setupSubtitle: "Set up your customer account",
+    setupIncompleteTitle: "Almost There!",
+    setupIncompleteSubtitle: "Complete your profile to continue using the app.",
     setupNameLabel: "Full Name *",
     setupNamePh: "Your name",
     setupMobiles: "Mobile Numbers",
@@ -642,6 +644,8 @@ const T = {
     // Customer setup
     setupTitle: "अपनी प्रोफ़ाइल पूरी करें",
     setupSubtitle: "अपना ग्राहक खाता सेट करें",
+    setupIncompleteTitle: "लगभग हो गया!",
+    setupIncompleteSubtitle: "ऐप इस्तेमाल करने के लिए अपनी प्रोफ़ाइल पूरी करें।",
     setupNameLabel: "पूरा नाम *",
     setupNamePh: "आपका नाम",
     setupMobiles: "मोबाइल नंबर",
@@ -975,6 +979,8 @@ const T = {
     // Customer setup
     setupTitle: "Apni Profile Pure Karo",
     setupSubtitle: "Apna customer account set karo",
+    setupIncompleteTitle: "Bas Thoda Aur!",
+    setupIncompleteSubtitle: "App use karne ke liye pehle apni profile complete karo.",
     setupNameLabel: "Pura Naam *",
     setupNamePh: "Aapka naam",
     setupMobiles: "Mobile Numbers",
