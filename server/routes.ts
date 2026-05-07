@@ -2616,6 +2616,29 @@ export async function registerRoutes(
     }
   });
 
+  // ── BULK APPROVE BOTH META + GOOGLE LEADS — PREFLIGHT ──
+  // Returns counts before the admin commits to bulk approve.
+  app.get("/api/admin/approve-all-bulk/preflight", adminCheck, async (_req, res) => {
+    try {
+      const pending = await db
+        .select({ mobile: pendingProviders.mobile, mobileNumbers: pendingProviders.mobileNumbers })
+        .from(pendingProviders)
+        .where(and(
+          eq(pendingProviders.status, "pending"),
+          inArray(pendingProviders.source, ["meta", "google"]),
+        ));
+
+      const noMobile = pending.filter((pp) => {
+        const nums = Array.isArray(pp.mobileNumbers) ? pp.mobileNumbers : [];
+        return !pp.mobile && nums.length === 0;
+      }).length;
+
+      res.json({ total: pending.length, noMobile });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Preflight check failed" });
+    }
+  });
+
   // ── BULK APPROVE BOTH META + GOOGLE LEADS (combined) ──
   app.post("/api/admin/approve-all-bulk", adminCheck, async (req, res) => {
     try {
@@ -2630,6 +2653,7 @@ export async function registerRoutes(
       let approved = 0;
       let metaApproved = 0;
       let googleApproved = 0;
+      let noMobileApproved = 0;
       const errors: string[] = [];
       for (const pp of pending) {
         try {
@@ -2638,11 +2662,13 @@ export async function registerRoutes(
           approved++;
           if (pp.source === "meta") metaApproved++;
           else if (pp.source === "google") googleApproved++;
+          const nums = Array.isArray(pp.mobileNumbers) ? pp.mobileNumbers : [];
+          if (!pp.mobile && nums.length === 0) noMobileApproved++;
         } catch (e: any) {
           errors.push(`ID ${pp.id}: ${e.message}`);
         }
       }
-      res.json({ approved, metaApproved, googleApproved, total: pending.length, errors });
+      res.json({ approved, metaApproved, googleApproved, noMobileApproved, total: pending.length, errors });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Bulk approve failed" });
     }

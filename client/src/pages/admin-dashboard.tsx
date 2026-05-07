@@ -1231,7 +1231,10 @@ export default function AdminDashboardPage() {
   const [importAllowDuplicate, setImportAllowDuplicate] = useState(false);
   const [metaAllowDuplicate, setMetaAllowDuplicate] = useState(false);
   const [metaBulkApproving, setMetaBulkApproving] = useState(false);
-  const [metaBulkResult, setMetaBulkResult] = useState<{ approved: number; total: number; errors: string[] } | null>(null);
+  const [metaBulkResult, setMetaBulkResult] = useState<{ approved: number; total: number; noMobileApproved: number; errors: string[] } | null>(null);
+  const [bulkApproveConfirmOpen, setBulkApproveConfirmOpen] = useState(false);
+  const [bulkPreflightData, setBulkPreflightData] = useState<{ total: number; noMobile: number } | null>(null);
+  const [bulkPreflightLoading, setBulkPreflightLoading] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importNameCol, setImportNameCol] = useState("Name");
   const [importMobileCol, setImportMobileCol] = useState("Mobile number");
@@ -2406,13 +2409,28 @@ export default function AdminDashboardPage() {
   };
 
   const handleAllBulkApprove = async () => {
-    if (!confirm("Kya aap confirm karte hain? Saare pending Meta + Google Places leads ek saath approve ho jayenge aur live providers ban jayenge.")) return;
+    setBulkPreflightLoading(true);
+    setBulkPreflightData(null);
+    try {
+      const res = await apiRequest("GET", "/api/admin/approve-all-bulk/preflight");
+      const data = await res.json();
+      setBulkPreflightData(data);
+      setBulkApproveConfirmOpen(true);
+    } catch (err: any) {
+      toast({ title: err.message || "Preflight check failed", variant: "destructive" });
+    } finally {
+      setBulkPreflightLoading(false);
+    }
+  };
+
+  const proceedBulkApprove = async () => {
+    setBulkApproveConfirmOpen(false);
     setMetaBulkApproving(true);
     setMetaBulkResult(null);
     try {
       const res = await apiRequest("POST", "/api/admin/approve-all-bulk");
       const data = await res.json();
-      setMetaBulkResult({ approved: data.approved, total: data.total, errors: data.errors });
+      setMetaBulkResult({ approved: data.approved, total: data.total, noMobileApproved: data.noMobileApproved ?? 0, errors: data.errors });
       toast({ title: `✅ ${data.approved} leads live hue (Meta: ${data.metaApproved}, Google: ${data.googleApproved})` });
     } catch (err: any) {
       toast({ title: err.message || "Bulk approve failed", variant: "destructive" });
@@ -2514,6 +2532,45 @@ export default function AdminDashboardPage() {
               data-testid="button-no-mobile-save-anyway"
             >
               Save anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── BULK APPROVE CONFIRM DIALOG ── */}
+      <Dialog open={bulkApproveConfirmOpen} onOpenChange={setBulkApproveConfirmOpen}>
+        <DialogContent className="max-w-sm" data-testid="dialog-bulk-approve-confirm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CheckCircle className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+              Bulk Approve Confirm
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 pt-1">
+                <p>
+                  <span className="font-semibold text-foreground">{bulkPreflightData?.total ?? 0} pending leads</span> approve honge aur live providers ban jayenge.
+                </p>
+                {(bulkPreflightData?.noMobile ?? 0) > 0 && (
+                  <div className="flex items-start gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-lg p-3">
+                    <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-amber-800 dark:text-amber-300">
+                      <span className="font-semibold">{bulkPreflightData!.noMobile} of these providers</span> ke paas koi call number nahi hai. Customers unhe reach nahi kar paayenge. Phir bhi approve karein?
+                    </p>
+                  </div>
+                )}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex gap-2 sm:flex-row flex-col-reverse">
+            <Button variant="outline" className="flex-1" onClick={() => setBulkApproveConfirmOpen(false)} data-testid="button-bulk-approve-cancel">
+              Cancel
+            </Button>
+            <Button
+              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+              onClick={proceedBulkApprove}
+              data-testid="button-bulk-approve-proceed"
+            >
+              Approve Anyway
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -4598,11 +4655,13 @@ export default function AdminDashboardPage() {
               <Button
                 className="w-full h-11 text-sm font-semibold gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
                 onClick={handleAllBulkApprove}
-                disabled={metaBulkApproving}
+                disabled={metaBulkApproving || bulkPreflightLoading}
                 data-testid="button-all-bulk-approve"
               >
                 {metaBulkApproving ? (
                   <><Loader2 className="w-4 h-4 animate-spin" />Approve ho rahe hain...</>
+                ) : bulkPreflightLoading ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" />Checking leads...</>
                 ) : (
                   <><CheckCircle className="w-4 h-4" />Saare Meta + Google Leads Approve Karein</>
                 )}
@@ -4621,6 +4680,14 @@ export default function AdminDashboardPage() {
                       <p className="text-xl font-extrabold text-emerald-700 dark:text-emerald-300">{metaBulkResult.approved}</p>
                     </div>
                   </div>
+                  {metaBulkResult.noMobileApproved > 0 && (
+                    <div className="flex items-start gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-lg p-2.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                      <p className="text-xs text-amber-800 dark:text-amber-300">
+                        <span className="font-semibold">{metaBulkResult.noMobileApproved} approved providers</span> ke paas koi call number nahi hai — customers unhe reach nahi kar paayenge. Follow up karein.
+                      </p>
+                    </div>
+                  )}
                   {metaBulkResult.errors.length > 0 && (
                     <p className="text-xs text-red-600 dark:text-red-400">{metaBulkResult.errors.length} errors huye — baaki approve ho gaye</p>
                   )}
