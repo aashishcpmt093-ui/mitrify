@@ -70,7 +70,35 @@ npm start          # Runs production server
 - Promo/referral code system
 - PWA installable
 
-## Google OAuth Callback URL
-Set this in Google Console:
-- Development: http://localhost:5000/api/auth/google/callback
-- Production: https://yourdomain.com/api/auth/google/callback
+## OAuth Provider Redirect URI Setup
+
+### Google OAuth — Google Cloud Console
+Go to: console.cloud.google.com → APIs & Services → Credentials → OAuth 2.0 Client ID
+
+Add all of these under **Authorized redirect URIs**:
+```
+http://localhost:5000/api/auth/google/callback        ← local dev
+https://mitrify-production.up.railway.app/api/auth/google/callback  ← Railway staging/prod
+https://mitrify.com/api/auth/google/callback          ← custom domain
+https://www.mitrify.com/api/auth/google/callback      ← www variant
+```
+
+> If a URI is missing, Google returns `redirect_uri_mismatch` and login fails.
+> The server code in `server/replit_integrations/auth/replitAuth.ts` picks the correct
+> callback URL automatically based on the incoming `req.hostname`.
+
+### Apple Sign In — Apple Developer Console
+Go to: developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → Service IDs → com.mitrify.web
+
+Add under **Sign In with Apple → Return URLs**:
+```
+https://mitrify.com/api/auth/apple/callback
+```
+
+> Apple requires HTTPS and does not support localhost callbacks for production Service IDs.
+> Apple always POSTs to the callback, so the route is registered as POST in Express.
+
+### After adding URIs
+1. Save changes in the provider console (Google changes take effect in minutes; Apple can take up to 10 minutes).
+2. Test login on production — a failure redirects to `/welcome?error=google_auth_failed` or `apple_auth_failed` with a toast.
+3. Check Railway deployment logs for `redirect_uri_mismatch` if login still fails.
