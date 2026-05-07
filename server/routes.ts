@@ -2654,21 +2654,25 @@ export async function registerRoutes(
       let metaApproved = 0;
       let googleApproved = 0;
       let noMobileApproved = 0;
+      const noMobileApprovedUserIds: string[] = [];
       const errors: string[] = [];
       for (const pp of pending) {
         try {
-          await storage.approvePendingProvider(pp.id, "admin");
+          const { userId } = await storage.approvePendingProvider(pp.id, "admin");
           await storage.updatePendingProviderStatus(pp.id, "approved", undefined, "admin");
           approved++;
           if (pp.source === "meta") metaApproved++;
           else if (pp.source === "google") googleApproved++;
           const nums = Array.isArray(pp.mobileNumbers) ? pp.mobileNumbers : [];
-          if (!pp.mobile && nums.length === 0) noMobileApproved++;
+          if (!pp.mobile && nums.length === 0) {
+            noMobileApproved++;
+            noMobileApprovedUserIds.push(userId);
+          }
         } catch (e: any) {
           errors.push(`ID ${pp.id}: ${e.message}`);
         }
       }
-      res.json({ approved, metaApproved, googleApproved, noMobileApproved, total: pending.length, errors });
+      res.json({ approved, metaApproved, googleApproved, noMobileApproved, noMobileApprovedUserIds, total: pending.length, errors });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Bulk approve failed" });
     }

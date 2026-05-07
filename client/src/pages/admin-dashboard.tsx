@@ -23,7 +23,7 @@ import {
   SortAsc, Filter, TrendingUp, Activity, Briefcase, Link, Eye, EyeOff,
   UserCog, ExternalLink, Key, CheckCircle, Loader2,
   Calendar, Award, Clock, XCircle, ChevronRight, Upload, FileSpreadsheet,
-  Copy, MapPin, Star, Database, Cloud, CloudUpload, Bell, Sparkles, Tag, Mail
+  Copy, MapPin, Star, Database, Cloud, CloudUpload, Bell, Sparkles, Tag, Mail, UserRoundSearch
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { SubscriptionsAdminPanel } from "@/components/SubscriptionsAdminPanel";
@@ -1231,7 +1231,8 @@ export default function AdminDashboardPage() {
   const [importAllowDuplicate, setImportAllowDuplicate] = useState(false);
   const [metaAllowDuplicate, setMetaAllowDuplicate] = useState(false);
   const [metaBulkApproving, setMetaBulkApproving] = useState(false);
-  const [metaBulkResult, setMetaBulkResult] = useState<{ approved: number; total: number; noMobileApproved: number; errors: string[] } | null>(null);
+  const [metaBulkResult, setMetaBulkResult] = useState<{ approved: number; total: number; noMobileApproved: number; noMobileApprovedIds: string[]; errors: string[] } | null>(null);
+  const [recentNoMobileIds, setRecentNoMobileIds] = useState<Set<string>>(new Set());
   const [bulkApproveConfirmOpen, setBulkApproveConfirmOpen] = useState(false);
   const [bulkPreflightData, setBulkPreflightData] = useState<{ total: number; noMobile: number } | null>(null);
   const [bulkPreflightLoading, setBulkPreflightLoading] = useState(false);
@@ -1571,6 +1572,7 @@ export default function AdminDashboardPage() {
     else if (provFilter === "suspicious") list = list.filter((p) => (p._credit?.purchasedCredits ?? 0) > 500);
     else if (provFilter === "active") list = list.filter((p) => !p.isBlocked);
     else if (provFilter === "no_mobile") list = list.filter((p) => !p.providerData?.mobileNumbers?.length);
+    else if (provFilter === "recent_no_mobile") list = list.filter((p) => recentNoMobileIds.has(p.userId) && !p.providerData?.mobileNumbers?.length);
     const normalizeAddedBy = (value: any) => {
       const v = String(value || "self").toLowerCase();
       if (v === "bulk-import" || v === "meta" || v === "self" || v === "mainadmin") return v;
@@ -1593,7 +1595,7 @@ export default function AdminDashboardPage() {
     else if (provSort === "newest") list = [...list].sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
     else if (provSort === "oldest") list = [...list].sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime());
     return list;
-  }, [providersList, allCredits, provSearch, provFilter, provAddedByFilter, provApprovedByFilter, provSort]);
+  }, [providersList, allCredits, provSearch, provFilter, provAddedByFilter, provApprovedByFilter, provSort, recentNoMobileIds]);
 
   const noMobileCount = useMemo(
     () => (providersList ?? []).filter((p: any) => !p.providerData?.mobileNumbers?.length).length,
@@ -2430,7 +2432,10 @@ export default function AdminDashboardPage() {
     try {
       const res = await apiRequest("POST", "/api/admin/approve-all-bulk");
       const data = await res.json();
-      setMetaBulkResult({ approved: data.approved, total: data.total, noMobileApproved: data.noMobileApproved ?? 0, errors: data.errors });
+      const ids: string[] = data.noMobileApprovedUserIds ?? [];
+      setMetaBulkResult({ approved: data.approved, total: data.total, noMobileApproved: data.noMobileApproved ?? 0, noMobileApprovedIds: ids, errors: data.errors });
+      setRecentNoMobileIds(new Set(ids));
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/providers"] });
       toast({ title: `✅ ${data.approved} leads live hue (Meta: ${data.metaApproved}, Google: ${data.googleApproved})` });
     } catch (err: any) {
       toast({ title: err.message || "Bulk approve failed", variant: "destructive" });
@@ -2764,6 +2769,11 @@ export default function AdminDashboardPage() {
                     <SelectItem value="no_mobile" data-testid="filter-option-no-mobile">
                       No call numbers{noMobileCount > 0 ? ` (${noMobileCount})` : ""}
                     </SelectItem>
+                    {recentNoMobileIds.size > 0 && (
+                      <SelectItem value="recent_no_mobile" data-testid="filter-option-recent-no-mobile">
+                        Recent bulk — no call# ({recentNoMobileIds.size})
+                      </SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
                 <Select value={provSort} onValueChange={setProvSort}>
@@ -4681,11 +4691,22 @@ export default function AdminDashboardPage() {
                     </div>
                   </div>
                   {metaBulkResult.noMobileApproved > 0 && (
-                    <div className="flex items-start gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-lg p-2.5">
-                      <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                      <p className="text-xs text-amber-800 dark:text-amber-300">
-                        <span className="font-semibold">{metaBulkResult.noMobileApproved} approved providers</span> ke paas koi call number nahi hai — customers unhe reach nahi kar paayenge. Follow up karein.
-                      </p>
+                    <div className="flex flex-col gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-lg p-2.5">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                        <p className="text-xs text-amber-800 dark:text-amber-300">
+                          <span className="font-semibold">{metaBulkResult.noMobileApproved} approved providers</span> ke paas koi call number nahi hai — customers unhe reach nahi kar paayenge. Follow up karein.
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        className="w-full h-8 text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white gap-1.5"
+                        data-testid="button-view-no-mobile-providers"
+                        onClick={() => { setProvFilter("recent_no_mobile"); setActiveTab("providers"); }}
+                      >
+                        <UserRoundSearch className="w-3.5 h-3.5" />
+                        View These Providers
+                      </Button>
                     </div>
                   )}
                   {metaBulkResult.errors.length > 0 && (

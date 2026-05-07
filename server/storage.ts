@@ -106,7 +106,7 @@ export interface IStorage {
   deleteNoMobilePendingProviders(): Promise<number>;
   getPendingProvider(id: number): Promise<PendingProvider | undefined>;
   updatePendingProviderStatus(id: number, status: string, notes?: string, verifiedBy?: string): Promise<PendingProvider>;
-  approvePendingProvider(id: number, approvedBy?: string, opts?: { skipAiTags?: boolean }): Promise<void>;
+  approvePendingProvider(id: number, approvedBy?: string, opts?: { skipAiTags?: boolean }): Promise<{ userId: string }>;
 
   trackVisit(date: string): Promise<void>;
   getVisitorStats(): Promise<{ total: number; today: number; last7Days: { date: string; count: number }[] }>;
@@ -1538,7 +1538,7 @@ export class DatabaseStorage implements IStorage {
     return pp;
   }
 
-  async approvePendingProvider(id: number, approvedBy?: string, opts?: { skipAiTags?: boolean }): Promise<void> {
+  async approvePendingProvider(id: number, approvedBy?: string, opts?: { skipAiTags?: boolean }): Promise<{ userId: string }> {
     const pp = await this.getPendingProvider(id);
     if (!pp) throw new Error("Pending provider not found");
 
@@ -1649,6 +1649,7 @@ export class DatabaseStorage implements IStorage {
     await this.updatePendingProviderStatus(id, "approved");
     // Track approve in salary cycle
     if (approvedBy) await this.incrementCycleStat(approvedBy, "approve");
+    return { userId };
   }
 
   async trackVisit(date: string): Promise<void> {
