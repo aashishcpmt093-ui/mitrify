@@ -866,6 +866,7 @@ export default function AdminDashboardPage() {
   const [editAddress, setEditAddress] = useState("");
   const [editHidden, setEditHidden] = useState(false);
   const [focusMobileOnOpen, setFocusMobileOnOpen] = useState(false);
+  const [showNoMobileWarning, setShowNoMobileWarning] = useState(false);
   const mobileNumbersInputRef = useRef<HTMLInputElement>(null);
 
   const [provSearch, setProvSearch] = useState("");
@@ -2473,13 +2474,50 @@ export default function AdminDashboardPage() {
                 <Input ref={mobileNumbersInputRef} value={editMobileNumbers} onChange={e => setEditMobileNumbers(e.target.value)} placeholder="e.g. 9876543210, 9123456789" data-testid="input-edit-mobiles" className={!editMobileNumbers.trim() ? "border-amber-400 dark:border-amber-500 focus-visible:ring-amber-400" : ""} />
               </div>
               <div className="space-y-2"><Label>Address / Service Area</Label><Input value={editAddress} onChange={e => setEditAddress(e.target.value)} placeholder="e.g. MG Road, Bangalore" data-testid="input-edit-address" /></div>
-              <Button className="w-full" onClick={() => updateProviderProfile.mutate()} disabled={updateProviderProfile.isPending || !editName.trim()} data-testid="button-save-provider">
+              <Button
+                className="w-full"
+                onClick={() => {
+                  const hasMobile = editMobileNumbers.split(",").map((m: string) => m.trim()).filter(Boolean).length > 0;
+                  if (!hasMobile) { setShowNoMobileWarning(true); return; }
+                  updateProviderProfile.mutate();
+                }}
+                disabled={updateProviderProfile.isPending || !editName.trim()}
+                data-testid="button-save-provider"
+              >
                 <Save className="w-4 h-4 mr-2" />{updateProviderProfile.isPending ? "Saving..." : "Save Changes"}
               </Button>
             </div>
           </div>
         </div>
       )}
+
+      {/* ── NO-MOBILE SAVE WARNING DIALOG ── */}
+      <Dialog open={showNoMobileWarning} onOpenChange={setShowNoMobileWarning}>
+        <DialogContent className="max-w-sm" data-testid="dialog-no-mobile-warning">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0" />
+              No call numbers
+            </DialogTitle>
+            <DialogDescription>
+              This provider still has no call numbers. Customers won't be able to call them. Save anyway?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex gap-2 sm:flex-row flex-col-reverse">
+            <Button variant="outline" className="flex-1" onClick={() => setShowNoMobileWarning(false)} data-testid="button-no-mobile-go-back">
+              Go back &amp; add number
+            </Button>
+            <Button
+              variant="destructive"
+              className="flex-1"
+              onClick={() => { setShowNoMobileWarning(false); updateProviderProfile.mutate(); }}
+              data-testid="button-no-mobile-save-anyway"
+            >
+              Save anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── HEADER ── */}
       <header className="sticky top-0 z-40 bg-gradient-to-r from-primary via-primary to-primary/85 text-primary-foreground shadow-xl" data-testid="admin-header">
