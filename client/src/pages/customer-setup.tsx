@@ -22,6 +22,7 @@ export default function CustomerSetupPage() {
   const [promoInput, setPromoInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [checkingProfile, setCheckingProfile] = useState(true);
+  const [isFirstTimeSetup, setIsFirstTimeSetup] = useState(false);
   const [gpsLat, setGpsLat] = useState<number | null>(null);
   const [gpsLng, setGpsLng] = useState<number | null>(null);
 
@@ -42,6 +43,10 @@ export default function CustomerSetupPage() {
             setLocation("/customer/home");
             return;
           }
+          // Profile exists but incomplete (no name) — not first-time, just recovery
+        } else if (res.status === 404) {
+          // Truly new user — no profile exists at all
+          setIsFirstTimeSetup(true);
         }
       } catch {}
 
@@ -170,7 +175,9 @@ export default function CustomerSetupPage() {
       }
 
       queryClient.invalidateQueries({ queryKey: ["/api/profiles/me"] });
-      try { sessionStorage.setItem("mitrify_new_customer_welcome", "1"); } catch {}
+      if (isFirstTimeSetup) {
+        try { sessionStorage.setItem("mitrify_new_customer_welcome", "1"); } catch {}
+      }
       setLocation("/customer/home");
     } catch (error: any) {
       toast({ title: t("setupSetupFail"), description: t("setupTryAgain"), variant: "destructive" });
