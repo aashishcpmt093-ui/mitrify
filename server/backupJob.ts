@@ -1932,7 +1932,7 @@ export function startBackupScheduler(): void {
  * This prevents semicolons or newlines inside quoted values from being
  * mistakenly treated as statement boundaries.
  */
-function splitSqlStatements(sql: string): string[] {
+export function splitSqlStatements(sql: string): string[] {
   const statements: string[] = [];
   let current = "";
   let inString = false;

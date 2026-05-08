@@ -15,7 +15,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, previewLenientSchemaAdjustments, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory, recordBackupHistory, getSkippedReport, deleteSkippedReport } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, previewLenientSchemaAdjustments, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory, recordBackupHistory, getSkippedReport, deleteSkippedReport, splitSqlStatements } from "./backupJob";
 import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverStaleJobs } from "./lib/auto-tags";
 import { startAiWeeklyReportScheduler, sendAiWeeklyReport, rescheduleAiWeeklyReport } from "./aiWeeklyReport";
 import { AI_TOKEN_CONFIG_KEY, AI_TOKEN_HOUR_THRESHOLD_DEFAULT, getAiTokenThreshold, bustAiThresholdCache } from "./lib/aiConfig";
@@ -3232,6 +3232,65 @@ export async function registerRoutes(
     res.setHeader("Content-Disposition", `attachment; filename="skipped-rows-${reportId.slice(0, 8)}.csv"`);
     res.send(csv);
   });
+
+  // POST /api/admin/restore/direct — accept a .sql file and execute every
+  // statement directly against the live database, best-effort (no transaction,
+  // no rollback). Returns a summary: total statements, passed, failed, and a
+  // list of any statement that failed along with its error message.
+  app.post(
+    "/api/admin/restore/direct",
+    adminCheck,
+    restoreUpload.single("file"),
+    async (req: any, res) => {
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file) {
+        return res.status(400).json({ message: "No file uploaded" });
+      }
+      const name = (file.originalname || "").toLowerCase();
+      if (!name.endsWith(".sql")) {
+        return res.status(400).json({ message: "Only .sql files are accepted" });
+      }
+      const sql = file.buffer.toString("utf8");
+      if (!sql.trim()) {
+        return res.status(400).json({ message: "Uploaded file is empty" });
+      }
+      const statements = splitSqlStatements(sql);
+      if (statements.length === 0) {
+        return res.status(400).json({ message: "No executable statements found in the file" });
+      }
+      const startMs = Date.now();
+      let passed = 0;
+      let failed = 0;
+      const errors: Array<{ index: number; sql: string; error: string }> = [];
+      const client = await pool.connect();
+      try {
+        for (let i = 0; i < statements.length; i++) {
+          const stmt = statements[i];
+          try {
+            await client.query(stmt.endsWith(";") ? stmt : `${stmt};`);
+            passed++;
+          } catch (err: unknown) {
+            failed++;
+            errors.push({
+              index: i + 1,
+              sql: stmt.length > 200 ? stmt.slice(0, 200) + "…" : stmt,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      } finally {
+        client.release();
+      }
+      const durationMs = Date.now() - startMs;
+      res.json({
+        totalStatements: statements.length,
+        passed,
+        failed,
+        durationMs,
+        errors,
+      });
+    },
+  );
 
   // POST /api/admin/restore/cancel — signal the active restore to stop
   app.post("/api/admin/restore/cancel", adminCheck, async (_req, res) => {

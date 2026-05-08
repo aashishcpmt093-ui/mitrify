@@ -23,7 +23,7 @@ import {
   SortAsc, Filter, TrendingUp, Activity, Briefcase, Link, Eye, EyeOff,
   UserCog, ExternalLink, Key, CheckCircle, Loader2,
   Calendar, Award, Clock, XCircle, ChevronRight, Upload, FileSpreadsheet,
-  Copy, MapPin, Star, Database, Cloud, CloudUpload, Bell, Sparkles, Tag, Mail, UserRoundSearch
+  Copy, MapPin, Star, Database, Cloud, CloudUpload, Bell, Sparkles, Tag, Mail, UserRoundSearch, Zap
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { SubscriptionsAdminPanel } from "@/components/SubscriptionsAdminPanel";
@@ -906,6 +906,16 @@ export default function AdminDashboardPage() {
   const [gcsMode, setGcsMode] = useState<"overwrite" | "new">("new");
   const [gcsUploadResult, setGcsUploadResult] = useState<{ gcsName: string; url: string; size: number } | null>(null);
   const [testAlertPending, setTestAlertPending] = useState(false);
+  const [directRunFile, setDirectRunFile] = useState<File | null>(null);
+  const [directRunInProgress, setDirectRunInProgress] = useState(false);
+  const [directRunErrorsExpanded, setDirectRunErrorsExpanded] = useState(false);
+  const [directRunResult, setDirectRunResult] = useState<{
+    totalStatements: number;
+    passed: number;
+    failed: number;
+    durationMs: number;
+    errors: Array<{ index: number; sql: string; error: string }>;
+  } | null>(null);
   const [restoreMode, setRestoreMode] = useState<"upload" | "stored" | "gcs">("upload");
   const [restoreStrategy, setRestoreStrategy] = useState<"merge" | "overwrite" | "lenient">("merge");
   const [selectedGcsName, setSelectedGcsName] = useState<string>("");
@@ -1076,6 +1086,51 @@ export default function AdminDashboardPage() {
       toast({ title: "Preview failed", description: msg, variant: "destructive" });
     } finally {
       setDryRunInProgress(false);
+    }
+  }
+
+  async function handleDirectRun() {
+    if (!directRunFile || directRunInProgress) return;
+    setDirectRunInProgress(true);
+    setDirectRunResult(null);
+    setDirectRunErrorsExpanded(false);
+    try {
+      const fd = new FormData();
+      fd.append("file", directRunFile);
+      const res = await fetch("/api/admin/restore/direct", {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.message || `HTTP ${res.status}`);
+      }
+      setDirectRunResult({
+        totalStatements: data.totalStatements ?? 0,
+        passed: data.passed ?? 0,
+        failed: data.failed ?? 0,
+        durationMs: data.durationMs ?? 0,
+        errors: Array.isArray(data.errors) ? data.errors : [],
+      });
+      if ((data.failed ?? 0) === 0) {
+        toast({
+          title: "Direct SQL run complete",
+          description: `${data.passed ?? 0} statement${(data.passed ?? 0) !== 1 ? "s" : ""} executed successfully in ${((data.durationMs ?? 0) / 1000).toFixed(1)}s.`,
+        });
+      } else {
+        toast({
+          title: `Direct SQL run finished with ${data.failed} error${data.failed !== 1 ? "s" : ""}`,
+          description: `${data.passed ?? 0} passed, ${data.failed} failed out of ${data.totalStatements} statements.`,
+          variant: "destructive",
+        });
+      }
+      queryClient.invalidateQueries();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Direct run failed";
+      toast({ title: "Direct SQL run failed", description: msg, variant: "destructive" });
+    } finally {
+      setDirectRunInProgress(false);
     }
   }
 
@@ -7080,6 +7135,117 @@ export default function AdminDashboardPage() {
                 </div>
               );
             })()}
+          </div>
+
+          {/* ── Direct SQL Run section ── */}
+          <div className="rounded-xl border border-orange-200 dark:border-orange-800 bg-orange-50/60 dark:bg-orange-900/20 p-3 space-y-3">
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+              <h3 className="font-semibold text-sm text-orange-900 dark:text-orange-100">Direct SQL Run</h3>
+              <span className="ml-auto text-[10px] font-medium text-orange-700 dark:text-orange-400 bg-orange-100 dark:bg-orange-900/40 rounded px-1.5 py-0.5">No preview · No confirm</span>
+            </div>
+            <div className="flex items-start gap-2 rounded-lg bg-orange-100/60 dark:bg-orange-900/30 p-2.5 border border-orange-200 dark:border-orange-700">
+              <AlertTriangle className="w-4 h-4 text-orange-600 dark:text-orange-400 flex-shrink-0 mt-0.5" />
+              <p className="text-[11px] leading-snug text-orange-800 dark:text-orange-200">
+                <strong>Best-effort execution:</strong> File ka SQL directly live database pe run hoga — koi transaction, koi rollback, koi preview nahi. Har statement independently execute hogi; agar koi fail ho toh uski error dikhegi aur baaki chalta rahega.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="direct-run-file" className="text-xs font-semibold">
+                Select .sql file
+              </Label>
+              <Input
+                id="direct-run-file"
+                type="file"
+                accept=".sql,application/sql,text/plain"
+                onChange={(e) => {
+                  setDirectRunFile(e.target.files?.[0] || null);
+                  setDirectRunResult(null);
+                  setDirectRunErrorsExpanded(false);
+                }}
+                disabled={directRunInProgress}
+                data-testid="input-direct-run-file"
+                className="text-xs"
+              />
+              {directRunFile && (
+                <p className="text-[11px] text-muted-foreground" data-testid="text-direct-run-filename">
+                  {directRunFile.name} · {formatBytes(directRunFile.size)}
+                </p>
+              )}
+            </div>
+            <Button
+              size="sm"
+              onClick={handleDirectRun}
+              disabled={!directRunFile || directRunInProgress}
+              className="w-full bg-orange-600 hover:bg-orange-700 dark:bg-orange-700 dark:hover:bg-orange-600 text-white"
+              data-testid="button-direct-run-submit"
+            >
+              {directRunInProgress ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Running SQL…</>
+              ) : (
+                <><Zap className="w-4 h-4 mr-2" />Run Now</>
+              )}
+            </Button>
+
+            {directRunResult && (
+              <div
+                className={`rounded-lg border p-3 space-y-2 ${directRunResult.failed === 0 ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20" : "border-amber-300 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-900/20"}`}
+                data-testid="direct-run-result"
+              >
+                <div className="flex items-center gap-2">
+                  {directRunResult.failed === 0 ? (
+                    <CheckCircle className="w-4 h-4 text-emerald-700 dark:text-emerald-300 flex-shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                  )}
+                  <p className={`text-xs font-semibold ${directRunResult.failed === 0 ? "text-emerald-800 dark:text-emerald-200" : "text-amber-800 dark:text-amber-200"}`}>
+                    {directRunResult.failed === 0
+                      ? `All ${directRunResult.totalStatements} statement${directRunResult.totalStatements !== 1 ? "s" : ""} executed successfully`
+                      : `${directRunResult.passed} passed · ${directRunResult.failed} failed (out of ${directRunResult.totalStatements})`
+                    }
+                    {" "}· {(directRunResult.durationMs / 1000).toFixed(2)}s
+                  </p>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2" data-testid="direct-run-stat-total">
+                    <p className="text-[10px] text-muted-foreground">Total</p>
+                    <p className="text-sm font-bold">{directRunResult.totalStatements.toLocaleString("en-IN")}</p>
+                  </div>
+                  <div className="rounded border border-emerald-200 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20 p-2" data-testid="direct-run-stat-passed">
+                    <p className="text-[10px] text-emerald-700 dark:text-emerald-400">Passed</p>
+                    <p className="text-sm font-bold text-emerald-700 dark:text-emerald-300">{directRunResult.passed.toLocaleString("en-IN")}</p>
+                  </div>
+                  <div className={`rounded border p-2 ${directRunResult.failed > 0 ? "border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"}`} data-testid="direct-run-stat-failed">
+                    <p className={`text-[10px] ${directRunResult.failed > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}>Failed</p>
+                    <p className={`text-sm font-bold ${directRunResult.failed > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}>{directRunResult.failed.toLocaleString("en-IN")}</p>
+                  </div>
+                </div>
+                {directRunResult.errors.length > 0 && (
+                  <div className="space-y-1">
+                    <button
+                      type="button"
+                      onClick={() => setDirectRunErrorsExpanded((v) => !v)}
+                      className="flex items-center gap-1 text-[11px] font-semibold text-red-700 dark:text-red-400 hover:underline"
+                      data-testid="button-direct-run-toggle-errors"
+                    >
+                      {directRunErrorsExpanded ? "▾" : "▸"}
+                      {directRunResult.errors.length} failed statement{directRunResult.errors.length !== 1 ? "s" : ""} — click to {directRunErrorsExpanded ? "hide" : "show"}
+                    </button>
+                    {directRunErrorsExpanded && (
+                      <div className="max-h-60 overflow-y-auto rounded border border-red-200 dark:border-red-800 bg-white dark:bg-slate-900 divide-y divide-red-100 dark:divide-red-900/40" data-testid="direct-run-error-list">
+                        {directRunResult.errors.map((e) => (
+                          <div key={e.index} className="p-2 space-y-0.5" data-testid={`direct-run-error-${e.index}`}>
+                            <p className="text-[10px] font-semibold text-muted-foreground">Statement #{e.index}</p>
+                            <p className="font-mono text-[10px] text-red-700 dark:text-red-400 break-all">{e.error}</p>
+                            <p className="font-mono text-[10px] text-muted-foreground break-all truncate">{e.sql}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           </div>
         </div>
