@@ -1112,28 +1112,28 @@ export async function restoreFromSql(
       }
     }
 
-    // Execute statements one-by-one so ON CONFLICT DO NOTHING is honoured
-    // per row. The bulk client.query() approach can cause duplicate-key
-    // violations on certain Postgres versions because the server processes
-    // the entire script as one plan unit before applying conflict resolution.
-    {
+    if (mode === "merge") {
+      // Execute statements one-by-one so ON CONFLICT DO NOTHING is honoured
+      // per row. The bulk client.query() approach can cause duplicate-key
+      // violations on certain Postgres versions because the server processes
+      // the entire script as one plan unit before applying conflict resolution.
       const mergeStmts = splitSqlStatements(sqlToRun);
-      let mergeErrors = 0;
       for (const stmt of mergeStmts) {
         if (_activeRestore?.cancelled) throw new RestoreCancelledError();
         const body = stmt.endsWith(";") ? stmt : `${stmt};`;
         try {
           await client.query(body);
         } catch (stmtErr: unknown) {
-          mergeErrors++;
           const errMsg = stmtErr instanceof Error ? stmtErr.message : String(stmtErr);
-          console.warn("[restore] Statement failed:", errMsg.slice(0, 200));
+          console.warn("[restore/merge] Statement failed:", errMsg.slice(0, 200));
           throw stmtErr; // outer catch rolls back the transaction
         }
       }
-      if (mergeErrors === 0) {
-        console.log(`[restore] All ${mergeStmts.length} statements executed without error.`);
-      }
+      console.log(`[restore/merge] All ${mergeStmts.length} statements executed without error.`);
+    } else {
+      // Overwrite mode: run the full SQL in one call — no conflict resolution
+      // needed because tables were already TRUNCATEd above.
+      await client.query(sqlToRun);
     }
 
     // Hard cancellation gate: if cancel was requested during statement
