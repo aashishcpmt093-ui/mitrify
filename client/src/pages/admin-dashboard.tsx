@@ -7039,6 +7039,31 @@ export default function AdminDashboardPage() {
                       )}
                     </p>
                   </div>
+                  {Array.isArray(restoreSummary.allowList) && (() => {
+                    const effectiveAllowSet = restoreSummary.allowList!.length > 0 ? new Set(restoreSummary.allowList!) : new Set<string>();
+                    const skippedTables = restoreSummary.tables.filter(t => !effectiveAllowSet.has(t.table));
+                    if (skippedTables.length === 0) return null;
+                    return (
+                      <div className="rounded border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/40 p-2 space-y-1.5" data-testid="restore-skipped-by-admin">
+                        <p className="text-[10px] font-semibold text-slate-600 dark:text-slate-400 flex items-center gap-1">
+                          <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
+                          Skipped by admin ({skippedTables.length} table{skippedTables.length !== 1 ? "s" : ""} intentionally excluded):
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                          {skippedTables.map(t => (
+                            <span
+                              key={t.table}
+                              className="inline-flex items-center gap-1 font-mono text-[9px] text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 rounded px-1.5 py-0.5 line-through"
+                              data-testid={`badge-admin-skipped-${t.table}`}
+                            >
+                              {t.table}
+                              <span className="no-underline not-italic text-[8px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-200 dark:bg-slate-600 rounded px-1 ml-0.5" style={{textDecoration:"none"}}>skipped</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {isLenient && Array.isArray(restoreSummary.schemaAdjustments) && restoreSummary.schemaAdjustments.length > 0 && (
                     <div className="rounded border border-blue-200 dark:border-blue-700 bg-blue-50/60 dark:bg-blue-900/20 p-2 space-y-1" data-testid="restore-schema-adjustments">
                       <p className="text-[10px] font-semibold text-blue-800 dark:text-blue-300 flex items-center gap-1">
@@ -7115,8 +7140,10 @@ export default function AdminDashboardPage() {
                               className={`border-t border-emerald-100 dark:border-emerald-900/40${tableSkipped ? " opacity-40" : ""}${hasMismatch ? " bg-amber-50/60 dark:bg-amber-900/10" : ""}`}
                               data-testid={tableSkipped ? `row-restore-skipped-${t.table}` : `row-restore-${t.table}`}
                             >
-                              <td className={`px-2 py-1 font-mono${tableSkipped ? " italic text-muted-foreground" : ""}${hasMismatch ? " text-amber-700 dark:text-amber-300" : ""}`}>
-                                {t.table}{hasMismatch && <span className="ml-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/40 rounded px-1">⚠ mismatch</span>}
+                              <td className={`px-2 py-1 font-mono${tableSkipped ? " text-muted-foreground" : ""}${hasMismatch ? " text-amber-700 dark:text-amber-300" : ""}`}>
+                                <span className={tableSkipped ? "line-through" : ""}>{t.table}</span>
+                                {tableSkipped && <span className="ml-1.5 text-[8px] font-semibold text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-700 rounded px-1 py-0.5 align-middle" style={{textDecoration:"none"}}>skipped</span>}
+                                {hasMismatch && <span className="ml-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/40 rounded px-1">⚠ mismatch</span>}
                               </td>
                               {isMerge ? (
                                 <>
