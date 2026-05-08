@@ -87,6 +87,10 @@ function formatBytes(n: number) {
 // filename across Backup-tab re-opens. Survives full page reloads.
 const LAST_STORED_BACKUP_KEY = "mitrify.admin.lastStoredBackup";
 
+// localStorage key for persisting which schema-mismatched tables the admin
+// has chosen to exclude from lenient restores. Survives full page reloads.
+const EXCLUDED_SCHEMA_TABLES_KEY = "mitrify.admin.excludedSchemaTables";
+
 function formatRelative(iso: string) {
   const then = new Date(iso).getTime();
   const diffMs = Date.now() - then;
@@ -925,7 +929,13 @@ export default function AdminDashboardPage() {
   const [storedFileFetching, setStoredFileFetching] = useState(false);
   const [restoreConfirmed, setRestoreConfirmed] = useState(false);
   const [restoreInProgress, setRestoreInProgress] = useState(false);
-  const [excludedSchemaTables, setExcludedSchemaTables] = useState<Set<string>>(new Set());
+  const [excludedSchemaTables, setExcludedSchemaTables] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem(EXCLUDED_SCHEMA_TABLES_KEY);
+      if (saved) return new Set(JSON.parse(saved) as string[]);
+    } catch {}
+    return new Set();
+  });
   const [restoreSummary, setRestoreSummary] = useState<{
     totalRowsBefore: number;
     totalRowsAfter: number;
@@ -1287,7 +1297,6 @@ export default function AdminDashboardPage() {
     setDryRunResult(null);
     setParsedTables(null);
     setSelectedTables(new Set());
-    setExcludedSchemaTables(new Set());
     if (!filename) return;
     setStoredFileFetching(true);
     try {
@@ -2780,7 +2789,6 @@ export default function AdminDashboardPage() {
                 setRestoreSummary(null);
                 setParsedTables(null);
                 setSelectedTables(new Set());
-                setExcludedSchemaTables(new Set());
                 setSelectedGcsName("");
                 setGcsUploadResult(null);
                 setGcsMode("new");
@@ -6414,7 +6422,6 @@ export default function AdminDashboardPage() {
                       setDryRunResult(null);
                       setParsedTables(null);
                       setSelectedTables(new Set());
-                      setExcludedSchemaTables(new Set());
                       setRestoreMode("stored");
                       await handleStoredFileSelect(latest.filename);
                     }}
@@ -6435,7 +6442,7 @@ export default function AdminDashboardPage() {
             <div className="grid grid-cols-3 gap-2" data-testid="restore-strategy-toggle">
               <button
                 type="button"
-                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("merge"); setRestoreConfirmed(false); setDryRunResult(null); setExcludedSchemaTables(new Set()); } }}
+                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("merge"); setRestoreConfirmed(false); setDryRunResult(null); } }}
                 disabled={restoreInProgress || dryRunInProgress}
                 data-testid="button-strategy-merge"
                 className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-colors disabled:opacity-50 ${restoreStrategy === "merge" ? "border-emerald-400 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 ring-1 ring-emerald-400 dark:ring-emerald-600" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-emerald-300 dark:hover:border-emerald-700"}`}
@@ -6448,7 +6455,7 @@ export default function AdminDashboardPage() {
               </button>
               <button
                 type="button"
-                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("lenient"); setRestoreConfirmed(false); setDryRunResult(null); setExcludedSchemaTables(new Set()); } }}
+                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("lenient"); setRestoreConfirmed(false); setDryRunResult(null); } }}
                 disabled={restoreInProgress || dryRunInProgress}
                 data-testid="button-strategy-lenient"
                 className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-colors disabled:opacity-50 ${restoreStrategy === "lenient" ? "border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/30 ring-1 ring-amber-400 dark:ring-amber-600" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-amber-300 dark:hover:border-amber-700"}`}
@@ -6461,7 +6468,7 @@ export default function AdminDashboardPage() {
               </button>
               <button
                 type="button"
-                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("overwrite"); setRestoreConfirmed(false); setDryRunResult(null); setExcludedSchemaTables(new Set()); } }}
+                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("overwrite"); setRestoreConfirmed(false); setDryRunResult(null); } }}
                 disabled={restoreInProgress || dryRunInProgress}
                 data-testid="button-strategy-overwrite"
                 className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-colors disabled:opacity-50 ${restoreStrategy === "overwrite" ? "border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-900/30 ring-1 ring-red-400 dark:ring-red-600" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-red-300 dark:hover:border-red-700"}`}
@@ -6517,7 +6524,6 @@ export default function AdminDashboardPage() {
                 setDryRunResult(null);
                 setParsedTables(null);
                 setSelectedTables(new Set());
-                setExcludedSchemaTables(new Set());
                 setRestoreStrategy("merge");
               }}
             >
@@ -6548,7 +6554,6 @@ export default function AdminDashboardPage() {
                     setDryRunResult(null);
                     setParsedTables(null);
                     setSelectedTables(new Set());
-                    setExcludedSchemaTables(new Set());
                     if (f) {
                       try {
                         const text = await f.text();
@@ -6657,7 +6662,6 @@ export default function AdminDashboardPage() {
                                 setDryRunResult(null);
                                 setParsedTables(null);
                                 setSelectedTables(new Set());
-                                setExcludedSchemaTables(new Set());
                               }}
                               disabled={restoreInProgress}
                               className="flex-shrink-0"
@@ -6846,6 +6850,26 @@ export default function AdminDashboardPage() {
               </div>
             )}
 
+            {/* Saved exclusions global indicator — visible when exclusions are saved but the schema-adjustments panel isn't shown */}
+            {excludedSchemaTables.size > 0 && !(dryRunResult?.mode === "lenient" && Array.isArray(dryRunResult?.schemaAdjustments) && dryRunResult.schemaAdjustments.length > 0) && (
+              <div className="flex items-center gap-1.5 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 px-2 py-1.5" data-testid="saved-exclusions-global-indicator">
+                <span className="text-[9px] text-slate-600 dark:text-slate-400">
+                  {excludedSchemaTables.size} saved exclusion{excludedSchemaTables.size !== 1 ? "s" : ""} remembered from previous session
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExcludedSchemaTables(new Set());
+                    try { localStorage.removeItem(EXCLUDED_SCHEMA_TABLES_KEY); } catch {}
+                  }}
+                  className="text-[9px] text-slate-500 dark:text-slate-400 underline hover:text-slate-700 dark:hover:text-slate-200 ml-auto whitespace-nowrap"
+                  data-testid="button-clear-saved-exclusions-global"
+                >
+                  Clear saved
+                </button>
+              </div>
+            )}
+
             {/* Dry-run preview result */}
             {dryRunResult && (
               <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-900/20 p-3 space-y-2" data-testid="dry-run-result">
@@ -6887,57 +6911,81 @@ export default function AdminDashboardPage() {
                     </p>
                   </div>
                 )}
-                {dryRunResult.mode === "lenient" && Array.isArray(dryRunResult.schemaAdjustments) && dryRunResult.schemaAdjustments.length > 0 && (
-                  <div className="rounded border border-orange-200 dark:border-orange-700 bg-orange-50/60 dark:bg-orange-900/20 p-2 space-y-2" data-testid="dry-run-schema-adjustments">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-[10px] font-semibold text-orange-800 dark:text-orange-300 flex items-center gap-1">
-                        <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                        Schema differences detected on {dryRunResult.schemaAdjustments.length} table{dryRunResult.schemaAdjustments.length !== 1 ? "s" : ""} — uncheck to skip a table from restore:
-                      </p>
-                      {excludedSchemaTables.size > 0 && (
-                        <span className="text-[9px] font-semibold text-red-600 dark:text-red-400 whitespace-nowrap" data-testid="excluded-schema-tables-count">
-                          {excludedSchemaTables.size} skipped
-                        </span>
+                {dryRunResult.mode === "lenient" && Array.isArray(dryRunResult.schemaAdjustments) && dryRunResult.schemaAdjustments.length > 0 && (() => {
+                  const adjTableNames = new Set(dryRunResult.schemaAdjustments.map((a) => a.table));
+                  const effectiveSkipped = new Set(Array.from(excludedSchemaTables).filter((t) => adjTableNames.has(t)));
+                  return (
+                    <div className="rounded border border-orange-200 dark:border-orange-700 bg-orange-50/60 dark:bg-orange-900/20 p-2 space-y-2" data-testid="dry-run-schema-adjustments">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-[10px] font-semibold text-orange-800 dark:text-orange-300 flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                          Schema differences detected on {dryRunResult.schemaAdjustments.length} table{dryRunResult.schemaAdjustments.length !== 1 ? "s" : ""} — uncheck to skip a table from restore:
+                        </p>
+                        {excludedSchemaTables.size > 0 && (
+                          <span className="flex items-center gap-1.5 whitespace-nowrap">
+                            <span className="text-[9px] font-semibold text-red-600 dark:text-red-400" data-testid="excluded-schema-tables-count">
+                              {effectiveSkipped.size} skipped
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setExcludedSchemaTables(new Set());
+                                try { localStorage.removeItem(EXCLUDED_SCHEMA_TABLES_KEY); } catch {}
+                              }}
+                              className="text-[9px] text-slate-500 dark:text-slate-400 underline hover:text-slate-700 dark:hover:text-slate-200"
+                              data-testid="button-clear-saved-exclusions"
+                            >
+                              Clear saved
+                            </button>
+                          </span>
+                        )}
+                      </div>
+                      <ul className="space-y-1">
+                        {dryRunResult.schemaAdjustments.map((adj) => {
+                          const isExcluded = excludedSchemaTables.has(adj.table);
+                          return (
+                            <li key={adj.table} className="flex items-start gap-1.5" data-testid={`dry-run-schema-adj-${adj.table}`}>
+                              <input
+                                type="checkbox"
+                                checked={!isExcluded}
+                                onChange={(e) => {
+                                  setExcludedSchemaTables((prev) => {
+                                    const next = new Set(prev);
+                                    if (e.target.checked) next.delete(adj.table);
+                                    else next.add(adj.table);
+                                    try {
+                                      if (next.size > 0) {
+                                        localStorage.setItem(EXCLUDED_SCHEMA_TABLES_KEY, JSON.stringify(Array.from(next)));
+                                      } else {
+                                        localStorage.removeItem(EXCLUDED_SCHEMA_TABLES_KEY);
+                                      }
+                                    } catch {}
+                                    return next;
+                                  });
+                                }}
+                                className="mt-0.5 flex-shrink-0 accent-orange-600"
+                                data-testid={`checkbox-schema-adj-${adj.table}`}
+                                id={`schema-adj-${adj.table}`}
+                              />
+                              <label htmlFor={`schema-adj-${adj.table}`} className={`text-[9px] cursor-pointer ${isExcluded ? "line-through opacity-50" : ""}`}>
+                                <span className="font-mono font-semibold text-orange-800 dark:text-orange-200">{adj.table}</span>
+                                {adj.stripped.length > 0 && <span className="ml-1 text-orange-600 dark:text-orange-400">dropped: {adj.stripped.join(", ")}</span>}
+                                {adj.injected.length > 0 && <span className="ml-1 text-purple-600 dark:text-purple-400">NULL-filled: {adj.injected.join(", ")}</span>}
+                                {adj.unrecoverable.length > 0 && <span className="ml-1 text-red-600 dark:text-red-400">unrecoverable (rows will be skipped): {adj.unrecoverable.join(", ")}</span>}
+                              </label>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      {effectiveSkipped.size > 0 && (
+                        <p className="text-[9px] text-red-700 dark:text-red-400 flex items-center gap-1" data-testid="excluded-schema-tables-note">
+                          <AlertTriangle className="w-2.5 h-2.5 flex-shrink-0" />
+                          {effectiveSkipped.size} table{effectiveSkipped.size !== 1 ? "s" : ""} will be skipped from the restore. Re-run the preview to see the updated table list without these tables.
+                        </p>
                       )}
                     </div>
-                    <ul className="space-y-1">
-                      {dryRunResult.schemaAdjustments.map((adj) => {
-                        const isExcluded = excludedSchemaTables.has(adj.table);
-                        return (
-                          <li key={adj.table} className="flex items-start gap-1.5" data-testid={`dry-run-schema-adj-${adj.table}`}>
-                            <input
-                              type="checkbox"
-                              checked={!isExcluded}
-                              onChange={(e) => {
-                                setExcludedSchemaTables((prev) => {
-                                  const next = new Set(prev);
-                                  if (e.target.checked) next.delete(adj.table);
-                                  else next.add(adj.table);
-                                  return next;
-                                });
-                              }}
-                              className="mt-0.5 flex-shrink-0 accent-orange-600"
-                              data-testid={`checkbox-schema-adj-${adj.table}`}
-                              id={`schema-adj-${adj.table}`}
-                            />
-                            <label htmlFor={`schema-adj-${adj.table}`} className={`text-[9px] cursor-pointer ${isExcluded ? "line-through opacity-50" : ""}`}>
-                              <span className="font-mono font-semibold text-orange-800 dark:text-orange-200">{adj.table}</span>
-                              {adj.stripped.length > 0 && <span className="ml-1 text-orange-600 dark:text-orange-400">dropped: {adj.stripped.join(", ")}</span>}
-                              {adj.injected.length > 0 && <span className="ml-1 text-purple-600 dark:text-purple-400">NULL-filled: {adj.injected.join(", ")}</span>}
-                              {adj.unrecoverable.length > 0 && <span className="ml-1 text-red-600 dark:text-red-400">unrecoverable (rows will be skipped): {adj.unrecoverable.join(", ")}</span>}
-                            </label>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                    {excludedSchemaTables.size > 0 && (
-                      <p className="text-[9px] text-red-700 dark:text-red-400 flex items-center gap-1" data-testid="excluded-schema-tables-note">
-                        <AlertTriangle className="w-2.5 h-2.5 flex-shrink-0" />
-                        {excludedSchemaTables.size} table{excludedSchemaTables.size !== 1 ? "s" : ""} will be skipped from the restore. Re-run the preview to see the updated table list without these tables.
-                      </p>
-                    )}
-                  </div>
-                )}
+                  );
+                })()}
                 {dryRunResult.unknownStatements.length > 0 && (
                   <div className="space-y-1" data-testid="dry-run-unknown-statements">
                     <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1">
