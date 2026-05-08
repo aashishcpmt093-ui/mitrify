@@ -3557,7 +3557,7 @@ export default function AdminDashboardPage() {
                       const res = await fetch("/api/admin/repair-provider-names", { method: "POST", credentials: "include" });
                       const d = await res.json();
                       if (!res.ok) throw new Error(d.message || "Repair failed");
-                      toast({ title: `✅ ${d.profilesFixed} profiles + ${d.pendingFixed} pending records fix ho gaye (total: ${d.total})` });
+                      toast({ title: `✅ ${d.profilesFixed} profiles, ${d.descriptionsFixed} descriptions, ${d.pendingFixed} pending fix ho gaye (total: ${d.total})` });
                     } catch (err: any) {
                       toast({ title: err.message || "Repair failed", variant: "destructive" });
                     }

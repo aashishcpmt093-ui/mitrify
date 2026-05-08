@@ -2801,47 +2801,93 @@ export async function registerRoutes(
     }
   });
 
-  // One-time repair: strip pipe-separated suffixes from ALL profiles.name
-  // Safe to run multiple times — only touches rows where name contains '|'.
-  // Also repairs pending_providers rows that haven't been approved yet.
+  // One-time repair: strip pipe-separated (and " - " descriptor) suffixes from
+  // import-affected provider profiles, approved provider descriptions, and
+  // pending_providers rows. Safe to run multiple times (idempotent).
+  // Scope: only users who have a row in `providers` (approved/import-affected),
+  // NOT all profiles globally (preserves manually-created user names).
   app.post("/api/admin/repair-provider-names", adminCheck, async (_req, res) => {
     try {
       const { sql: sqlExpr } = await import("drizzle-orm");
 
-      // 1. Fix profiles table (affects ALL users — customer + provider roles)
+      // Helper: same logic as server/lib/cleanName.ts cleanBusinessName()
+      function repairName(raw: string): string {
+        if (!raw.includes("|")) return raw.trim();
+        const firstSegment = raw.split("|")[0].trim();
+        const dashParts = firstSegment.split(" - ");
+        return (dashParts[0].trim() || firstSegment) || raw.trim();
+      }
+      // Helper: same logic as extractDescriptionSuffix()
+      function repairSuffix(raw: string): string {
+        if (!raw.includes("|")) return "";
+        const parts = raw.split("|").map((s: string) => s.trim()).filter(Boolean);
+        const firstExtra = parts[0].split(" - ").slice(1).join(" - ").trim();
+        const rest = parts.slice(1).join(" | ");
+        return [firstExtra, rest].filter(Boolean).join(" | ");
+      }
+      function mergDesc(existing: string | null, suffix: string): string | null {
+        if (!suffix) return existing;
+        if (!existing) return suffix;
+        if (existing.includes(suffix)) return existing;
+        return `${existing} | ${suffix}`;
+      }
+
+      // 1. Fix profiles table — scoped to users who have an approved provider record
       const profileRows = await db.execute(sqlExpr`
-        SELECT id, name FROM profiles WHERE name LIKE '%|%'
+        SELECT p.id, p.name
+        FROM profiles p
+        INNER JOIN providers pr ON pr.user_id = p.user_id
+        WHERE p.name LIKE '%|%'
       `);
       let profilesFixed = 0;
       for (const row of profileRows.rows as Array<{ id: number; name: string }>) {
-        const clean = row.name.split("|")[0].trim();
+        const clean = repairName(row.name);
         if (clean && clean !== row.name) {
           await db.execute(sqlExpr`UPDATE profiles SET name = ${clean} WHERE id = ${row.id}`);
           profilesFixed++;
         }
       }
 
-      // 2. Fix pending_providers table (not yet approved)
+      // 2. Fix providers.description for approved providers whose name had extra info
+      //    (backfill only when description is currently NULL or empty)
+      const providerRows = await db.execute(sqlExpr`
+        SELECT pr.user_id, p.name, pr.description
+        FROM providers pr
+        INNER JOIN profiles p ON p.user_id = pr.user_id
+        WHERE p.name LIKE '%|%' OR (p.name NOT LIKE '%|%' AND pr.description IS NULL AND p.name LIKE '% - % %')
+      `);
+      let descriptionsFixed = 0;
+      for (const row of providerRows.rows as Array<{ user_id: string; name: string; description: string | null }>) {
+        const suffix = repairSuffix(row.name);
+        if (!suffix) continue;
+        const newDesc = mergDesc(row.description, suffix);
+        if (newDesc !== row.description) {
+          await db.execute(sqlExpr`
+            UPDATE providers SET description = ${newDesc} WHERE user_id = ${row.user_id}
+          `);
+          descriptionsFixed++;
+        }
+      }
+
+      // 3. Fix pending_providers rows (not yet approved)
       const ppRows = await db.execute(sqlExpr`
         SELECT id, name, description FROM pending_providers WHERE name LIKE '%|%'
       `);
       let pendingFixed = 0;
       for (const row of ppRows.rows as Array<{ id: number; name: string; description: string | null }>) {
-        const parts = row.name.split("|").map((s: string) => s.trim()).filter(Boolean);
-        const cleanName = parts[0] || row.name;
-        const suffix = parts.slice(1).join(" | ");
-        const newDesc = suffix
-          ? (row.description ? (row.description.includes(suffix) ? row.description : `${row.description} | ${suffix}`) : suffix)
-          : row.description;
+        const cleanName = repairName(row.name);
+        const suffix = repairSuffix(row.name);
+        const newDesc = mergDesc(row.description, suffix);
         if (cleanName !== row.name) {
           await db.execute(sqlExpr`
-            UPDATE pending_providers SET name = ${cleanName}, description = ${newDesc} WHERE id = ${row.id}
+            UPDATE pending_providers SET name = ${cleanName}, description = ${newDesc}
+            WHERE id = ${row.id}
           `);
           pendingFixed++;
         }
       }
 
-      res.json({ ok: true, profilesFixed, pendingFixed, total: profilesFixed + pendingFixed });
+      res.json({ ok: true, profilesFixed, descriptionsFixed, pendingFixed, total: profilesFixed + descriptionsFixed + pendingFixed });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Repair failed" });
     }
