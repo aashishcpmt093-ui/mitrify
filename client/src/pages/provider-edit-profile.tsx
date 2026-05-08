@@ -8,7 +8,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ArrowLeft, Save, Loader2, Wrench, X, Plus, Phone, Camera, User, EyeOff, Eye, Lock } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import ChangeCredentialsDialog from "@/components/ChangeCredentialsDialog";
@@ -105,10 +105,24 @@ export default function ProviderEditProfilePage() {
       setAddress(provider.address || "");
       setLat(provider.latitude ?? null);
       setLng(provider.longitude ?? null);
-      const existingNums = provider.mobileNumbers || [];
-      setMobileNumbers(existingNums.length > 0 ? existingNums : (profile?.mobile ? [profile.mobile] : []));
+      setMobileNumbers(provider.mobileNumbers || []);
       setProfilePhoto(provider.profilePhoto || null);
       setIsHidden(provider.isHidden || false);
+    }
+  }, [provider]);
+
+  // One-shot prefill: if contact numbers are empty after initial load but the
+  // primary mobile exists, pre-fill so the warning doesn't show unnecessarily.
+  // A ref prevents this from re-running on every subsequent profile refetch,
+  // which would wipe any unsaved edits the provider made to the contact list.
+  const mobilePreFilled = useRef(false);
+  useEffect(() => {
+    if (mobilePreFilled.current) return;
+    if (provider && profile) {
+      mobilePreFilled.current = true;
+      if ((provider.mobileNumbers || []).length === 0 && profile.mobile) {
+        setMobileNumbers([profile.mobile]);
+      }
     }
   }, [provider, profile]);
 
