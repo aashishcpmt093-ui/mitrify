@@ -854,7 +854,7 @@ export default function CustomerHomePage() {
       {jobMenuOpen && !showPostJob && !showFindJob && (
         <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="job-menu">
           <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => setJobMenuOpen(false)} />
-          <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 animate-in slide-in-from-bottom duration-300">
+          <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 animate-in slide-in-from-bottom duration-300 pointer-events-auto">
             <div className="flex justify-center pt-3 pb-2">
               <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
             </div>
@@ -914,7 +914,7 @@ export default function CustomerHomePage() {
       {jobMenuOpen && showPostJob && postJobMethod === "choice" && (
         <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="post-job-choice-modal">
           <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => setShowPostJob(false)} />
-          <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 animate-in slide-in-from-bottom duration-300">
+          <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 animate-in slide-in-from-bottom duration-300 pointer-events-auto">
             <div className="flex justify-center pt-3 pb-2">
               <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
             </div>
@@ -963,7 +963,7 @@ export default function CustomerHomePage() {
       {jobMenuOpen && showPostJob && postJobMethod === "google_form" && (
         <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="post-job-google-form-modal">
           <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => { setShowPostJob(false); setJobMenuOpen(false); }} />
-          <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[92vh] overflow-y-auto animate-in slide-in-from-bottom duration-300">
+          <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[92vh] overflow-y-auto animate-in slide-in-from-bottom duration-300 pointer-events-auto">
             <div className="flex justify-center pt-3 pb-2">
               <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
             </div>
@@ -1052,7 +1052,7 @@ export default function CustomerHomePage() {
       {jobMenuOpen && showPostJob && postJobMethod === "mitrify" && (
         <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="post-job-modal">
           <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => { setShowPostJob(false); setJobMenuOpen(false); }} />
-          <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[92vh] overflow-y-auto animate-in slide-in-from-bottom duration-300">
+          <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[92vh] overflow-y-auto animate-in slide-in-from-bottom duration-300 pointer-events-auto">
             <div className="flex justify-center pt-3 pb-2">
               <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
             </div>
@@ -1159,7 +1159,7 @@ export default function CustomerHomePage() {
       {jobMenuOpen && showFindJob && (
         <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="find-jobs-modal">
           <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => { setShowFindJob(false); setJobMenuOpen(false); }} />
-          <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[92vh] flex flex-col animate-in slide-in-from-bottom duration-300">
+          <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[92vh] flex flex-col animate-in slide-in-from-bottom duration-300 pointer-events-auto">
             <div className="flex justify-center pt-3 pb-2 shrink-0">
               <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
             </div>
@@ -1295,7 +1295,7 @@ export default function CustomerHomePage() {
       {jobMenuOpen && showMyPosts && (
         <div className="fixed inset-0 z-50 flex items-end justify-center pointer-events-none" data-testid="my-posts-modal">
           <div className="absolute inset-0 bg-black/40 pointer-events-auto" onClick={() => { setShowMyPosts(false); setJobMenuOpen(false); }} />
-          <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[92vh] flex flex-col animate-in slide-in-from-bottom duration-300">
+          <div className="relative w-full max-w-md bg-card rounded-t-2xl shadow-2xl pb-8 max-h-[92vh] flex flex-col animate-in slide-in-from-bottom duration-300 pointer-events-auto">
             <div className="flex justify-center pt-3 pb-2 shrink-0">
               <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
             </div>
