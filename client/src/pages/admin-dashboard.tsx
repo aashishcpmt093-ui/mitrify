@@ -924,7 +924,7 @@ export default function AdminDashboardPage() {
     mode: "merge" | "overwrite" | "lenient";
     skippedCount?: number;
     skippedSamples?: string[];
-    schemaAdjustments?: Array<{ table: string; stripped: string[]; injected: string[] }>;
+    schemaAdjustments?: Array<{ table: string; stripped: string[]; injected: string[]; unrecoverable: string[] }>;
     rowMismatches: Array<{ table: string; expected: number; actual: number; diff: number }>;
   } | null>(null);
   const [parsedTables, setParsedTables] = useState<Array<{ name: string; rowCount: number }> | null>(null);
@@ -6907,6 +6907,7 @@ export default function AdminDashboardPage() {
                             <span className="font-mono font-semibold">{adj.table}</span>
                             {adj.stripped.length > 0 && <span className="ml-1 text-orange-600 dark:text-orange-400">dropped: {adj.stripped.join(", ")}</span>}
                             {adj.injected.length > 0 && <span className="ml-1 text-purple-600 dark:text-purple-400">NULL-filled: {adj.injected.join(", ")}</span>}
+                            {adj.unrecoverable && adj.unrecoverable.length > 0 && <span className="ml-1 text-red-600 dark:text-red-400">unrecoverable: {adj.unrecoverable.join(", ")}</span>}
                           </li>
                         ))}
                       </ul>

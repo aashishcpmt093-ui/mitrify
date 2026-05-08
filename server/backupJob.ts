@@ -402,7 +402,7 @@ export interface RestoreResult {
    *  count by more than RESTORE_MISMATCH_THRESHOLD. Empty array = clean restore. */
   rowMismatches: RestoreMismatch[];
   /** Lenient mode only: tables where column lists were adjusted to match live schema. */
-  schemaAdjustments?: Array<{ table: string; stripped: string[]; injected: string[] }>;
+  schemaAdjustments?: Array<{ table: string; stripped: string[]; injected: string[]; unrecoverable: string[] }>;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -500,25 +500,39 @@ function parseInsertStatement(stmt: string): ParsedInsert | null {
 /**
  * Rewrite an INSERT statement so its column list matches the live schema.
  * - Columns in the dump that no longer exist in the live schema are dropped.
- * - Columns required by the live schema (NOT NULL, no default) that are absent
- *   from the dump are injected as NULL so the row can still be inserted.
+ * - Nullable columns missing from the dump are injected as NULL (safe).
+ * - Columns with a server-side default that are missing from the dump are
+ *   omitted entirely so Postgres fills them automatically (safe).
+ * - NOT NULL / no-default columns missing from the dump are also omitted;
+ *   the INSERT will still fail with a constraint error — those rows are
+ *   unrecoverable and reported separately rather than silently corrupted.
  * Returns null when no rewrite is needed.
  */
 function rewriteInsertForSchema(
   stmt: string,
   liveCols: LiveColInfo[],
-): { rewritten: string; stripped: string[]; injected: string[] } | null {
+): { rewritten: string; stripped: string[]; injected: string[]; unrecoverable: string[] } | null {
   const parsed = parseInsertStatement(stmt);
   if (!parsed) return null;
 
   const liveColNames = new Set(liveCols.map((c) => c.name));
   const dumpColNames = new Set(parsed.cols);
 
+  // Columns in the dump that no longer exist in live schema → strip them.
   const stripped = parsed.cols.filter((c) => !liveColNames.has(c));
-  const injected = liveCols.filter(
-    (c) => !dumpColNames.has(c.name) && !c.isNullable && !c.hasDefault,
-  ).map((c) => c.name);
 
+  // Live columns not in the dump, split by recoverability:
+  // - nullable or has a server-side default → safe to omit (Postgres fills) or inject NULL
+  // - NOT NULL and no default → NULL injection would violate the constraint; unrecoverable per row.
+  const missingFromDump = liveCols.filter((c) => !dumpColNames.has(c.name));
+  const injected = missingFromDump
+    .filter((c) => c.isNullable && !c.hasDefault)
+    .map((c) => c.name);
+  const unrecoverable = missingFromDump
+    .filter((c) => !c.isNullable && !c.hasDefault)
+    .map((c) => c.name);
+
+  // Only rewrite when something actually changes in the column list.
   if (stripped.length === 0 && injected.length === 0) return null;
 
   const values = splitSqlValues(parsed.valuesExpr);
@@ -533,19 +547,23 @@ function rewriteInsertForSchema(
   const newVals: string[] = [];
   for (const lc of liveCols) {
     if (dumpValMap[lc.name] !== undefined) {
+      // Column present in both dump and live schema → keep as-is.
       newCols.push(`"${lc.name}"`);
       newVals.push(dumpValMap[lc.name]);
-    } else if (!lc.hasDefault) {
+    } else if (lc.isNullable && !lc.hasDefault) {
+      // Nullable column missing from dump → inject NULL safely.
       newCols.push(`"${lc.name}"`);
       newVals.push("NULL");
     }
-    // Has a server-side default → omit so Postgres fills it automatically
+    // Has a server-side default → omit; Postgres fills it automatically.
+    // NOT NULL / no-default (unrecoverable) → also omit; the INSERT will still
+    // fail with a constraint error, which lenient mode catches per-row.
   }
 
   if (newCols.length === 0) return null;
 
   const rewritten = `INSERT INTO "${parsed.table}" (${newCols.join(", ")}) VALUES (${newVals.join(", ")})${parsed.suffix}`;
-  return { rewritten, stripped, injected };
+  return { rewritten, stripped, injected, unrecoverable };
 }
 
 /**
@@ -851,7 +869,7 @@ export async function restoreFromSql(
   // ── Lenient mode: statement-by-statement, best-effort, no wrapping transaction ──
   let lenientSkippedCount = 0;
   const lenientSkippedSamples: string[] = [];
-  const lenientSchemaAdjustments: Array<{ table: string; stripped: string[]; injected: string[] }> = [];
+  const lenientSchemaAdjustments: Array<{ table: string; stripped: string[]; injected: string[]; unrecoverable: string[] }> = [];
 
   if (mode === "lenient") {
     // Pre-load live schema for all tables that appear in the dump.
@@ -922,11 +940,13 @@ export async function restoreFromSql(
                   table: parsed.table,
                   stripped: rewriteResult.stripped,
                   injected: rewriteResult.injected,
+                  unrecoverable: rewriteResult.unrecoverable,
                 });
                 console.log(
                   `[restore/lenient] Schema-adjusted INSERT for table "${parsed.table}":`,
                   `stripped=[${rewriteResult.stripped.join(",")}]`,
                   `injected=[${rewriteResult.injected.join(",")}]`,
+                  `unrecoverable=[${rewriteResult.unrecoverable.join(",")}]`,
                 );
               }
             }
