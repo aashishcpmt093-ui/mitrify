@@ -105,11 +105,12 @@ export default function ProviderEditProfilePage() {
       setAddress(provider.address || "");
       setLat(provider.latitude ?? null);
       setLng(provider.longitude ?? null);
-      setMobileNumbers(provider.mobileNumbers || []);
+      const existingNums = provider.mobileNumbers || [];
+      setMobileNumbers(existingNums.length > 0 ? existingNums : (profile?.mobile ? [profile.mobile] : []));
       setProfilePhoto(provider.profilePhoto || null);
       setIsHidden(provider.isHidden || false);
     }
-  }, [provider]);
+  }, [provider, profile]);
 
   const handleUseCurrentLocation = () => {
     if (!navigator.geolocation) {
