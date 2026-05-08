@@ -6834,6 +6834,19 @@ export default function AdminDashboardPage() {
                       )}
                     </p>
                   </div>
+                  {isLenient && Array.isArray(restoreSummary.skippedSamples) && restoreSummary.skippedSamples.length > 0 && (
+                    <div className="rounded border border-amber-200 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-900/20 p-2 space-y-1" data-testid="restore-skipped-samples">
+                      <p className="text-[10px] font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                        Skipped statements (first {restoreSummary.skippedSamples.length}):
+                      </p>
+                      <ul className="space-y-0.5">
+                        {restoreSummary.skippedSamples.map((s, i) => (
+                          <li key={i} className="font-mono text-[9px] text-amber-700 dark:text-amber-400 truncate" data-testid={`restore-skipped-sample-${i}`}>{s}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   <div className="max-h-48 overflow-y-auto rounded border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-slate-900">
                     <table className="w-full text-[11px]">
                       <thead className="bg-emerald-100/60 dark:bg-emerald-900/30 sticky top-0">

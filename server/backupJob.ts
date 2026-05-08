@@ -677,7 +677,8 @@ export async function restoreFromSql(
           lenientSkippedCount++;
           const errMsg = stmtErr instanceof Error ? stmtErr.message : String(stmtErr);
           if (lenientSkippedSamples.length < 5) {
-            lenientSkippedSamples.push(`${errMsg.slice(0, 120)} — [sql truncated]`);
+            const sqlSnippet = stmt.slice(0, 80).replace(/\s+/g, " ");
+            lenientSkippedSamples.push(`${errMsg.slice(0, 120)} | SQL: ${sqlSnippet}…`);
           }
           console.warn("[restore/lenient] Skipped statement:", errMsg.slice(0, 200));
         }
