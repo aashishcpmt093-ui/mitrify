@@ -43,40 +43,50 @@ function useServerReady() {
   return { ready, timedOut };
 }
 
-function ConnectingOverlay({ timedOut }: { timedOut: boolean }) {
+function ServerWakingBanner() {
+  const { ready, timedOut } = useServerReady();
+  const [dismissed, setDismissed] = useState(false);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (ready === null) {
+      const t = setTimeout(() => setVisible(true), 800);
+      return () => clearTimeout(t);
+    }
+    if (ready === true) {
+      setVisible(false);
+      const t = setTimeout(() => setDismissed(true), 400);
+      return () => clearTimeout(t);
+    }
+  }, [ready]);
+
+  if (dismissed) return null;
+
   return (
-    <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-background">
-      <div className="flex flex-col items-center gap-6 px-8 text-center">
-        <div className="relative w-16 h-16">
-          <div className="absolute inset-0 rounded-full border-4 border-primary/20" />
-          <div className="absolute inset-0 rounded-full border-4 border-t-primary animate-spin" />
+    <div
+      className="fixed top-0 left-0 right-0 z-[9999] transition-transform duration-300 ease-out"
+      style={{ transform: visible ? "translateY(0)" : "translateY(-110%)" }}
+      data-testid="banner-server-waking"
+    >
+      {timedOut ? (
+        <div className="flex items-center justify-between gap-3 bg-destructive text-destructive-foreground px-4 py-2.5 text-sm font-medium shadow-md">
+          <span>सर्वर से जुड़ नहीं पाए — Server unreachable</span>
+          <button
+            className="shrink-0 px-3 py-1 rounded bg-white/20 hover:bg-white/30 text-xs font-semibold transition-colors"
+            onClick={() => window.location.reload()}
+            data-testid="button-banner-refresh"
+          >
+            Refresh
+          </button>
         </div>
-        {timedOut ? (
-          <>
-            <p className="text-lg font-semibold text-foreground">सर्वर से जुड़ नहीं पाए</p>
-            <p className="text-sm text-muted-foreground">कृपया पेज रिफ्रेश करें</p>
-            <button
-              className="mt-2 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium"
-              onClick={() => window.location.reload()}
-            >
-              Refresh
-            </button>
-          </>
-        ) : (
-          <>
-            <p className="text-lg font-semibold text-foreground">सर्वर शुरू हो रहा है…</p>
-            <p className="text-sm text-muted-foreground">कृपया प्रतीक्षा करें — Connecting…</p>
-          </>
-        )}
-      </div>
+      ) : (
+        <div className="flex items-center gap-3 bg-amber-500 text-white px-4 py-2 text-sm font-medium shadow-md">
+          <div className="w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin shrink-0" />
+          <span>सर्वर शुरू हो रहा है… Connecting</span>
+        </div>
+      )}
     </div>
   );
-}
-
-function ServerGate({ children }: { children: ReactNode }) {
-  const { ready, timedOut } = useServerReady();
-  if (ready) return <>{children}</>;
-  return <ConnectingOverlay timedOut={timedOut} />;
 }
 
 class AdminErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -378,10 +388,9 @@ function App() {
         <ThemeProvider>
           <TooltipProvider>
             <Toaster />
-            <ServerGate>
-              <Router />
-              <VisitorCounter />
-            </ServerGate>
+            <ServerWakingBanner />
+            <Router />
+            <VisitorCounter />
           </TooltipProvider>
         </ThemeProvider>
       </LanguageProvider>
