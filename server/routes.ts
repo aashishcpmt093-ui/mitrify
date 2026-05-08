@@ -349,6 +349,20 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/search/location", isLocalAuthenticated, async (req, res) => {
+    try {
+      const latitude = Number(req.body?.latitude);
+      const longitude = Number(req.body?.longitude);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        return res.status(400).json({ message: "Valid latitude and longitude required" });
+      }
+      (req.session as any).lastSearchLocation = { latitude, longitude };
+      req.session.save(() => res.json({ success: true }));
+    } catch {
+      res.status(500).json({ message: "Failed to save location" });
+    }
+  });
+
   // --- Password Reset via OTP ---
   app.post("/api/local/reset-password-firebase", async (req, res) => {
     try {

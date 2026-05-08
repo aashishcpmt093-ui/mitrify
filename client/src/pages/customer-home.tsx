@@ -471,6 +471,11 @@ export default function CustomerHomePage() {
       setSearching(false);
     } else {
       try { await apiRequest("POST", "/api/search/track", { query: q }); } catch {}
+      if (activeLat != null && activeLng != null) {
+        try {
+          await apiRequest("POST", "/api/search/location", { latitude: activeLat, longitude: activeLng });
+        } catch {}
+      }
       setSearching(true);
       setPhoneSearching(false);
       refetch();

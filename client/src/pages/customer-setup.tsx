@@ -159,10 +159,8 @@ export default function CustomerSetupPage() {
         mobile: mobileNumbers[0] || null,
         role: "customer",
       };
-      if (gpsLat !== null && gpsLng !== null) {
-        profileData.latitude = gpsLat;
-        profileData.longitude = gpsLng;
-      }
+      profileData.latitude = gpsLat;
+      profileData.longitude = gpsLng;
       await apiRequest("POST", "/api/profiles", profileData);
 
       if (promoInput.trim()) {

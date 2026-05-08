@@ -30,6 +30,9 @@ export default function ProviderEditProfilePage() {
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
   const [photoLoading, setPhotoLoading] = useState(false);
   const [isHidden, setIsHidden] = useState(false);
+  const [lat, setLat] = useState<number | null>(null);
+  const [lng, setLng] = useState<number | null>(null);
+  const [geoLoading, setGeoLoading] = useState(false);
   const [credsOpen, setCredsOpen] = useState(false);
 
   const addTag = () => {
@@ -100,11 +103,55 @@ export default function ProviderEditProfilePage() {
       setHashtags(provider.hashtags || []);
       setApproxCharge(provider.approxCharge || "");
       setAddress(provider.address || "");
+      setLat(provider.latitude ?? null);
+      setLng(provider.longitude ?? null);
       setMobileNumbers(provider.mobileNumbers || []);
       setProfilePhoto(provider.profilePhoto || null);
       setIsHidden(provider.isHidden || false);
     }
   }, [provider]);
+
+  const handleUseCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      toast({ title: "Location not supported", variant: "destructive" });
+      return;
+    }
+    setGeoLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLat(pos.coords.latitude);
+        setLng(pos.coords.longitude);
+        setGeoLoading(false);
+        toast({ title: "Location updated" });
+      },
+      () => {
+        setGeoLoading(false);
+        toast({ title: "Could not get location", variant: "destructive" });
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  };
+
+  const handleGeocodeAddress = async () => {
+    if (!address.trim()) {
+      toast({ title: "Enter address first", variant: "destructive" });
+      return;
+    }
+    setGeoLoading(true);
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1`);
+      const data = await res.json();
+      if (data?.[0]) {
+        setLat(parseFloat(data[0].lat));
+        setLng(parseFloat(data[0].lon));
+        toast({ title: "Location set from address" });
+      } else {
+        toast({ title: "Address not found", variant: "destructive" });
+      }
+    } finally {
+      setGeoLoading(false);
+    }
+  };
 
   const updateProfile = useMutation({
     mutationFn: async () => {
@@ -119,6 +166,8 @@ export default function ProviderEditProfilePage() {
         hashtags,
         approxCharge,
         address,
+        latitude: lat,
+        longitude: lng,
         mobileNumbers,
         profilePhoto,
         isHidden,
@@ -367,6 +416,20 @@ export default function ProviderEditProfilePage() {
                   placeholder="Enter your service area"
                   data-testid="input-edit-address"
                 />
+              </div>
+              <div className="space-y-2">
+                <Label>Live Location</Label>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={handleUseCurrentLocation} disabled={geoLoading} data-testid="button-use-current-location">
+                    {geoLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Use Current Location"}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={handleGeocodeAddress} disabled={geoLoading} data-testid="button-geocode-address">
+                    {geoLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Set From Address"}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground" data-testid="text-current-location">
+                  {lat && lng ? `Saved: ${lat.toFixed(4)}, ${lng.toFixed(4)}` : "No live location saved yet"}
+                </p>
               </div>
             </CardContent>
           </Card>
