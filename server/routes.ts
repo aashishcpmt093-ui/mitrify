@@ -2852,17 +2852,14 @@ export async function registerRoutes(
 
         // 2. Backfill providers.description when suffix exists and description
         //    is currently NULL or empty/whitespace
+        // Only backfill when description is currently NULL or empty/whitespace.
+        // Never append to a meaningful existing description during a one-time migration.
         if (suffix) {
           const currentDesc = row.provider_desc;
           const isMeaningless = !currentDesc || currentDesc.trim() === "";
-          const newDesc = isMeaningless
-            ? suffix
-            : currentDesc!.includes(suffix)
-              ? currentDesc
-              : `${currentDesc} | ${suffix}`;
-          if (newDesc !== currentDesc) {
+          if (isMeaningless) {
             await db.execute(sqlExpr`
-              UPDATE providers SET description = ${newDesc} WHERE user_id = ${row.provider_user_id}
+              UPDATE providers SET description = ${suffix} WHERE user_id = ${row.provider_user_id}
             `);
             descriptionsFixed++;
           }
@@ -2883,11 +2880,8 @@ export async function registerRoutes(
         const suffix = [firstExtra2, restParts2].filter(Boolean).join(" | ");
         const currentDesc = row.description;
         const isMeaningless = !currentDesc || currentDesc.trim() === "";
-        const newDesc = suffix
-          ? isMeaningless
-            ? suffix
-            : currentDesc!.includes(suffix) ? currentDesc : `${currentDesc} | ${suffix}`
-          : currentDesc;
+        // Only set suffix when description is currently NULL/empty — never append to meaningful content.
+        const newDesc = (suffix && isMeaningless) ? suffix : currentDesc;
         if (cleanName !== raw) {
           await db.execute(sqlExpr`
             UPDATE pending_providers SET name = ${cleanName}, description = ${newDesc}
