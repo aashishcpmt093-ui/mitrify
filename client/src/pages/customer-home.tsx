@@ -1824,7 +1824,7 @@ export default function CustomerHomePage() {
           </div>
         )}
 
-        {searching && !isLoading && suggestion && results.length === 0 && (
+        {searching && !isLoading && suggestion && results.length === 0 && googleResults.length === 0 && filteredSavedGoogleResults.length === 0 && (
           <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
             <p className="text-sm text-muted-foreground mb-2">Did you mean:</p>
             <button
@@ -2038,7 +2038,7 @@ export default function CustomerHomePage() {
               feel like a continuation of our own DB results. The bottom
               Google section already dedupes them by phone, so they
               won't appear twice. */}
-          {filteredSavedGoogleResults.map((g, i) => (
+          {results.length === 0 && filteredSavedGoogleResults.map((g, i) => (
             <Card
               key={`saved-google-${g.placeId || g.phone}-${i}`}
               className="overflow-hidden hover:shadow-lg transition-shadow duration-200 animate-slide-up"
@@ -2086,7 +2086,7 @@ export default function CustomerHomePage() {
               Hamesha apne results ke neeche dikhao. Sirf woh Google
               businesses jinme phone + location dono hain. Direct call
               link — koi credit nahi katega, koi masking nahi. */}
-          {searching && !isPureNumericQuery && googleLoading && googleResults.length === 0 && (
+          {searching && !isPureNumericQuery && results.length === 0 && googleLoading && googleResults.length === 0 && (
             <div className="space-y-3 pt-2">
               <div className="flex items-center gap-3 py-2" data-testid="separator-google-loading">
                 <div className="flex-1 h-px bg-border" />
@@ -2109,7 +2109,7 @@ export default function CustomerHomePage() {
               ))}
             </div>
           )}
-          {searching && !isPureNumericQuery && googleResults.length > 0 && (
+          {searching && !isPureNumericQuery && results.length === 0 && googleResults.length > 0 && (
             <div className="space-y-3 pt-2">
               <div className="flex items-center gap-3 py-2" data-testid="separator-google">
                 <div className="flex-1 h-px bg-border" />
