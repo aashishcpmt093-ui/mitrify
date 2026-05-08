@@ -14,6 +14,8 @@ import type { ReactNode, ErrorInfo } from "react";
 const POLL_INTERVAL_MS = 3000;
 const MAX_WAIT_MS = 60000;
 
+const SLOW_POLL_INTERVAL_MS = 8000;
+
 function useServerReady() {
   const [ready, setReady] = useState<boolean | null>(null);
   const [timedOut, setTimedOut] = useState(false);
@@ -28,12 +30,15 @@ function useServerReady() {
         return;
       }
     } catch {}
-    if (Date.now() - startRef.current >= MAX_WAIT_MS) {
+    const elapsed = Date.now() - startRef.current;
+    if (elapsed >= MAX_WAIT_MS && !timedOut) {
       setTimedOut(true);
-      return;
     }
-    timerRef.current = setTimeout(check, POLL_INTERVAL_MS);
-  }, []);
+    // After timeout, keep polling slowly so the banner auto-dismisses if
+    // the server eventually recovers (e.g. Railway dyno woke up late).
+    const nextInterval = elapsed >= MAX_WAIT_MS ? SLOW_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
+    timerRef.current = setTimeout(check, nextInterval);
+  }, [timedOut]);
 
   useEffect(() => {
     check();
