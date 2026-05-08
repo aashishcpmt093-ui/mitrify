@@ -1059,7 +1059,15 @@ export async function registerRoutes(
   app.get(api.admin.stats.path, adminCheck, async (req, res) => {
     try {
       const stats = await storage.getAdminStats();
-      res.json(stats);
+      const [providerCount, callLogs] = await Promise.all([
+        storage.getProfilesByRole("provider").catch(() => []),
+        storage.getAllCallLogs().catch(() => []),
+      ]);
+      res.json({
+        ...stats,
+        totalProviders: Math.max(stats.totalProviders || 0, providerCount.length || 0),
+        totalCalls: Math.max(stats.totalCalls || 0, callLogs.length || 0),
+      });
     } catch (error) {
       res.status(500).json({ message: "Internal error" });
     }
@@ -1077,7 +1085,7 @@ export async function registerRoutes(
   app.get(api.admin.providers.path, adminCheck, async (req, res) => {
     try {
       const providerProfiles = await storage.getProfilesByRole("provider");
-      const allProviders = await storage.getAllProviders();
+      const allProviders = await storage.getAllProviders().catch(() => []);
       const result = providerProfiles.map(p => {
         const providerData = allProviders.find(pr => pr.userId === p.userId);
         return { ...p, providerData };
@@ -1090,7 +1098,7 @@ export async function registerRoutes(
 
   app.get(api.admin.callLogs.path, adminCheck, async (req, res) => {
     try {
-      const logs = await storage.getAllCallLogs();
+      const logs = await storage.getAllCallLogs().catch(() => []);
       res.json(logs);
     } catch (error) {
       res.status(500).json({ message: "Internal error" });

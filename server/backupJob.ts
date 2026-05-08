@@ -798,7 +798,42 @@ async function writeStatus(status: BackupStatus): Promise<void> {
 }
 
 export async function getBackupStatus(): Promise<BackupStatus> {
-  return readStatus();
+  try {
+    const status = await readStatus();
+    if (!status.lastSuccess && status.history.length === 0) {
+      const files = fs.existsSync(BACKUPS_DIR)
+        ? fs.readdirSync(BACKUPS_DIR)
+            .filter((f) => f.startsWith("mitrify-backup-") && f.endsWith(".sql"))
+            .map((f) => ({ filename: f, size: fs.statSync(path.join(BACKUPS_DIR, f)).size, generatedAt: fs.statSync(path.join(BACKUPS_DIR, f)).mtime.toISOString() }))
+            .sort((a, b) => b.generatedAt.localeCompare(a.generatedAt))
+        : [];
+      if (files.length > 0) {
+        return {
+          lastSuccessAt: files[0].generatedAt,
+          lastSuccess: {
+            filename: files[0].filename,
+            size: files[0].size,
+            generatedAt: files[0].generatedAt,
+            emailed: false,
+            durationMs: 0,
+            alertSent: false,
+          },
+          lastError: null,
+          history: files.slice(0, RETENTION).map((f) => ({
+            filename: f.filename,
+            size: f.size,
+            generatedAt: f.generatedAt,
+            emailed: false,
+            durationMs: 0,
+            alertSent: false,
+          })),
+        };
+      }
+    }
+    return status;
+  } catch {
+    return { lastSuccessAt: null, lastSuccess: null, lastError: null, history: [] };
+  }
 }
 
 /**
