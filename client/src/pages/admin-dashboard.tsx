@@ -1311,8 +1311,8 @@ export default function AdminDashboardPage() {
   }, [activeTab, backupStatus, selectedStoredFilename, restoreFile, selectedGcsName]);
 
   const { data: stats } = useQuery<AdminStats>({ queryKey: ["/api/admin/stats"], enabled: !!isAdmin });
-  const { data: providersList } = useQuery<any[]>({ queryKey: ["/api/admin/providers"], enabled: !!isAdmin });
-  const { data: callLogs } = useQuery<CallLog[]>({ queryKey: ["/api/admin/call-logs"], enabled: !!isAdmin });
+  const { data: providersList, isError: providersError, refetch: refetchProviders } = useQuery<any[]>({ queryKey: ["/api/admin/providers"], enabled: !!isAdmin });
+  const { data: callLogs, isError: callLogsError, refetch: refetchCallLogs } = useQuery<CallLog[]>({ queryKey: ["/api/admin/call-logs"], enabled: !!isAdmin });
   const { data: allCredits } = useQuery<any[]>({ queryKey: ["/api/admin/all-credits"], enabled: !!isAdmin });
   const { data: duplicateData, isLoading: duplicatesLoading, refetch: refetchDuplicates } = useQuery<any[]>({
     queryKey: ["/api/admin/duplicate-profiles"],
@@ -1520,9 +1520,9 @@ export default function AdminDashboardPage() {
   });
 
   const filteredProviders = useMemo(() => {
-    if (!providersList || !allCredits) return providersList ?? [];
+    if (!providersList) return [];
     let list = providersList.map((p) => {
-      const cr = allCredits.find((x) => x.userId === p.userId && x.role === "user");
+      const cr = allCredits?.find((x: any) => x.userId === p.userId && x.role === "user");
       return { ...p, _credit: cr };
     });
     const q = provSearch.toLowerCase();
@@ -2751,13 +2751,23 @@ export default function AdminDashboardPage() {
                 </button>
               );
             })}
-            {filteredProviders.length === 0 && (
+            {providersError && (
+              <div className="text-center py-12 space-y-3">
+                <div className="w-16 h-16 rounded-3xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto">
+                  <Wrench className="w-8 h-8 text-red-500" />
+                </div>
+                <p className="font-semibold text-red-600 dark:text-red-400">Providers load nahi ho paya</p>
+                <p className="text-xs text-muted-foreground">Server se data fetch karne mein error aaya. Railway logs check karein.</p>
+                <Button size="sm" variant="outline" className="rounded-xl" onClick={() => refetchProviders()}>Retry</Button>
+              </div>
+            )}
+            {!providersError && filteredProviders.length === 0 && (
               <div className="text-center py-16">
                 <div className="w-16 h-16 rounded-3xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-3">
                   <Wrench className="w-8 h-8 text-slate-400 dark:text-slate-500" />
                 </div>
-                <p className="font-semibold text-slate-600 dark:text-slate-400">{provSearch || provFilter !== "all" ? "No results found" : "No providers yet"}</p>
-                <p className="text-xs text-muted-foreground mt-1">{provSearch || provFilter !== "all" ? "Try a different search or filter" : "Providers will appear here once they register"}</p>
+                <p className="font-semibold text-slate-600 dark:text-slate-400">{provSearch || provFilter !== "all" ? "No results found" : "Koi approved provider nahi hai"}</p>
+                <p className="text-xs text-muted-foreground mt-1">{provSearch || provFilter !== "all" ? "Try a different search or filter" : "Pending providers ko Verify Dashboard se approve karein"}</p>
               </div>
             )}
           </TabsContent>
@@ -2786,7 +2796,17 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
             ))}
-            {(!callLogs || callLogs.length === 0) && (
+            {callLogsError && (
+              <div className="text-center py-12 space-y-3">
+                <div className="w-16 h-16 rounded-3xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center mx-auto">
+                  <Phone className="w-8 h-8 text-red-500" />
+                </div>
+                <p className="font-semibold text-red-600 dark:text-red-400">Call logs load nahi ho paya</p>
+                <p className="text-xs text-muted-foreground">Server se data fetch karne mein error aaya. Railway logs check karein.</p>
+                <Button size="sm" variant="outline" className="rounded-xl" onClick={() => refetchCallLogs()}>Retry</Button>
+              </div>
+            )}
+            {!callLogsError && (!callLogs || callLogs.length === 0) && (
               <div className="text-center py-16">
                 <div className="w-16 h-16 rounded-3xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-3">
                   <Phone className="w-8 h-8 text-slate-400 dark:text-slate-500" />

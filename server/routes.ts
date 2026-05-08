@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { storage } from "./storage";
 import { db, pool } from "./db";
-import { profiles, siteContent, jobs, pendingProviders, insertJobSchema, GOOGLE_FORM_URL_REGEX, insertGooglePlacesRunSchema, type SubscriptionPlanConfig } from "@shared/schema";
+import { profiles, providers, calls, siteContent, jobs, pendingProviders, insertJobSchema, GOOGLE_FORM_URL_REGEX, insertGooglePlacesRunSchema, type SubscriptionPlanConfig } from "@shared/schema";
 import { api, buildUrl } from "@shared/routes";
 import { z } from "zod";
 import { eq, desc, count, and, inArray, gte } from "drizzle-orm";
@@ -1083,6 +1083,7 @@ export async function registerRoutes(
         totalCalls: Math.max(stats.totalCalls || 0, callLogs.length || 0),
       });
     } catch (error) {
+      console.error("[admin/stats]", error);
       res.status(500).json({ message: "Internal error" });
     }
   });
@@ -1092,6 +1093,7 @@ export async function registerRoutes(
       const customers = await storage.getProfilesByRole("customer");
       res.json(customers);
     } catch (error) {
+      console.error("[admin/customers]", error);
       res.status(500).json({ message: "Internal error" });
     }
   });
@@ -1106,16 +1108,39 @@ export async function registerRoutes(
       });
       res.json(result);
     } catch (error) {
-      res.status(500).json({ message: "Internal error" });
+      console.error("[admin/providers]", error);
+      res.status(500).json({ message: "Failed to fetch providers" });
     }
   });
 
   app.get(api.admin.callLogs.path, adminCheck, async (req, res) => {
     try {
-      const logs = await storage.getAllCallLogs().catch(() => []);
+      const logs = await storage.getAllCallLogs().catch((e) => { console.error("[admin/call-logs inner]", e); return []; });
       res.json(logs);
     } catch (error) {
-      res.status(500).json({ message: "Internal error" });
+      console.error("[admin/call-logs]", error);
+      res.status(500).json({ message: "Failed to fetch call logs" });
+    }
+  });
+
+  // Lightweight debug endpoint — raw row counts only, no joins
+  app.get("/api/admin/debug/counts", adminCheck, async (_req, res) => {
+    try {
+      const [customers] = await db.select({ c: count() }).from(profiles).where(eq(profiles.role, "customer"));
+      const [providerProfiles] = await db.select({ c: count() }).from(profiles).where(eq(profiles.role, "provider"));
+      const [providerRows] = await db.select({ c: count() }).from(providers);
+      const [callRows] = await db.select({ c: count() }).from(calls);
+      const [pendingRows] = await db.select({ c: count() }).from(pendingProviders);
+      res.json({
+        profiles_customer: customers?.c ?? 0,
+        profiles_provider: providerProfiles?.c ?? 0,
+        providers_table: providerRows?.c ?? 0,
+        calls_table: callRows?.c ?? 0,
+        pending_providers: pendingRows?.c ?? 0,
+      });
+    } catch (error) {
+      console.error("[admin/debug/counts]", error);
+      res.status(500).json({ message: "Debug count query failed", error: String(error) });
     }
   });
 
@@ -1389,6 +1414,7 @@ export async function registerRoutes(
       const allCredits = await storage.getAllCreditsWithProfiles();
       res.json(allCredits);
     } catch (error: any) {
+      console.error("[admin/all-credits]", error);
       res.status(500).json({ message: "Failed to fetch credits" });
     }
   });
