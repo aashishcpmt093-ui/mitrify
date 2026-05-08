@@ -88,8 +88,11 @@ function formatBytes(n: number) {
 const LAST_STORED_BACKUP_KEY = "mitrify.admin.lastStoredBackup";
 
 // localStorage key for persisting which schema-mismatched tables the admin
-// has chosen to exclude from lenient restores. Survives full page reloads.
-const EXCLUDED_SCHEMA_TABLES_KEY = "mitrify.admin.excludedSchemaTables";
+// has chosen to exclude from lenient restores. Keyed per backup source so
+// switching files always starts with that source's own saved exclusions.
+function excludedSchemaTablesKey(sourceId: string) {
+  return `mitrify.admin.excludedSchemaTables.${sourceId}`;
+}
 
 function formatRelative(iso: string) {
   const then = new Date(iso).getTime();
@@ -929,13 +932,7 @@ export default function AdminDashboardPage() {
   const [storedFileFetching, setStoredFileFetching] = useState(false);
   const [restoreConfirmed, setRestoreConfirmed] = useState(false);
   const [restoreInProgress, setRestoreInProgress] = useState(false);
-  const [excludedSchemaTables, setExcludedSchemaTables] = useState<Set<string>>(() => {
-    try {
-      const saved = localStorage.getItem(EXCLUDED_SCHEMA_TABLES_KEY);
-      if (saved) return new Set(JSON.parse(saved) as string[]);
-    } catch {}
-    return new Set();
-  });
+  const [excludedSchemaTables, setExcludedSchemaTables] = useState<Set<string>>(new Set());
   const [restoreSummary, setRestoreSummary] = useState<{
     totalRowsBefore: number;
     totalRowsAfter: number;
@@ -963,6 +960,35 @@ export default function AdminDashboardPage() {
     schemaAdjustments?: Array<{ table: string; stripped: string[]; injected: string[]; unrecoverable: string[] }>;
     schemaAdjustmentsUnavailable?: boolean;
   } | null>(null);
+
+  // Derive a stable source identifier from the currently selected restore source.
+  // Returns null when no source has been chosen yet.
+  const currentRestoreSourceId: string | null =
+    restoreMode === "upload" && restoreFile
+      ? `upload:${restoreFile.name}`
+      : restoreMode === "stored" && selectedStoredFilename
+        ? `stored:${selectedStoredFilename}`
+        : restoreMode === "gcs" && selectedGcsName
+          ? `gcs:${selectedGcsName}`
+          : null;
+
+  // When the source changes, load that source's own saved exclusions (or an
+  // empty set if this is the first time seeing this source).
+  const prevRestoreSourceIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (currentRestoreSourceId === prevRestoreSourceIdRef.current) return;
+    prevRestoreSourceIdRef.current = currentRestoreSourceId;
+    if (!currentRestoreSourceId) {
+      setExcludedSchemaTables(new Set());
+      return;
+    }
+    try {
+      const saved = localStorage.getItem(excludedSchemaTablesKey(currentRestoreSourceId));
+      setExcludedSchemaTables(saved ? new Set(JSON.parse(saved) as string[]) : new Set());
+    } catch {
+      setExcludedSchemaTables(new Set());
+    }
+  }, [currentRestoreSourceId]);
 
   async function handleBackupDownload() {
     setDownloadInProgress(true);
@@ -6860,7 +6886,7 @@ export default function AdminDashboardPage() {
                   type="button"
                   onClick={() => {
                     setExcludedSchemaTables(new Set());
-                    try { localStorage.removeItem(EXCLUDED_SCHEMA_TABLES_KEY); } catch {}
+                    try { if (currentRestoreSourceId) localStorage.removeItem(excludedSchemaTablesKey(currentRestoreSourceId)); } catch {}
                   }}
                   className="text-[9px] text-slate-500 dark:text-slate-400 underline hover:text-slate-700 dark:hover:text-slate-200 ml-auto whitespace-nowrap"
                   data-testid="button-clear-saved-exclusions-global"
@@ -6930,7 +6956,7 @@ export default function AdminDashboardPage() {
                               type="button"
                               onClick={() => {
                                 setExcludedSchemaTables(new Set());
-                                try { localStorage.removeItem(EXCLUDED_SCHEMA_TABLES_KEY); } catch {}
+                                try { if (currentRestoreSourceId) localStorage.removeItem(excludedSchemaTablesKey(currentRestoreSourceId)); } catch {}
                               }}
                               className="text-[9px] text-slate-500 dark:text-slate-400 underline hover:text-slate-700 dark:hover:text-slate-200"
                               data-testid="button-clear-saved-exclusions"
@@ -6954,10 +6980,12 @@ export default function AdminDashboardPage() {
                                     if (e.target.checked) next.delete(adj.table);
                                     else next.add(adj.table);
                                     try {
-                                      if (next.size > 0) {
-                                        localStorage.setItem(EXCLUDED_SCHEMA_TABLES_KEY, JSON.stringify(Array.from(next)));
-                                      } else {
-                                        localStorage.removeItem(EXCLUDED_SCHEMA_TABLES_KEY);
+                                      if (currentRestoreSourceId) {
+                                        if (next.size > 0) {
+                                          localStorage.setItem(excludedSchemaTablesKey(currentRestoreSourceId), JSON.stringify(Array.from(next)));
+                                        } else {
+                                          localStorage.removeItem(excludedSchemaTablesKey(currentRestoreSourceId));
+                                        }
                                       }
                                     } catch {}
                                     return next;
