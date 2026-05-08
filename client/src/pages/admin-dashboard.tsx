@@ -2570,7 +2570,7 @@ export default function AdminDashboardPage() {
                         {cr?.creditsFrozen && <Badge className="text-blue-600 bg-blue-100 dark:bg-blue-900/30 border-blue-200 text-xs px-1.5 py-0 h-5 rounded-md"><Snowflake className="w-2.5 h-2.5 mr-0.5" />Frozen</Badge>}
                         {p.providerData?.isHidden && <Badge className="text-purple-600 bg-purple-100 dark:bg-purple-900/30 border-purple-200 text-xs px-1.5 py-0 h-5 rounded-md"><EyeOff className="w-2.5 h-2.5 mr-0.5" />Hidden</Badge>}
                         {p.isBlocked && <Badge variant="destructive" className="text-xs px-1.5 py-0 h-5 rounded-md">Blocked</Badge>}
-                        {(!p.providerData?.mobileNumbers || p.providerData.mobileNumbers.length === 0) && (
+                        {(!p.mobile && (!p.providerData?.mobileNumbers || p.providerData.mobileNumbers.length === 0)) && (
                           <button
                             data-testid={`badge-no-mobile-${p.id}`}
                             onClick={() => { openEditProvider(p, true); setSelectedProviderDetail(null); }}
