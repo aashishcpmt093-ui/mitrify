@@ -1024,7 +1024,6 @@ export default function AdminDashboardPage() {
     }
     setDryRunInProgress(true);
     setDryRunResult(null);
-    setExcludedSchemaTables(new Set());
     try {
       let res: Response;
       if (restoreMode === "stored") {
@@ -1277,6 +1276,7 @@ export default function AdminDashboardPage() {
     setDryRunResult(null);
     setParsedTables(null);
     setSelectedTables(new Set());
+    setExcludedSchemaTables(new Set());
     if (!filename) return;
     setStoredFileFetching(true);
     try {
@@ -2769,6 +2769,7 @@ export default function AdminDashboardPage() {
                 setRestoreSummary(null);
                 setParsedTables(null);
                 setSelectedTables(new Set());
+                setExcludedSchemaTables(new Set());
                 setSelectedGcsName("");
                 setGcsUploadResult(null);
                 setGcsMode("new");
@@ -6402,6 +6403,7 @@ export default function AdminDashboardPage() {
                       setDryRunResult(null);
                       setParsedTables(null);
                       setSelectedTables(new Set());
+                      setExcludedSchemaTables(new Set());
                       setRestoreMode("stored");
                       await handleStoredFileSelect(latest.filename);
                     }}
@@ -6422,7 +6424,7 @@ export default function AdminDashboardPage() {
             <div className="grid grid-cols-3 gap-2" data-testid="restore-strategy-toggle">
               <button
                 type="button"
-                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("merge"); setRestoreConfirmed(false); setDryRunResult(null); } }}
+                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("merge"); setRestoreConfirmed(false); setDryRunResult(null); setExcludedSchemaTables(new Set()); } }}
                 disabled={restoreInProgress || dryRunInProgress}
                 data-testid="button-strategy-merge"
                 className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-colors disabled:opacity-50 ${restoreStrategy === "merge" ? "border-emerald-400 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 ring-1 ring-emerald-400 dark:ring-emerald-600" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-emerald-300 dark:hover:border-emerald-700"}`}
@@ -6435,7 +6437,7 @@ export default function AdminDashboardPage() {
               </button>
               <button
                 type="button"
-                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("lenient"); setRestoreConfirmed(false); setDryRunResult(null); } }}
+                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("lenient"); setRestoreConfirmed(false); setDryRunResult(null); setExcludedSchemaTables(new Set()); } }}
                 disabled={restoreInProgress || dryRunInProgress}
                 data-testid="button-strategy-lenient"
                 className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-colors disabled:opacity-50 ${restoreStrategy === "lenient" ? "border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/30 ring-1 ring-amber-400 dark:ring-amber-600" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-amber-300 dark:hover:border-amber-700"}`}
@@ -6448,7 +6450,7 @@ export default function AdminDashboardPage() {
               </button>
               <button
                 type="button"
-                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("overwrite"); setRestoreConfirmed(false); setDryRunResult(null); } }}
+                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("overwrite"); setRestoreConfirmed(false); setDryRunResult(null); setExcludedSchemaTables(new Set()); } }}
                 disabled={restoreInProgress || dryRunInProgress}
                 data-testid="button-strategy-overwrite"
                 className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-colors disabled:opacity-50 ${restoreStrategy === "overwrite" ? "border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-900/30 ring-1 ring-red-400 dark:ring-red-600" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-red-300 dark:hover:border-red-700"}`}
@@ -6504,6 +6506,7 @@ export default function AdminDashboardPage() {
                 setDryRunResult(null);
                 setParsedTables(null);
                 setSelectedTables(new Set());
+                setExcludedSchemaTables(new Set());
                 setRestoreStrategy("merge");
               }}
             >
@@ -6534,6 +6537,7 @@ export default function AdminDashboardPage() {
                     setDryRunResult(null);
                     setParsedTables(null);
                     setSelectedTables(new Set());
+                    setExcludedSchemaTables(new Set());
                     if (f) {
                       try {
                         const text = await f.text();
@@ -6642,6 +6646,7 @@ export default function AdminDashboardPage() {
                                 setDryRunResult(null);
                                 setParsedTables(null);
                                 setSelectedTables(new Set());
+                                setExcludedSchemaTables(new Set());
                               }}
                               disabled={restoreInProgress}
                               className="flex-shrink-0"
@@ -6917,7 +6922,7 @@ export default function AdminDashboardPage() {
                     {excludedSchemaTables.size > 0 && (
                       <p className="text-[9px] text-red-700 dark:text-red-400 flex items-center gap-1" data-testid="excluded-schema-tables-note">
                         <AlertTriangle className="w-2.5 h-2.5 flex-shrink-0" />
-                        {excludedSchemaTables.size} table{excludedSchemaTables.size !== 1 ? "s" : ""} will be skipped entirely from the restore.
+                        {excludedSchemaTables.size} table{excludedSchemaTables.size !== 1 ? "s" : ""} will be skipped from the restore. Re-run the preview to see the updated table list without these tables.
                       </p>
                     )}
                   </div>
