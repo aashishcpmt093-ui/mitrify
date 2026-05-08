@@ -1426,6 +1426,7 @@ export async function registerRoutes(
       const credit = await storage.freezeUserCredits(userId, role, freeze);
       res.json(credit);
     } catch (error: any) {
+      console.error("[admin/freeze-credits]", error);
       res.status(500).json({ message: "Failed to freeze credits" });
     }
   });
@@ -1436,6 +1437,7 @@ export async function registerRoutes(
       const credit = await storage.resetUserCredits(userId, role);
       res.json(credit);
     } catch (error: any) {
+      console.error("[admin/reset-credits]", error);
       res.status(500).json({ message: "Failed to reset credits" });
     }
   });
@@ -1451,6 +1453,7 @@ export async function registerRoutes(
       const credit = await storage.addPurchasedCredits(userId, "user", parsed);
       res.json({ success: true, message: `${parsed} credits gifted successfully`, credit });
     } catch (error: any) {
+      console.error("[admin/gift-credits]", error);
       res.status(500).json({ message: error.message || "Failed to gift credits" });
     }
   });
@@ -1514,6 +1517,7 @@ export async function registerRoutes(
       const codes = await storage.getAllPromoCodes();
       res.json(codes);
     } catch (error) {
+      console.error("[admin/promo-codes]", error);
       res.status(500).json({ message: "Internal error" });
     }
   });
@@ -1869,6 +1873,7 @@ export async function registerRoutes(
       const rows = await storage.listAllSubscriptions({ search, status, plan });
       res.json(rows);
     } catch (e: any) {
+      console.error("[admin/subscriptions]", e);
       res.status(500).json({ message: "Failed to list subscriptions" });
     }
   });
@@ -1893,6 +1898,7 @@ export async function registerRoutes(
       const saved = await storage.setSubscriptionPlanConfig(cfg);
       res.json(saved);
     } catch (e: any) {
+      console.error("[admin/subscriptions/config]", e);
       res.status(500).json({ message: "Failed to save config" });
     }
   });
@@ -1918,6 +1924,7 @@ export async function registerRoutes(
       });
       res.json(sub);
     } catch (e: any) {
+      console.error("[admin/subscriptions/grant]", e);
       res.status(500).json({ message: "Failed to grant subscription" });
     }
   });
@@ -1929,6 +1936,7 @@ export async function registerRoutes(
       const sub = await storage.cancelSubscription(id);
       res.json(sub);
     } catch (e: any) {
+      console.error("[admin/subscriptions/cancel]", e);
       res.status(500).json({ message: "Failed to cancel" });
     }
   });
@@ -1942,6 +1950,7 @@ export async function registerRoutes(
       const sub = await storage.extendSubscription(id, days);
       res.json(sub);
     } catch (e: any) {
+      console.error("[admin/subscriptions/extend]", e);
       res.status(500).json({ message: "Failed to extend" });
     }
   });
@@ -2020,6 +2029,7 @@ export async function registerRoutes(
       const list = await storage.listCoAdmins();
       res.json(list.map(ca => ({ id: ca.id, username: ca.username, role: ca.role, isActive: ca.isActive, createdAt: ca.createdAt })));
     } catch (err: any) {
+      console.error("[admin/co-admins]", err);
       res.status(500).json({ message: "Failed to fetch co-admins" });
     }
   });
@@ -2033,6 +2043,7 @@ export async function registerRoutes(
       const { stats, recentProviders } = await storage.getCoAdminStats(ca.username);
       res.json({ coAdmin: { id: ca.id, username: ca.username, role: ca.role, isActive: ca.isActive, createdAt: ca.createdAt, cycleStartAt: ca.cycleStartAt }, stats, recentProviders });
     } catch (err: any) {
+      console.error("[admin/co-admins/stats]", err);
       res.status(500).json({ message: "Failed to fetch co-admin stats" });
     }
   });
@@ -2047,6 +2058,7 @@ export async function registerRoutes(
       const providers = await storage.getVerifiedProvidersByCoAdmin(ca.username, status);
       res.json(providers);
     } catch (err: any) {
+      console.error("[admin/co-admins/verified-providers]", err);
       res.status(500).json({ message: "Failed to fetch verified providers" });
     }
   });
@@ -2060,6 +2072,7 @@ export async function registerRoutes(
       const history = await storage.getSalaryHistory(ca.username);
       res.json(history);
     } catch (err: any) {
+      console.error("[admin/co-admins/salary-history]", err);
       res.status(500).json({ message: "Failed to fetch salary history" });
     }
   });
@@ -2071,6 +2084,7 @@ export async function registerRoutes(
       const payment = await storage.markSalaryPaid(id, "admin");
       res.json(payment);
     } catch (err: any) {
+      console.error("[admin/co-admins/mark-paid]", err);
       res.status(500).json({ message: err.message || "Failed to mark paid" });
     }
   });
@@ -2085,6 +2099,7 @@ export async function registerRoutes(
       const ca = await storage.createCoAdmin({ username, password: hashed, role: role || "coadmin", isActive: true });
       res.status(201).json({ id: ca.id, username: ca.username, role: ca.role });
     } catch (err: any) {
+      console.error("[admin/co-admins/create]", err);
       res.status(500).json({ message: "Failed to create co-admin" });
     }
   });
@@ -2094,6 +2109,7 @@ export async function registerRoutes(
       await storage.deleteCoAdmin(parseInt(req.params.id));
       res.json({ ok: true });
     } catch (err: any) {
+      console.error("[admin/co-admins/delete]", err);
       res.status(500).json({ message: "Failed to delete co-admin" });
     }
   });
@@ -2106,6 +2122,7 @@ export async function registerRoutes(
       await storage.updateCoAdminPassword(parseInt(req.params.id), hashed);
       res.json({ ok: true });
     } catch (err: any) {
+      console.error("[admin/co-admins/password]", err);
       res.status(500).json({ message: "Failed to update password" });
     }
   });
@@ -2120,6 +2137,7 @@ export async function registerRoutes(
       const pp = await storage.createPendingProvider({ ...req.body, addedBy });
       res.status(201).json(pp);
     } catch (err: any) {
+      console.error("[coadmin/pending-providers/create]", err);
       res.status(500).json({ message: "Failed to add pending provider" });
     }
   });
@@ -2141,6 +2159,7 @@ export async function registerRoutes(
       const result = await storage.listPendingProvidersPaginated({ addedBy, status, search, filterByCoAdmins, sortBy: sortBy || undefined, page, limit, groups });
       res.json(result);
     } catch (err: any) {
+      console.error("[coadmin/pending-providers/list]", err);
       res.status(500).json({ message: "Failed to fetch pending providers" });
     }
   });
@@ -2176,6 +2195,7 @@ export async function registerRoutes(
         systemUser: SYSTEM_USER,
       });
     } catch (err: any) {
+      console.error("[admin/google-fallback-stats]", err);
       res.status(500).json({ message: "Failed to fetch google-fallback stats" });
     }
   });
@@ -2193,6 +2213,7 @@ export async function registerRoutes(
         .orderBy(pendingProviders.groupLabel);
       res.json(rows);
     } catch (err: any) {
+      console.error("[admin/group-stats]", err);
       res.status(500).json({ message: "Failed to get group stats" });
     }
   });
