@@ -1140,7 +1140,7 @@ export async function registerRoutes(
       });
     } catch (error) {
       console.error("[admin/debug/counts]", error);
-      res.status(500).json({ message: "Debug count query failed", error: String(error) });
+      res.status(500).json({ message: "Debug count query failed" });
     }
   });
 
