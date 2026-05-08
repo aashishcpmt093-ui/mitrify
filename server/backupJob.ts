@@ -532,8 +532,15 @@ function rewriteInsertForSchema(
     .filter((c) => !c.isNullable && !c.hasDefault)
     .map((c) => c.name);
 
-  // Only rewrite when something actually changes in the column list.
-  if (stripped.length === 0 && injected.length === 0) return null;
+  // If only unrecoverable columns differ (no stripping, no NULL injection),
+  // return early with the original statement — it will still fail per-row
+  // in lenient mode, but we surface the unrecoverable list for reporting.
+  if (stripped.length === 0 && injected.length === 0) {
+    if (unrecoverable.length > 0) {
+      return { rewritten: stmt, stripped: [], injected: [], unrecoverable };
+    }
+    return null;
+  }
 
   const values = splitSqlValues(parsed.valuesExpr);
   if (values.length !== parsed.cols.length) return null;
