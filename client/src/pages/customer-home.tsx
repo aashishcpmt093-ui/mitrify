@@ -27,7 +27,6 @@ import { useLanguage, LANGUAGE_NAMES, Language } from "@/lib/language";
 import { Moon, Sun } from "lucide-react";
 import logoImg from "@assets/772B17C5-7738-43B8-B5C0-04A7F2A6561B_1773842365564.png";
 import WelcomePopup from "@/components/welcome-popup";
-import AIChat from "@/components/ai-chat";
 import type { ProviderSearchResult, InsertJob } from "@shared/schema";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
@@ -2365,7 +2364,6 @@ export default function CustomerHomePage() {
         </DialogContent>
       </Dialog>
 
-      <AIChat isAdmin={false} />
     </div>
   );
 }

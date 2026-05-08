@@ -29,8 +29,7 @@ export function log(message: string, source = "express") {
 }
 
 app.get("/health", (_req, res) => {
-  const aiConfigured = !!(process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY);
-  res.status(200).json({ status: "ok", ai: aiConfigured ? "enabled" : "disabled" });
+  res.status(200).json({ status: "ok" });
 });
 
 app.use((req, res, next) => {
@@ -73,12 +72,6 @@ httpServer.listen(
   },
   () => {
     log(`serving on port ${port}`);
-    const aiProvider = process.env.GROQ_API_KEY ? "groq" : process.env.DEEPSEEK_API_KEY ? "deepseek" : (process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY) ? "gemini" : null;
-    if (aiProvider) {
-      log(`[AI] Provider: ${aiProvider} — AI chat enabled`, "startup");
-    } else {
-      log(`[AI] WARNING: No AI key found. Set GROQ_API_KEY, DEEPSEEK_API_KEY, GOOGLE_API_KEY, or GEMINI_API_KEY.`, "startup");
-    }
   },
 );
 

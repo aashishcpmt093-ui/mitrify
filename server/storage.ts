@@ -3,9 +3,8 @@ import { findKnownPhones } from "./phoneDedupe";
 import {
   profiles, providers, calls, promoCodes, localUsers, credits, subscriptions, siteContent,
   coAdmins, pendingProviders, visitorStats, jobs, promoUsageLog, employees, searchLog,
-  salaryPayments, creditPayments, appNotifications, tagJobs, googlePlacesRuns, aiTokenUsage, aiReportLog,
+  salaryPayments, creditPayments, appNotifications, tagJobs, googlePlacesRuns,
   DEFAULT_SUBSCRIPTION_PLAN_CONFIG,
-  type AiTokenUsage, type AiReportLog, type InsertAiReportLog,
   type TagJob, type GooglePlacesRun, type InsertGooglePlacesRun,
   type Job,
   type Profile, type InsertProfile,
@@ -194,23 +193,6 @@ export interface IStorage {
   createGooglePlacesRun(data: InsertGooglePlacesRun): Promise<GooglePlacesRun>;
   listRecentGooglePlacesRuns(limit: number): Promise<GooglePlacesRun[]>;
 
-  // AI token usage persistence (survives server restarts).
-  insertAiTokenUsage(tokens: number): Promise<void>;
-  getAiTokenUsageSince(since: Date): Promise<AiTokenUsage[]>;
-  getAiTokenUsageByHour(since: Date): Promise<{ hour: string; tokens: number }[]>;
-  pruneOldAiTokenUsage(before: Date): Promise<void>;
-
-  // AI weekly report email config
-  getAiWeeklyReportConfig(): Promise<{ email: string; enabled: boolean; sendDay: number; sendHour: number }>;
-  setAiWeeklyReportConfig(cfg: { email: string; enabled: boolean; sendDay: number; sendHour: number }): Promise<void>;
-
-  // AI weekly report email log
-  insertAiReportLog(entry: InsertAiReportLog): Promise<void>;
-  listAiReportLog(limit: number, status?: "all" | "sent" | "failed", since?: Date): Promise<AiReportLog[]>;
-  listAllAiReportLog(): Promise<AiReportLog[]>;
-  clearAiReportLog(): Promise<void>;
-  deleteAiReportLogEntry(id: number): Promise<void>;
-  pruneOldAiReportLog(before: Date): Promise<AiReportLog[]>;
 }
 
 function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -2505,91 +2487,6 @@ export class DatabaseStorage implements IStorage {
       .limit(limit);
   }
 
-  async insertAiTokenUsage(tokens: number): Promise<void> {
-    await db.insert(aiTokenUsage).values({ tokens, ts: new Date() });
-  }
-
-  async getAiTokenUsageSince(since: Date): Promise<AiTokenUsage[]> {
-    return db.select().from(aiTokenUsage)
-      .where(gte(aiTokenUsage.ts, since))
-      .orderBy(aiTokenUsage.ts);
-  }
-
-  async getAiTokenUsageByHour(since: Date): Promise<{ hour: string; tokens: number }[]> {
-    const rows = await db
-      .select({
-        hour: sql<string>`date_trunc('hour', ${aiTokenUsage.ts})::text`,
-        tokens: sql<number>`cast(sum(${aiTokenUsage.tokens}) as integer)`,
-      })
-      .from(aiTokenUsage)
-      .where(gte(aiTokenUsage.ts, since))
-      .groupBy(sql`date_trunc('hour', ${aiTokenUsage.ts})`)
-      .orderBy(sql`date_trunc('hour', ${aiTokenUsage.ts})`);
-    return rows;
-  }
-
-  async pruneOldAiTokenUsage(before: Date): Promise<void> {
-    await db.delete(aiTokenUsage).where(lt(aiTokenUsage.ts, before));
-  }
-
-  async getAiWeeklyReportConfig(): Promise<{ email: string; enabled: boolean; sendDay: number; sendHour: number }> {
-    const [row] = await db.select().from(siteContent).where(eq(siteContent.key, "ai_weekly_report_config"));
-    if (!row || !row.value || typeof row.value !== "object" || Array.isArray(row.value)) {
-      return { email: "", enabled: false, sendDay: 1, sendHour: 9 };
-    }
-    const val = row.value as Record<string, unknown>;
-    return {
-      email: typeof val.email === "string" ? val.email : "",
-      enabled: val.enabled === true,
-      sendDay: typeof val.sendDay === "number" ? val.sendDay : 1,
-      sendHour: typeof val.sendHour === "number" ? val.sendHour : 9,
-    };
-  }
-
-  async setAiWeeklyReportConfig(cfg: { email: string; enabled: boolean; sendDay: number; sendHour: number }): Promise<void> {
-    const [existing] = await db.select().from(siteContent).where(eq(siteContent.key, "ai_weekly_report_config"));
-    if (existing) {
-      await db.update(siteContent).set({ value: cfg, updatedAt: new Date() }).where(eq(siteContent.key, "ai_weekly_report_config"));
-    } else {
-      await db.insert(siteContent).values({ key: "ai_weekly_report_config", value: cfg, updatedAt: new Date() });
-    }
-  }
-
-  async insertAiReportLog(entry: InsertAiReportLog): Promise<void> {
-    await db.insert(aiReportLog).values(entry);
-  }
-
-  async listAiReportLog(limit: number, status?: "all" | "sent" | "failed", since?: Date): Promise<AiReportLog[]> {
-    const conditions = [];
-    if (status === "sent") conditions.push(eq(aiReportLog.success, true));
-    if (status === "failed") conditions.push(eq(aiReportLog.success, false));
-    if (since) conditions.push(gte(aiReportLog.sentAt, since));
-    if (conditions.length > 0) {
-      return db.select().from(aiReportLog)
-        .where(and(...conditions))
-        .orderBy(desc(aiReportLog.sentAt))
-        .limit(limit);
-    }
-    return db.select().from(aiReportLog)
-      .orderBy(desc(aiReportLog.sentAt))
-      .limit(limit);
-  }
-
-  async listAllAiReportLog(): Promise<AiReportLog[]> {
-    return db.select().from(aiReportLog).orderBy(desc(aiReportLog.sentAt));
-  }
-
-  async clearAiReportLog(): Promise<void> {
-    await db.delete(aiReportLog);
-  }
-
-  async deleteAiReportLogEntry(id: number): Promise<void> {
-    await db.delete(aiReportLog).where(eq(aiReportLog.id, id));
-  }
-
-  async pruneOldAiReportLog(before: Date): Promise<AiReportLog[]> {
-    return db.delete(aiReportLog).where(lt(aiReportLog.sentAt, before)).returning();
-  }
 }
 
 export const storage = new DatabaseStorage();
