@@ -1311,8 +1311,8 @@ export default function AdminDashboardPage() {
   }, [activeTab, backupStatus, selectedStoredFilename, restoreFile, selectedGcsName]);
 
   const { data: stats } = useQuery<AdminStats>({ queryKey: ["/api/admin/stats"], enabled: !!isAdmin });
-  const { data: providersList, isError: providersError, refetch: refetchProviders } = useQuery<any[]>({ queryKey: ["/api/admin/providers"], enabled: !!isAdmin });
-  const { data: callLogs, isError: callLogsError, refetch: refetchCallLogs } = useQuery<CallLog[]>({ queryKey: ["/api/admin/call-logs"], enabled: !!isAdmin });
+  const { data: providersList, isError: providersError, error: providersQueryError, refetch: refetchProviders } = useQuery<any[]>({ queryKey: ["/api/admin/providers"], enabled: !!isAdmin });
+  const { data: callLogs, isError: callLogsError, error: callLogsQueryError, refetch: refetchCallLogs } = useQuery<CallLog[]>({ queryKey: ["/api/admin/call-logs"], enabled: !!isAdmin });
   const { data: allCredits } = useQuery<any[]>({ queryKey: ["/api/admin/all-credits"], enabled: !!isAdmin });
   const { data: duplicateData, isLoading: duplicatesLoading, refetch: refetchDuplicates } = useQuery<any[]>({
     queryKey: ["/api/admin/duplicate-profiles"],
@@ -2758,6 +2758,7 @@ export default function AdminDashboardPage() {
                 </div>
                 <p className="font-semibold text-red-600 dark:text-red-400">Providers load nahi ho paya</p>
                 <p className="text-xs text-muted-foreground">Server se data fetch karne mein error aaya. Railway logs check karein.</p>
+                {providersQueryError && <p className="text-xs font-mono text-red-500/80 bg-red-50 dark:bg-red-950/40 px-3 py-1 rounded-lg max-w-sm mx-auto break-all">{(providersQueryError as Error).message}</p>}
                 <Button size="sm" variant="outline" className="rounded-xl" onClick={() => refetchProviders()}>Retry</Button>
               </div>
             )}
@@ -2803,6 +2804,7 @@ export default function AdminDashboardPage() {
                 </div>
                 <p className="font-semibold text-red-600 dark:text-red-400">Call logs load nahi ho paya</p>
                 <p className="text-xs text-muted-foreground">Server se data fetch karne mein error aaya. Railway logs check karein.</p>
+                {callLogsQueryError && <p className="text-xs font-mono text-red-500/80 bg-red-50 dark:bg-red-950/40 px-3 py-1 rounded-lg max-w-sm mx-auto break-all">{(callLogsQueryError as Error).message}</p>}
                 <Button size="sm" variant="outline" className="rounded-xl" onClick={() => refetchCallLogs()}>Retry</Button>
               </div>
             )}

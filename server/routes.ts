@@ -1101,7 +1101,7 @@ export async function registerRoutes(
   app.get(api.admin.providers.path, adminCheck, async (req, res) => {
     try {
       const providerProfiles = await storage.getProfilesByRole("provider");
-      const allProviders = await storage.getAllProviders().catch(() => []);
+      const allProviders = await storage.getAllProviders();
       const result = providerProfiles.map(p => {
         const providerData = allProviders.find(pr => pr.userId === p.userId);
         return { ...p, providerData };
@@ -1115,7 +1115,7 @@ export async function registerRoutes(
 
   app.get(api.admin.callLogs.path, adminCheck, async (req, res) => {
     try {
-      const logs = await storage.getAllCallLogs().catch((e) => { console.error("[admin/call-logs inner]", e); return []; });
+      const logs = await storage.getAllCallLogs();
       res.json(logs);
     } catch (error) {
       console.error("[admin/call-logs]", error);
