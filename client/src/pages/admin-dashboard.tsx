@@ -1157,7 +1157,18 @@ export default function AdminDashboardPage() {
     setRestoreCancelling(false);
     try {
       let res: Response;
-      const hasExcluded = restoreStrategy === "lenient" && excludedSchemaTables.size > 0;
+      // When dryRunResult is available, filter the excludeList to only tables
+      // that currently appear in schemaAdjustments — stale entries (tables that
+      // no longer have adjustments after a re-run) are dropped so the backend
+      // doesn't receive exclusions that don't correspond to the current preview.
+      const adjTableSet = dryRunResult?.schemaAdjustments
+        ? new Set(dryRunResult.schemaAdjustments.map((a) => a.table))
+        : null;
+      const effectiveExcludeList =
+        adjTableSet
+          ? Array.from(excludedSchemaTables).filter((t) => adjTableSet.has(t))
+          : Array.from(excludedSchemaTables);
+      const hasExcluded = restoreStrategy === "lenient" && effectiveExcludeList.length > 0;
       if (restoreMode === "stored") {
         res = await fetch("/api/admin/restore/stored", {
           method: "POST",
@@ -1167,7 +1178,7 @@ export default function AdminDashboardPage() {
             filename: selectedStoredFilename,
             tables: parsedTables !== null && parsedTables.length > 0 ? Array.from(selectedTables) : undefined,
             mode: restoreStrategy,
-            ...(hasExcluded ? { excludeList: Array.from(excludedSchemaTables) } : {}),
+            ...(hasExcluded ? { excludeList: effectiveExcludeList } : {}),
           }),
         });
       } else if (restoreMode === "gcs") {
@@ -1179,7 +1190,7 @@ export default function AdminDashboardPage() {
             gcsName: selectedGcsName,
             ...(parsedTables !== null && parsedTables.length > 0 ? { tables: Array.from(selectedTables) } : {}),
             mode: restoreStrategy,
-            ...(hasExcluded ? { excludeList: Array.from(excludedSchemaTables) } : {}),
+            ...(hasExcluded ? { excludeList: effectiveExcludeList } : {}),
           }),
         });
       } else {
@@ -1190,7 +1201,7 @@ export default function AdminDashboardPage() {
         }
         fd.append("mode", restoreStrategy);
         if (hasExcluded) {
-          fd.append("excludeList", JSON.stringify(Array.from(excludedSchemaTables)));
+          fd.append("excludeList", JSON.stringify(effectiveExcludeList));
         }
         res = await fetch("/api/admin/restore", {
           method: "POST",
