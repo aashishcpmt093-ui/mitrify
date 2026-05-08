@@ -8,8 +8,76 @@ import { LanguageProvider } from "@/lib/language";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { useEffect, useState, Component } from "react";
+import { useEffect, useState, useRef, useCallback, Component } from "react";
 import type { ReactNode, ErrorInfo } from "react";
+
+const POLL_INTERVAL_MS = 3000;
+const MAX_WAIT_MS = 60000;
+
+function useServerReady() {
+  const [ready, setReady] = useState<boolean | null>(null);
+  const [timedOut, setTimedOut] = useState(false);
+  const startRef = useRef(Date.now());
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const check = useCallback(async () => {
+    try {
+      const res = await fetch("/health", { credentials: "include" });
+      if (res.ok) {
+        setReady(true);
+        return;
+      }
+    } catch {}
+    if (Date.now() - startRef.current >= MAX_WAIT_MS) {
+      setTimedOut(true);
+      return;
+    }
+    timerRef.current = setTimeout(check, POLL_INTERVAL_MS);
+  }, []);
+
+  useEffect(() => {
+    check();
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [check]);
+
+  return { ready, timedOut };
+}
+
+function ConnectingOverlay({ timedOut }: { timedOut: boolean }) {
+  return (
+    <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-background">
+      <div className="flex flex-col items-center gap-6 px-8 text-center">
+        <div className="relative w-16 h-16">
+          <div className="absolute inset-0 rounded-full border-4 border-primary/20" />
+          <div className="absolute inset-0 rounded-full border-4 border-t-primary animate-spin" />
+        </div>
+        {timedOut ? (
+          <>
+            <p className="text-lg font-semibold text-foreground">सर्वर से जुड़ नहीं पाए</p>
+            <p className="text-sm text-muted-foreground">कृपया पेज रिफ्रेश करें</p>
+            <button
+              className="mt-2 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium"
+              onClick={() => window.location.reload()}
+            >
+              Refresh
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="text-lg font-semibold text-foreground">सर्वर शुरू हो रहा है…</p>
+            <p className="text-sm text-muted-foreground">कृपया प्रतीक्षा करें — Connecting…</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ServerGate({ children }: { children: ReactNode }) {
+  const { ready, timedOut } = useServerReady();
+  if (ready) return <>{children}</>;
+  return <ConnectingOverlay timedOut={timedOut} />;
+}
 
 class AdminErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   constructor(props: { children: ReactNode }) {
@@ -310,8 +378,10 @@ function App() {
         <ThemeProvider>
           <TooltipProvider>
             <Toaster />
-            <Router />
-            <VisitorCounter />
+            <ServerGate>
+              <Router />
+              <VisitorCounter />
+            </ServerGate>
           </TooltipProvider>
         </ThemeProvider>
       </LanguageProvider>
