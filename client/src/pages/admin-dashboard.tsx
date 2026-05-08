@@ -925,6 +925,7 @@ export default function AdminDashboardPage() {
     skippedCount?: number;
     skippedSamples?: string[];
     schemaAdjustments?: Array<{ table: string; stripped: string[]; injected: string[]; unrecoverable: string[] }>;
+    skippedReportId?: string;
     rowMismatches: Array<{ table: string; expected: number; actual: number; diff: number }>;
   } | null>(null);
   const [parsedTables, setParsedTables] = useState<Array<{ name: string; rowCount: number }> | null>(null);
@@ -1161,6 +1162,7 @@ export default function AdminDashboardPage() {
         skippedCount: data.skippedCount,
         skippedSamples: data.skippedSamples,
         schemaAdjustments: Array.isArray(data.schemaAdjustments) ? data.schemaAdjustments : undefined,
+        skippedReportId: data.skippedReportId,
         rowMismatches: Array.isArray(data.rowMismatches) ? data.rowMismatches : [],
       });
       const totalAdded = resultMode === "merge"
@@ -6924,6 +6926,20 @@ export default function AdminDashboardPage() {
                           <li key={i} className="font-mono text-[9px] text-amber-700 dark:text-amber-400 truncate" data-testid={`restore-skipped-sample-${i}`}>{s}</li>
                         ))}
                       </ul>
+                    </div>
+                  )}
+                  {isLenient && restoreSummary.skippedReportId && (
+                    <div className="flex items-center gap-2" data-testid="restore-skipped-report-download">
+                      <a
+                        href={`/api/admin/restore/skipped-report/${restoreSummary.skippedReportId}`}
+                        download
+                        className="inline-flex items-center gap-1.5 text-[11px] font-medium text-blue-700 dark:text-blue-400 underline underline-offset-2 hover:text-blue-900 dark:hover:text-blue-200"
+                        data-testid="link-download-skipped-report"
+                      >
+                        <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 4v11" /></svg>
+                        Download skipped rows report (CSV)
+                      </a>
+                      <span className="text-[10px] text-muted-foreground">— full list of all {restoreSummary.skippedCount} skipped statement{restoreSummary.skippedCount !== 1 ? "s" : ""} with error details</span>
                     </div>
                   )}
                   <div className="max-h-48 overflow-y-auto rounded border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-slate-900">

@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { createWriteStream } from "fs";
+import crypto from "crypto";
 import nodemailer from "nodemailer";
 import { Storage } from "@google-cloud/storage";
 import { pool, db } from "./db";
@@ -398,6 +399,8 @@ export interface RestoreResult {
   skippedCount?: number;
   /** Lenient mode only: first few error messages for display. */
   skippedSamples?: string[];
+  /** Lenient mode only: opaque ID used to download the full skipped-rows CSV report. */
+  skippedReportId?: string;
   /** Tables where the post-restore row count deviates from the dump's recorded
    *  count by more than RESTORE_MISMATCH_THRESHOLD. Empty array = clean restore. */
   rowMismatches: RestoreMismatch[];
@@ -571,6 +574,64 @@ function rewriteInsertForSchema(
 
   const rewritten = `INSERT INTO "${parsed.table}" (${newCols.join(", ")}) VALUES (${newVals.join(", ")})${parsed.suffix}`;
   return { rewritten, stripped, injected, unrecoverable };
+}
+
+// ─────────────────────────────────────────────────────────────
+// In-memory store for full skipped-rows reports (lenient mode).
+// Keyed by a random report ID. Cleared after the first download
+// or after MAX_REPORT_AGE_MS to prevent unbounded memory growth.
+// ─────────────────────────────────────────────────────────────
+const MAX_REPORT_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+interface SkippedRow {
+  index: number;
+  error: string;
+  sql: string;
+}
+
+interface SkippedReport {
+  rows: SkippedRow[];
+  createdAt: number;
+}
+
+const MAX_STORED_REPORTS = 20; // hard cap — oldest evicted first if exceeded
+const _skippedReports = new Map<string, SkippedReport>();
+
+// Periodic sweep: remove any reports older than MAX_REPORT_AGE_MS.
+// Runs every 30 minutes; the interval is unref'd so it never prevents shutdown.
+const _skippedReportSweep = setInterval(() => {
+  const now = Date.now();
+  for (const [id, entry] of _skippedReports) {
+    if (now - entry.createdAt > MAX_REPORT_AGE_MS) {
+      _skippedReports.delete(id);
+    }
+  }
+}, 30 * 60 * 1000);
+if (typeof _skippedReportSweep.unref === "function") _skippedReportSweep.unref();
+
+export function getSkippedReport(reportId: string): SkippedRow[] | null {
+  const entry = _skippedReports.get(reportId);
+  if (!entry) return null;
+  if (Date.now() - entry.createdAt > MAX_REPORT_AGE_MS) {
+    _skippedReports.delete(reportId);
+    return null;
+  }
+  return entry.rows;
+}
+
+export function deleteSkippedReport(reportId: string): void {
+  _skippedReports.delete(reportId);
+}
+
+function storeSkippedReport(rows: SkippedRow[]): string {
+  // Evict the oldest entry if at capacity.
+  if (_skippedReports.size >= MAX_STORED_REPORTS) {
+    const oldestId = _skippedReports.keys().next().value;
+    if (oldestId !== undefined) _skippedReports.delete(oldestId);
+  }
+  const id = crypto.randomBytes(16).toString("hex");
+  _skippedReports.set(id, { rows, createdAt: Date.now() });
+  return id;
 }
 
 /**
@@ -877,6 +938,7 @@ export async function restoreFromSql(
   let lenientSkippedCount = 0;
   const lenientSkippedSamples: string[] = [];
   const lenientSchemaAdjustments: Array<{ table: string; stripped: string[]; injected: string[]; unrecoverable: string[] }> = [];
+  const lenientSkippedFull: { index: number; error: string; sql: string }[] = [];
 
   if (mode === "lenient") {
     // Pre-load live schema for all tables that appear in the dump.
@@ -966,10 +1028,11 @@ export async function restoreFromSql(
         } catch (stmtErr: unknown) {
           lenientSkippedCount++;
           const errMsg = stmtErr instanceof Error ? stmtErr.message : String(stmtErr);
+          const sqlSnippet = stmt.slice(0, 80).replace(/\s+/g, " ");
           if (lenientSkippedSamples.length < 5) {
-            const sqlSnippet = stmt.slice(0, 80).replace(/\s+/g, " ");
             lenientSkippedSamples.push(`${errMsg.slice(0, 120)} | SQL: ${sqlSnippet}…`);
           }
+          lenientSkippedFull.push({ index: lenientSkippedCount, error: errMsg, sql: stmt });
           console.warn("[restore/lenient] Skipped statement:", errMsg.slice(0, 200));
         }
       }
@@ -1196,11 +1259,14 @@ export async function restoreFromSql(
     totalRowsAfter,
     tables,
     mode,
-    ...(mode === "lenient" ? {
-      skippedCount: lenientSkippedCount,
-      skippedSamples: lenientSkippedSamples,
-      schemaAdjustments: lenientSchemaAdjustments.length > 0 ? lenientSchemaAdjustments : undefined,
-    } : {}),
+    ...(mode === "lenient"
+      ? {
+          skippedCount: lenientSkippedCount,
+          skippedSamples: lenientSkippedSamples,
+          schemaAdjustments: lenientSchemaAdjustments.length > 0 ? lenientSchemaAdjustments : undefined,
+          skippedReportId: lenientSkippedFull.length > 0 ? storeSkippedReport(lenientSkippedFull) : undefined,
+        }
+      : {}),
     rowMismatches,
   };
 }

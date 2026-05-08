@@ -15,7 +15,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory, recordBackupHistory } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory, recordBackupHistory, getSkippedReport, deleteSkippedReport } from "./backupJob";
 import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverStaleJobs } from "./lib/auto-tags";
 import { startAiWeeklyReportScheduler, sendAiWeeklyReport, rescheduleAiWeeklyReport } from "./aiWeeklyReport";
 import { AI_TOKEN_CONFIG_KEY, AI_TOKEN_HOUR_THRESHOLD_DEFAULT, getAiTokenThreshold, bustAiThresholdCache } from "./lib/aiConfig";
@@ -3154,6 +3154,29 @@ export async function registerRoutes(
       }
     },
   );
+
+  // GET /api/admin/restore/skipped-report/:reportId — download full skipped-rows CSV
+  app.get("/api/admin/restore/skipped-report/:reportId", adminCheck, (req, res) => {
+    const { reportId } = req.params;
+    if (!reportId || !/^[0-9a-f]{32}$/.test(reportId)) {
+      return res.status(400).json({ message: "Invalid report ID" });
+    }
+    const rows = getSkippedReport(reportId);
+    if (!rows) {
+      return res.status(404).json({ message: "Report not found or has expired (reports are available for 2 hours after a restore)" });
+    }
+    const csvLines: string[] = ['"#","Error","SQL Statement"'];
+    for (const row of rows) {
+      const escapedError = `"${row.error.replace(/"/g, '""')}"`;
+      const escapedSql = `"${row.sql.replace(/"/g, '""')}"`;
+      csvLines.push(`${row.index},${escapedError},${escapedSql}`);
+    }
+    const csv = csvLines.join("\r\n");
+    deleteSkippedReport(reportId);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="skipped-rows-${reportId.slice(0, 8)}.csv"`);
+    res.send(csv);
+  });
 
   // POST /api/admin/restore/cancel — signal the active restore to stop
   app.post("/api/admin/restore/cancel", adminCheck, async (_req, res) => {
