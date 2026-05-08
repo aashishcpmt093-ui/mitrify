@@ -80,7 +80,22 @@ export async function sendBackupAlert(opts: {
 function sqlLiteral(val: any, dataType?: string): string {
   if (val === null || val === undefined) return "NULL";
   if (dataType === "json" || dataType === "jsonb") {
-    return `'${JSON.stringify(val).replace(/'/g, "''")}'::jsonb`;
+    const castType = dataType === "json" ? "json" : "jsonb";
+    if (typeof val === "string") {
+      // node-postgres may return json/jsonb columns as plain strings already.
+      // Round-trip through JSON.parse → JSON.stringify to validate and
+      // canonicalize; if it fails the string is not valid JSON, so we
+      // re-serialize it as a JSON string value (double-encode) instead of
+      // letting it through raw which produces "Invalid input syntax for type json".
+      let normalized: string;
+      try {
+        normalized = JSON.stringify(JSON.parse(val));
+      } catch {
+        normalized = JSON.stringify(val);
+      }
+      return `'${normalized.replace(/'/g, "''")}'::${castType}`;
+    }
+    return `'${JSON.stringify(val).replace(/'/g, "''")}'::${castType}`;
   }
   if (typeof val === "boolean") return val ? "TRUE" : "FALSE";
   if (typeof val === "number") return Number.isFinite(val) ? String(val) : "NULL";
@@ -1097,10 +1112,32 @@ export async function restoreFromSql(
       }
     }
 
-    await client.query(sqlToRun);
+    // Execute statements one-by-one so ON CONFLICT DO NOTHING is honoured
+    // per row. The bulk client.query() approach can cause duplicate-key
+    // violations on certain Postgres versions because the server processes
+    // the entire script as one plan unit before applying conflict resolution.
+    {
+      const mergeStmts = splitSqlStatements(sqlToRun);
+      let mergeErrors = 0;
+      for (const stmt of mergeStmts) {
+        if (_activeRestore?.cancelled) throw new RestoreCancelledError();
+        const body = stmt.endsWith(";") ? stmt : `${stmt};`;
+        try {
+          await client.query(body);
+        } catch (stmtErr: unknown) {
+          mergeErrors++;
+          const errMsg = stmtErr instanceof Error ? stmtErr.message : String(stmtErr);
+          console.warn("[restore] Statement failed:", errMsg.slice(0, 200));
+          throw stmtErr; // outer catch rolls back the transaction
+        }
+      }
+      if (mergeErrors === 0) {
+        console.log(`[restore] All ${mergeStmts.length} statements executed without error.`);
+      }
+    }
 
-    // Hard cancellation gate: if cancel was requested while the bulk SQL
-    // was executing (but pg_cancel_backend did not interrupt it), roll back
+    // Hard cancellation gate: if cancel was requested during statement
+    // execution but pg_cancel_backend did not interrupt it, roll back
     // here before COMMIT so the database is never mutated.
     if (_activeRestore?.cancelled) {
       throw new RestoreCancelledError();
