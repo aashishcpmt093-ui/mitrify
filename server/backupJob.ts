@@ -367,6 +367,25 @@ export interface RestoreTableSummary {
   rowsAdded?: number;
   /** Merge mode only: rows from the dump that were skipped (already existed). */
   rowsSkipped?: number;
+  /** Expected row count as recorded in the dump header. Present when the dump
+   *  contains header metadata (produced by streamBackupSql). */
+  rowsInDump?: number;
+  /** True when a row-count discrepancy is detected beyond RESTORE_MISMATCH_THRESHOLD.
+   *  Overwrite mode: |rowsAfter − rowsInDump| > threshold.
+   *  Merge mode: rowsAfter < rowsInDump − threshold (DB has fewer rows than the dump
+   *  declared, meaning rows were silently lost rather than merely conflicted-away).
+   *  Only set for tables in the active restore scope; absent for untouched tables. */
+  mismatch?: boolean;
+}
+
+export interface RestoreMismatch {
+  table: string;
+  /** Row count expected from the dump header. */
+  expected: number;
+  /** Actual row count in the database after restore. */
+  actual: number;
+  /** Absolute difference (actual − expected). Negative means rows are missing. */
+  diff: number;
 }
 
 export interface RestoreResult {
@@ -379,6 +398,9 @@ export interface RestoreResult {
   skippedCount?: number;
   /** Lenient mode only: first few error messages for display. */
   skippedSamples?: string[];
+  /** Tables where the post-restore row count deviates from the dump's recorded
+   *  count by more than RESTORE_MISMATCH_THRESHOLD. Empty array = clean restore. */
+  rowMismatches: RestoreMismatch[];
 }
 
 /**
@@ -549,6 +571,40 @@ export function parseTablesFromDump(sql: string): string[] {
     if (table) tables.push(table);
   });
   return tables;
+}
+
+/**
+ * Count the number of INSERT statements present in each table section of a dump.
+ *
+ * This is the fallback source of expected row counts when a dump does not contain
+ * our header metadata comments (`-- Table: <name>  |  rows in dump: N`).  It works
+ * on any standards-compliant pg_dump SQL file — not just those produced by
+ * streamBackupSql.
+ *
+ * Each line that begins with INSERT (case-insensitive, allowing for leading
+ * whitespace) is counted as one row.  Multi-row VALUES lists are not produced by
+ * our backup; if they exist in an external dump the count will be conservative, but
+ * the caller can still use it as a lower-bound sanity check.
+ *
+ * Returns a Map<tableName, insertCount>.  Tables with zero INSERTs are included
+ * so callers can distinguish "no INSERT lines found" from "table not in dump".
+ */
+export function parseDumpInsertCounts(sql: string): Map<string, number> {
+  const sections = parseDumpSections(sql);
+  const counts = new Map<string, number>();
+  const insertLineRe = /^\s*INSERT\s+INTO\s+/im;
+
+  sections.forEach((block, table) => {
+    if (!table) return; // skip preamble
+    // Count lines starting with INSERT INTO in this table's section.
+    const lines = block.split("\n");
+    let n = 0;
+    for (const line of lines) {
+      if (insertLineRe.test(line)) n++;
+    }
+    counts.set(table, n);
+  });
+  return counts;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -773,17 +829,53 @@ export async function restoreFromSql(
   const tablesAfter = await listPublicTables();
   const afterCounts = await countRowsPerTable(tablesAfter);
 
-  // For merge mode: parse dump row counts per table from header comments so we
-  // can compute authoritative rowsAdded / rowsSkipped without client-side guessing.
-  let dumpRowCounts: Map<string, number> | null = null;
-  if (mode === "merge") {
-    dumpRowCounts = new Map();
+  // Build per-table expected row counts for the post-restore sanity check.
+  //
+  // Primary source: header comments embedded by streamBackupSql:
+  //   "-- Table: <name>  |  rows in dump: <n>"
+  // These are exact COUNT(*) values captured at backup time — preferred.
+  //
+  // Fallback source: count INSERT statements in each table's SQL section.
+  // This works on any pg_dump-style file, including external/manual dumps
+  // that lack our header metadata.  One INSERT line = one row (our backup
+  // always emits single-row inserts; multi-row VALUES would be under-counted
+  // but still provide a meaningful lower-bound sanity check).
+  //
+  // Tables that appear in the dump but have no header AND zero INSERT lines
+  // are included with a count of 0 so mismatch logic can still flag them.
+  const insertCounts = parseDumpInsertCounts(sql);
+  const dumpRowCounts = new Map<string, number>();
+  // First populate with INSERT counts (covers every table in the dump).
+  insertCounts.forEach((n, table) => dumpRowCounts.set(table, n));
+  // Then override with authoritative header metadata where present.
+  {
     const headerRe = /-- Table: (\S+)\s+\|\s+rows in dump: (\d+)/g;
     let hm: RegExpExecArray | null;
     while ((hm = headerRe.exec(sql)) !== null) {
       dumpRowCounts.set(hm[1], parseInt(hm[2], 10));
     }
   }
+  // Track which tables have header metadata for logging purposes.
+  const tablesWithHeaderMetadata = new Set<string>();
+  {
+    const headerRe2 = /-- Table: (\S+)\s+\|\s+rows in dump: (\d+)/g;
+    let hm2: RegExpExecArray | null;
+    while ((hm2 = headerRe2.exec(sql)) !== null) {
+      tablesWithHeaderMetadata.add(hm2[1]);
+    }
+  }
+
+  // Configurable mismatch threshold: number of rows difference that is
+  // tolerated before a table is flagged. Defaults to 0 (any deviation flagged).
+  const RESTORE_MISMATCH_THRESHOLD = Math.max(
+    0,
+    parseInt(process.env.RESTORE_MISMATCH_THRESHOLD ?? "0", 10) || 0,
+  );
+
+  // The set of tables that were actually in scope for this restore operation.
+  const restoredTableSet = selective
+    ? new Set(allowList!)
+    : new Set([...tablesBefore, ...tablesAfter]);
 
   // Summary covers all tables that existed before OR after.
   const allTables = Array.from(new Set([...tablesBefore, ...tablesAfter])).sort();
@@ -791,18 +883,78 @@ export async function restoreFromSql(
     const rowsBefore = beforeCounts[t] ?? 0;
     const rowsAfter = afterCounts[t] ?? 0;
     const delta = rowsAfter - rowsBefore;
+    const rowsInDump = dumpRowCounts.get(t);
+    const inScope = restoredTableSet.has(t);
+
     if (mode === "merge") {
       // In merge mode no rows are deleted before insert, so delta = rows actually added.
       const rowsAdded = Math.max(0, delta);
-      const dumpRows = dumpRowCounts?.get(t);
-      const rowsSkipped = dumpRows != null ? Math.max(0, dumpRows - rowsAdded) : undefined;
-      return { table: t, rowsBefore, rowsAfter, delta, rowsAdded, rowsSkipped };
+      // rowsSkipped is a display hint: rows from the dump that did not add to the count.
+      // Kept as a simple derived field for the UI — NOT used for mismatch detection.
+      const rowsSkipped = rowsInDump != null ? Math.max(0, rowsInDump - rowsAdded) : undefined;
+      // Merge-mode mismatch: after inserting (with ON CONFLICT DO NOTHING), the table
+      // must contain AT LEAST as many rows as the dump declared — because every dump
+      // row either landed in the DB (rowsAdded) or conflicted with an already-existing
+      // row (which is still in the DB). If rowsAfter < rowsInDump the DB has fewer rows
+      // than the dump expected: rows were silently lost rather than merely skipped.
+      // This formula is intentionally asymmetric and NOT self-canceling.
+      const mismatch =
+        inScope && rowsInDump != null
+          ? rowsAfter < rowsInDump - RESTORE_MISMATCH_THRESHOLD
+          : undefined;
+      return { table: t, rowsBefore, rowsAfter, delta, rowsAdded, rowsSkipped, rowsInDump, mismatch };
     }
-    return { table: t, rowsBefore, rowsAfter, delta };
+
+    // Overwrite mode: rowsAfter should match rowsInDump exactly (within threshold).
+    const mismatch =
+      inScope && rowsInDump != null
+        ? Math.abs(rowsAfter - rowsInDump) > RESTORE_MISMATCH_THRESHOLD
+        : undefined;
+    return { table: t, rowsBefore, rowsAfter, delta, rowsInDump, mismatch };
   });
 
   const totalRowsBefore = tables.reduce((s, t) => s + t.rowsBefore, 0);
   const totalRowsAfter = tables.reduce((s, t) => s + t.rowsAfter, 0);
+
+  // Collect tables where the mismatch flag is true for structured reporting.
+  const rowMismatches: RestoreMismatch[] = tables
+    .filter((t) => t.mismatch === true && t.rowsInDump != null)
+    .map((t) => ({
+      table: t.table,
+      expected: t.rowsInDump!,
+      actual: t.rowsAfter,
+      diff: t.rowsAfter - t.rowsInDump!,
+    }));
+
+  {
+    const checkedCount = tables.filter(
+      (t) => t.rowsInDump != null && restoredTableSet.has(t.table),
+    ).length;
+    const headerCount = tablesWithHeaderMetadata.size;
+    const insertFallbackCount = checkedCount - headerCount;
+    const sourceNote =
+      insertFallbackCount > 0
+        ? `${headerCount} from header metadata, ${insertFallbackCount} from INSERT-count fallback`
+        : `${headerCount} from header metadata`;
+
+    if (rowMismatches.length > 0) {
+      console.warn(
+        `[restore] ⚠ Row-count mismatch on ${rowMismatches.length} table(s) after ${mode} restore` +
+          ` (threshold=${RESTORE_MISMATCH_THRESHOLD}, counts source: ${sourceNote}):`,
+      );
+      for (const m of rowMismatches) {
+        const sign = m.diff >= 0 ? "+" : "";
+        console.warn(
+          `[restore]   table="${m.table}"  expected=${m.expected}  actual=${m.actual}  diff=${sign}${m.diff}`,
+        );
+      }
+    } else {
+      console.log(
+        `[restore] ✓ Row-count sanity check passed — ${checkedCount} table(s) checked` +
+          ` within threshold=${RESTORE_MISMATCH_THRESHOLD} (${sourceNote}).`,
+      );
+    }
+  }
 
   return {
     durationMs: Date.now() - startedAt,
@@ -811,6 +963,7 @@ export async function restoreFromSql(
     tables,
     mode,
     ...(mode === "lenient" ? { skippedCount: lenientSkippedCount, skippedSamples: lenientSkippedSamples } : {}),
+    rowMismatches,
   };
 }
 

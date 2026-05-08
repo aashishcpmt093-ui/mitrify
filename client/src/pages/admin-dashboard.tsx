@@ -919,11 +919,12 @@ export default function AdminDashboardPage() {
     totalRowsBefore: number;
     totalRowsAfter: number;
     durationMs: number;
-    tables: Array<{ table: string; rowsBefore: number; rowsAfter: number; delta: number; rowsAdded?: number; rowsSkipped?: number }>;
+    tables: Array<{ table: string; rowsBefore: number; rowsAfter: number; delta: number; rowsAdded?: number; rowsSkipped?: number; rowsInDump?: number; mismatch?: boolean }>;
     allowList: string[] | null;
     mode: "merge" | "overwrite" | "lenient";
     skippedCount?: number;
     skippedSamples?: string[];
+    rowMismatches: Array<{ table: string; expected: number; actual: number; diff: number }>;
   } | null>(null);
   const [parsedTables, setParsedTables] = useState<Array<{ name: string; rowCount: number }> | null>(null);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
@@ -1150,24 +1151,40 @@ export default function AdminDashboardPage() {
               delta: t.delta ?? 0,
               rowsAdded: t.rowsAdded,
               rowsSkipped: t.rowsSkipped,
+              rowsInDump: t.rowsInDump,
+              mismatch: t.mismatch,
             }))
           : [],
         allowList: Array.isArray(data.allowList) ? data.allowList : null,
         mode: resultMode,
         skippedCount: data.skippedCount,
         skippedSamples: data.skippedSamples,
+        rowMismatches: Array.isArray(data.rowMismatches) ? data.rowMismatches : [],
       });
       const totalAdded = resultMode === "merge"
         ? (data.tables ?? []).reduce((s: number, t: any) => s + (t.rowsAdded ?? Math.max(0, t.delta ?? 0)), 0)
         : data.totalRowsAfter ?? 0;
-      toast({
-        title: resultMode === "lenient" ? "Best-effort restore complete" : resultMode === "merge" ? "Merge restore complete" : "Restore complete",
-        description: resultMode === "lenient"
-          ? `${data.totalRowsAfter ?? 0} rows restored. ${data.skippedCount ?? 0} statement${(data.skippedCount ?? 0) !== 1 ? "s" : ""} skipped.`
-          : resultMode === "merge"
-          ? `${totalAdded} new rows added across ${data.tables?.length ?? 0} tables.`
-          : `${data.totalRowsAfter ?? 0} rows restored across ${data.tables?.length ?? 0} tables.`,
-      });
+      const mismatches: Array<{ table: string; expected: number; actual: number; diff: number }> =
+        Array.isArray(data.rowMismatches) ? data.rowMismatches : [];
+      if (mismatches.length > 0) {
+        toast({
+          title: `⚠ Row-count mismatch on ${mismatches.length} table${mismatches.length !== 1 ? "s" : ""}`,
+          description: mismatches
+            .slice(0, 3)
+            .map((m) => `${m.table}: expected ${m.expected}, got ${m.actual}`)
+            .join(" · ") + (mismatches.length > 3 ? ` · +${mismatches.length - 3} more` : ""),
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: resultMode === "lenient" ? "Best-effort restore complete" : resultMode === "merge" ? "Merge restore complete" : "Restore complete",
+          description: resultMode === "lenient"
+            ? `${data.totalRowsAfter ?? 0} rows restored. ${data.skippedCount ?? 0} statement${(data.skippedCount ?? 0) !== 1 ? "s" : ""} skipped.`
+            : resultMode === "merge"
+            ? `${totalAdded} new rows added across ${data.tables?.length ?? 0} tables.`
+            : `${data.totalRowsAfter ?? 0} rows restored across ${data.tables?.length ?? 0} tables.`,
+        });
+      }
       queryClient.invalidateQueries();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Restore failed";
@@ -6795,6 +6812,48 @@ export default function AdminDashboardPage() {
               </div>
             )}
 
+            {/* Row-count mismatch warning — shown when post-restore counts differ from dump */}
+            {restoreSummary && restoreSummary.rowMismatches.length > 0 && (
+              <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50/70 dark:bg-amber-900/20 p-3 space-y-2 mt-2" data-testid="restore-mismatch-warning">
+                <div className="flex items-start gap-2">
+                  <svg className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">
+                      Row-count mismatch on {restoreSummary.rowMismatches.length} table{restoreSummary.rowMismatches.length !== 1 ? "s" : ""}
+                    </p>
+                    <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-0.5">
+                      The number of rows in the database after restore does not match the count recorded in the backup file.
+                      This may indicate rows were silently skipped (e.g. ON CONFLICT) or the backup was incomplete.
+                    </p>
+                    <div className="mt-2 rounded border border-amber-200 dark:border-amber-700 bg-white dark:bg-slate-900 overflow-x-auto">
+                      <table className="w-full text-[11px]">
+                        <thead className="bg-amber-100/60 dark:bg-amber-900/30">
+                          <tr>
+                            <th className="text-left px-2 py-1 font-semibold">Table</th>
+                            <th className="text-right px-2 py-1 font-semibold">Expected (dump)</th>
+                            <th className="text-right px-2 py-1 font-semibold">Actual (DB)</th>
+                            <th className="text-right px-2 py-1 font-semibold">Diff</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {restoreSummary.rowMismatches.map((m) => (
+                            <tr key={m.table} className="border-t border-amber-100 dark:border-amber-900/40" data-testid={`row-mismatch-${m.table}`}>
+                              <td className="px-2 py-1 font-mono">{m.table}</td>
+                              <td className="px-2 py-1 text-right text-muted-foreground">{m.expected.toLocaleString("en-IN")}</td>
+                              <td className="px-2 py-1 text-right font-semibold">{m.actual.toLocaleString("en-IN")}</td>
+                              <td className={`px-2 py-1 text-right font-semibold ${m.diff < 0 ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"}`}>
+                                {m.diff >= 0 ? "+" : ""}{m.diff.toLocaleString("en-IN")}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Per-table summary after restore */}
             {restoreSummary && (() => {
               const isSelective = Array.isArray(restoreSummary.allowList) && restoreSummary.allowList.length > 0;
@@ -6871,13 +6930,16 @@ export default function AdminDashboardPage() {
                           const tableSkipped = isSelective && !allowSet!.has(t.table);
                           const rowsAdded = t.rowsAdded ?? Math.max(0, t.delta);
                           const rowsSkipped = t.rowsSkipped;
+                          const hasMismatch = !tableSkipped && t.mismatch === true;
                           return (
                             <tr
                               key={t.table}
-                              className={`border-t border-emerald-100 dark:border-emerald-900/40${tableSkipped ? " opacity-40" : ""}`}
+                              className={`border-t border-emerald-100 dark:border-emerald-900/40${tableSkipped ? " opacity-40" : ""}${hasMismatch ? " bg-amber-50/60 dark:bg-amber-900/10" : ""}`}
                               data-testid={tableSkipped ? `row-restore-skipped-${t.table}` : `row-restore-${t.table}`}
                             >
-                              <td className={`px-2 py-1 font-mono${tableSkipped ? " italic text-muted-foreground" : ""}`}>{t.table}</td>
+                              <td className={`px-2 py-1 font-mono${tableSkipped ? " italic text-muted-foreground" : ""}${hasMismatch ? " text-amber-700 dark:text-amber-300" : ""}`}>
+                                {t.table}{hasMismatch && <span className="ml-1 text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/40 rounded px-1">⚠ mismatch</span>}
+                              </td>
                               {isMerge ? (
                                 <>
                                   <td className="px-2 py-1 text-right font-semibold text-emerald-700 dark:text-emerald-300">
