@@ -654,13 +654,17 @@ export async function restoreFromSql(
   if (mode === "lenient") {
     const lenientClient = await pool.connect();
     _activeRestore = { pid: null, cancelled: false };
+    let lenientReplicationRoleSet = false;
     try {
       try {
         const pidRes = await lenientClient.query("SELECT pg_backend_pid() AS pid");
         if (_activeRestore) _activeRestore.pid = Number(pidRes.rows[0].pid);
       } catch {}
       // Best-effort FK suppression (non-fatal if not allowed)
-      try { await lenientClient.query("SET session_replication_role = 'replica'"); } catch {}
+      try {
+        await lenientClient.query("SET session_replication_role = 'replica'");
+        lenientReplicationRoleSet = true;
+      } catch {}
       try { await lenientClient.query("SET CONSTRAINTS ALL DEFERRED"); } catch {}
 
       const stmts = splitSqlStatements(sqlToRun);
@@ -678,7 +682,6 @@ export async function restoreFromSql(
           console.warn("[restore/lenient] Skipped statement:", stmtErr?.message, "| SQL:", stmt.slice(0, 120));
         }
       }
-      try { await lenientClient.query("SET session_replication_role = 'origin'"); } catch {}
     } catch (err) {
       if (_activeRestore?.cancelled || err instanceof RestoreCancelledError) {
         // release handled in finally
@@ -686,6 +689,10 @@ export async function restoreFromSql(
       }
       throw err;
     } finally {
+      // Always restore session role before returning client to pool
+      if (lenientReplicationRoleSet) {
+        try { await lenientClient.query("SET session_replication_role = 'origin'"); } catch {}
+      }
       _activeRestore = null;
       lenientClient.release();
     }
