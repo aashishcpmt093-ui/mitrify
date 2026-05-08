@@ -96,7 +96,9 @@ function sqlLiteral(val: any, dataType?: string): string {
   if (typeof val === "object") {
     return `'${JSON.stringify(val).replace(/'/g, "''")}'::jsonb`;
   }
-  return `'${String(val).replace(/'/g, "''")}'`;
+  // Use PostgreSQL escape-string syntax (E'...') so backslash sequences are
+  // interpreted by the server and the literal stays on a single line.
+  return `E'${String(val).replace(/\\/g, "\\\\").replace(/'/g, "''").replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t")}'`;
 }
 
 function quoteIdent(s: string) { return `"${s.replace(/"/g, '""')}"`; }
@@ -624,6 +626,21 @@ export async function restoreFromSql(
   // INSERTs to be idempotent (ON CONFLICT DO NOTHING).
   if (mode === "merge") {
     sqlToRun = applyMergeConflictResolution(sqlToRun);
+  }
+
+  // Smoke-test log: parse statements with the proper splitter and find the
+  // first INSERT to confirm ON CONFLICT DO NOTHING is intact before executing.
+  {
+    const stmts = splitSqlStatements(sqlToRun);
+    const firstInsert = stmts.find((s) => /^INSERT\s+INTO/i.test(s));
+    if (firstInsert) {
+      const snippet = firstInsert.slice(0, 200);
+      if (/ON\s+CONFLICT\s+DO\s+NOTHING/i.test(firstInsert)) {
+        console.log("[restore] First INSERT has ON CONFLICT DO NOTHING. Snippet:", snippet);
+      } else {
+        console.warn("[restore] WARNING: First INSERT is missing ON CONFLICT DO NOTHING. Snippet:", snippet);
+      }
+    }
   }
 
   const client = await pool.connect();
@@ -1264,22 +1281,69 @@ export function startBackupScheduler(): void {
   schedule();
 }
 
+/**
+ * Split a SQL string into individual statements using a character-level parser
+ * that respects single-quoted strings (including '' escape sequences).
+ * This prevents semicolons or newlines inside quoted values from being
+ * mistakenly treated as statement boundaries.
+ */
+function splitSqlStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let current = "";
+  let inString = false;
+  let i = 0;
+  while (i < sql.length) {
+    const ch = sql[i];
+    if (inString) {
+      if (ch === "'") {
+        // Check for escaped quote '' — consume both and stay in string
+        if (sql[i + 1] === "'") {
+          current += "''";
+          i += 2;
+          continue;
+        }
+        // Closing quote
+        current += ch;
+        inString = false;
+      } else {
+        current += ch;
+      }
+      i++;
+    } else {
+      if (ch === "'") {
+        inString = true;
+        current += ch;
+        i++;
+      } else if (ch === "-" && sql[i + 1] === "-") {
+        // Line comment — skip to end of line
+        const end = sql.indexOf("\n", i);
+        i = end === -1 ? sql.length : end + 1;
+      } else if (ch === ";") {
+        const stmt = current.trim();
+        if (stmt && stmt !== "BEGIN" && stmt !== "COMMIT") {
+          statements.push(stmt);
+        }
+        current = "";
+        i++;
+      } else {
+        current += ch;
+        i++;
+      }
+    }
+  }
+  const remainder = current.trim();
+  if (remainder && remainder !== "BEGIN" && remainder !== "COMMIT") {
+    statements.push(remainder);
+  }
+  return statements;
+}
+
 export async function restoreBackupSql(sqlText: string): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const cleaned = sqlText.replace(/\r\n/g, "\n");
-    const statements = cleaned
-      .split(";\n")
-      .map((s) => s.trim())
-      .filter((s) => s && !s.startsWith("--"));
-    for (const statement of statements) {
-      const body = statement
-        .split("\n")
-        .filter((line) => !line.trim().startsWith("--"))
-        .join("\n")
-        .trim();
-      if (!body || body === "BEGIN" || body === "COMMIT") continue;
+    const statements = splitSqlStatements(sqlText);
+    for (const body of statements) {
       await client.query(body.endsWith(";") ? body : `${body};`);
     }
     await client.query("COMMIT");
