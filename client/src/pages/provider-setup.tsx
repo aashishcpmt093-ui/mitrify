@@ -351,8 +351,6 @@ export default function ProviderSetupPage() {
         district: district || null,
         isActive: true,
         isHidden,
-        name,
-        mobile: verifiedNumbers[0] || null,
         profilePhoto: profilePhoto || null,
       });
 

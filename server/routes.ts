@@ -699,7 +699,8 @@ export async function registerRoutes(
         }
       }
 
-      const data = { ...req.body, userId, mobileNumbers: verifiedNumbers };
+      const { name, mobile, role, ...providerBody } = req.body;
+      const data = { ...providerBody, userId, mobileNumbers: verifiedNumbers };
       const provider = existing
         ? await storage.updateProvider(userId, data)
         : await storage.createProvider(data);
@@ -734,7 +735,8 @@ export async function registerRoutes(
           }
         }
       }
-      const provider = await storage.updateProvider(userId, req.body);
+      const { name, mobile, role, ...providerBody } = req.body;
+      const provider = await storage.updateProvider(userId, providerBody);
       res.json(provider);
     } catch (error: any) {
       res.status(400).json({ message: error.message || "Failed to update" });
