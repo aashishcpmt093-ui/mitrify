@@ -76,8 +76,11 @@ export async function sendBackupAlert(opts: {
   }
 }
 
-function sqlLiteral(val: any): string {
+function sqlLiteral(val: any, dataType?: string): string {
   if (val === null || val === undefined) return "NULL";
+  if (dataType === "json" || dataType === "jsonb") {
+    return `'${JSON.stringify(val).replace(/'/g, "''")}'::jsonb`;
+  }
   if (typeof val === "boolean") return val ? "TRUE" : "FALSE";
   if (typeof val === "number") return Number.isFinite(val) ? String(val) : "NULL";
   if (typeof val === "bigint") return val.toString();
@@ -317,7 +320,7 @@ export async function streamBackupSql(
         );
         if (rowsRes.rows.length === 0) break;
         for (const row of rowsRes.rows) {
-          const vals = cols.map((c) => sqlLiteral(row[c])).join(", ");
+          const vals = cols.map((c) => sqlLiteral(row[c], colTypes[c])).join(", ");
           write(`INSERT INTO ${quoteIdent(table)} (${colList}) VALUES (${vals}) ON CONFLICT DO NOTHING;\n`);
           lastId = Number(row.id) || lastId;
         }
@@ -331,7 +334,7 @@ export async function streamBackupSql(
         );
         if (rowsRes.rows.length === 0) break;
         for (const row of rowsRes.rows) {
-          const vals = cols.map((c) => sqlLiteral(row[c])).join(", ");
+          const vals = cols.map((c) => sqlLiteral(row[c], colTypes[c])).join(", ");
           write(`INSERT INTO ${quoteIdent(table)} (${colList}) VALUES (${vals}) ON CONFLICT DO NOTHING;\n`);
         }
         offset += rowsRes.rows.length;
