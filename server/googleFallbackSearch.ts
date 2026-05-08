@@ -18,7 +18,7 @@
 //     stop hitting Google at all once the admin verifies them.
 
 import { type InsertCoAdmin, pendingProviders } from "@shared/schema";
-import { cleanBusinessName, extractDescriptionSuffix, mergeDescription } from "./lib/cleanName";
+import { cleanBusinessName, extractDescriptionSuffix } from "./lib/cleanName";
 import { storage } from "./storage";
 import { findKnownPhones, normalizePhone as normalizePhoneShared } from "./phoneDedupe";
 import { db } from "./db";
