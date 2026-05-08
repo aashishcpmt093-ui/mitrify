@@ -401,6 +401,151 @@ export interface RestoreResult {
   /** Tables where the post-restore row count deviates from the dump's recorded
    *  count by more than RESTORE_MISMATCH_THRESHOLD. Empty array = clean restore. */
   rowMismatches: RestoreMismatch[];
+  /** Lenient mode only: tables where column lists were adjusted to match live schema. */
+  schemaAdjustments?: Array<{ table: string; stripped: string[]; injected: string[] }>;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Schema-aware INSERT rewriting for lenient restore mode
+// ─────────────────────────────────────────────────────────────
+
+interface LiveColInfo {
+  name: string;
+  /** True when the column has IS_NULLABLE = 'YES'. */
+  isNullable: boolean;
+  /** True when a column_default is set (Postgres will auto-fill on omission). */
+  hasDefault: boolean;
+}
+
+/**
+ * Tokenise a VALUES expression of the form `(v1, v2, ...)`.
+ * Handles single-quoted strings with '' escapes and nested parentheses.
+ */
+function splitSqlValues(parenExpr: string): string[] {
+  const inner = parenExpr.slice(1, parenExpr.length - 1);
+  const tokens: string[] = [];
+  let current = "";
+  let depth = 0;
+  let inStr = false;
+  let i = 0;
+  while (i < inner.length) {
+    const ch = inner[i];
+    if (inStr) {
+      current += ch;
+      if (ch === "'") {
+        if (inner[i + 1] === "'") { current += "'"; i += 2; continue; }
+        inStr = false;
+      }
+      i++;
+    } else if (ch === "'") {
+      inStr = true; current += ch; i++;
+    } else if (ch === "(") {
+      depth++; current += ch; i++;
+    } else if (ch === ")") {
+      depth--; current += ch; i++;
+    } else if (ch === "," && depth === 0) {
+      tokens.push(current.trim()); current = ""; i++;
+    } else {
+      current += ch; i++;
+    }
+  }
+  if (current.trim()) tokens.push(current.trim());
+  return tokens;
+}
+
+interface ParsedInsert {
+  table: string;
+  cols: string[];
+  valuesExpr: string;
+  suffix: string;
+}
+
+/** Parse `INSERT INTO "t" (c1, c2) VALUES (...) ON CONFLICT DO NOTHING` into parts. */
+function parseInsertStatement(stmt: string): ParsedInsert | null {
+  const headerMatch = /^INSERT\s+INTO\s+"?(\w+)"?\s*\(([^)]+)\)\s+VALUES\s*/i.exec(stmt);
+  if (!headerMatch) return null;
+  const table = headerMatch[1];
+  const cols = headerMatch[2].split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
+  const rest = stmt.slice(headerMatch[0].length);
+  // Find the VALUES (...) group using balanced-paren scan with string awareness
+  let depth = 0;
+  let start = -1;
+  let end = -1;
+  let inStr = false;
+  for (let i = 0; i < rest.length; i++) {
+    const ch = rest[i];
+    if (inStr) {
+      if (ch === "'" && rest[i + 1] === "'") { i++; continue; }
+      if (ch === "'") inStr = false;
+    } else if (ch === "'") {
+      inStr = true;
+    } else if (ch === "(" && depth === 0) {
+      depth = 1; start = i;
+    } else if (ch === "(") {
+      depth++;
+    } else if (ch === ")") {
+      depth--;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+  if (start === -1 || end === -1) return null;
+  return {
+    table,
+    cols,
+    valuesExpr: rest.slice(start, end + 1),
+    suffix: rest.slice(end + 1),
+  };
+}
+
+/**
+ * Rewrite an INSERT statement so its column list matches the live schema.
+ * - Columns in the dump that no longer exist in the live schema are dropped.
+ * - Columns required by the live schema (NOT NULL, no default) that are absent
+ *   from the dump are injected as NULL so the row can still be inserted.
+ * Returns null when no rewrite is needed.
+ */
+function rewriteInsertForSchema(
+  stmt: string,
+  liveCols: LiveColInfo[],
+): { rewritten: string; stripped: string[]; injected: string[] } | null {
+  const parsed = parseInsertStatement(stmt);
+  if (!parsed) return null;
+
+  const liveColNames = new Set(liveCols.map((c) => c.name));
+  const dumpColNames = new Set(parsed.cols);
+
+  const stripped = parsed.cols.filter((c) => !liveColNames.has(c));
+  const injected = liveCols.filter(
+    (c) => !dumpColNames.has(c.name) && !c.isNullable && !c.hasDefault,
+  ).map((c) => c.name);
+
+  if (stripped.length === 0 && injected.length === 0) return null;
+
+  const values = splitSqlValues(parsed.valuesExpr);
+  if (values.length !== parsed.cols.length) return null;
+
+  const dumpValMap: Record<string, string> = {};
+  for (let i = 0; i < parsed.cols.length; i++) {
+    dumpValMap[parsed.cols[i]] = values[i];
+  }
+
+  const newCols: string[] = [];
+  const newVals: string[] = [];
+  for (const lc of liveCols) {
+    if (dumpValMap[lc.name] !== undefined) {
+      newCols.push(`"${lc.name}"`);
+      newVals.push(dumpValMap[lc.name]);
+    } else if (!lc.hasDefault) {
+      newCols.push(`"${lc.name}"`);
+      newVals.push("NULL");
+    }
+    // Has a server-side default → omit so Postgres fills it automatically
+  }
+
+  if (newCols.length === 0) return null;
+
+  const rewritten = `INSERT INTO "${parsed.table}" (${newCols.join(", ")}) VALUES (${newVals.join(", ")})${parsed.suffix}`;
+  return { rewritten, stripped, injected };
 }
 
 /**
@@ -706,8 +851,44 @@ export async function restoreFromSql(
   // ── Lenient mode: statement-by-statement, best-effort, no wrapping transaction ──
   let lenientSkippedCount = 0;
   const lenientSkippedSamples: string[] = [];
+  const lenientSchemaAdjustments: Array<{ table: string; stripped: string[]; injected: string[] }> = [];
 
   if (mode === "lenient") {
+    // Pre-load live schema for all tables that appear in the dump.
+    // We need column name, nullable, and default presence.
+    const dumpTables = Array.from(parseDumpSections(sqlToRun).keys()).filter(Boolean);
+    const liveSchemaMap = new Map<string, LiveColInfo[]>();
+    if (dumpTables.length > 0) {
+      try {
+        const schemaRes = await pool.query<{
+          table_name: string;
+          column_name: string;
+          is_nullable: string;
+          column_default: string | null;
+        }>(
+          `SELECT table_name, column_name, is_nullable, column_default
+             FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = ANY($1)
+            ORDER BY table_name, ordinal_position`,
+          [dumpTables],
+        );
+        for (const row of schemaRes.rows) {
+          if (!liveSchemaMap.has(row.table_name)) liveSchemaMap.set(row.table_name, []);
+          liveSchemaMap.get(row.table_name)!.push({
+            name: row.column_name,
+            isNullable: row.is_nullable === "YES",
+            hasDefault: row.column_default !== null,
+          });
+        }
+      } catch (schemaErr: unknown) {
+        const msg = schemaErr instanceof Error ? schemaErr.message : String(schemaErr);
+        console.warn("[restore/lenient] Could not pre-load live schema — column rewriting disabled:", msg);
+      }
+    }
+
+    // Track which tables have already had their schema-adjustment logged.
+    const adjustedTables = new Set<string>();
+
     const lenientClient = await pool.connect();
     _activeRestore = { pid: null, cancelled: false };
     let lenientReplicationRoleSet = false;
@@ -726,7 +907,33 @@ export async function restoreFromSql(
       const stmts = splitSqlStatements(sqlToRun);
       for (const stmt of stmts) {
         if (_activeRestore?.cancelled) throw new RestoreCancelledError();
-        const body = stmt.endsWith(";") ? stmt : `${stmt};`;
+
+        // Attempt schema-aware rewrite for INSERT statements.
+        let stmtToRun = stmt;
+        if (/^INSERT\s+INTO\s+/i.test(stmt)) {
+          const parsed = parseInsertStatement(stmt);
+          if (parsed && liveSchemaMap.has(parsed.table)) {
+            const rewriteResult = rewriteInsertForSchema(stmt, liveSchemaMap.get(parsed.table)!);
+            if (rewriteResult) {
+              stmtToRun = rewriteResult.rewritten;
+              if (!adjustedTables.has(parsed.table)) {
+                adjustedTables.add(parsed.table);
+                lenientSchemaAdjustments.push({
+                  table: parsed.table,
+                  stripped: rewriteResult.stripped,
+                  injected: rewriteResult.injected,
+                });
+                console.log(
+                  `[restore/lenient] Schema-adjusted INSERT for table "${parsed.table}":`,
+                  `stripped=[${rewriteResult.stripped.join(",")}]`,
+                  `injected=[${rewriteResult.injected.join(",")}]`,
+                );
+              }
+            }
+          }
+        }
+
+        const body = stmtToRun.endsWith(";") ? stmtToRun : `${stmtToRun};`;
         try {
           await lenientClient.query(body);
         } catch (stmtErr: unknown) {
@@ -962,7 +1169,11 @@ export async function restoreFromSql(
     totalRowsAfter,
     tables,
     mode,
-    ...(mode === "lenient" ? { skippedCount: lenientSkippedCount, skippedSamples: lenientSkippedSamples } : {}),
+    ...(mode === "lenient" ? {
+      skippedCount: lenientSkippedCount,
+      skippedSamples: lenientSkippedSamples,
+      schemaAdjustments: lenientSchemaAdjustments.length > 0 ? lenientSchemaAdjustments : undefined,
+    } : {}),
     rowMismatches,
   };
 }

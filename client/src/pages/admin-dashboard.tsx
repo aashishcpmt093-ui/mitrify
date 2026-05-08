@@ -924,6 +924,7 @@ export default function AdminDashboardPage() {
     mode: "merge" | "overwrite" | "lenient";
     skippedCount?: number;
     skippedSamples?: string[];
+    schemaAdjustments?: Array<{ table: string; stripped: string[]; injected: string[] }>;
     rowMismatches: Array<{ table: string; expected: number; actual: number; diff: number }>;
   } | null>(null);
   const [parsedTables, setParsedTables] = useState<Array<{ name: string; rowCount: number }> | null>(null);
@@ -1159,6 +1160,7 @@ export default function AdminDashboardPage() {
         mode: resultMode,
         skippedCount: data.skippedCount,
         skippedSamples: data.skippedSamples,
+        schemaAdjustments: Array.isArray(data.schemaAdjustments) ? data.schemaAdjustments : undefined,
         rowMismatches: Array.isArray(data.rowMismatches) ? data.rowMismatches : [],
       });
       const totalAdded = resultMode === "merge"
@@ -6893,6 +6895,23 @@ export default function AdminDashboardPage() {
                       )}
                     </p>
                   </div>
+                  {isLenient && Array.isArray(restoreSummary.schemaAdjustments) && restoreSummary.schemaAdjustments.length > 0 && (
+                    <div className="rounded border border-blue-200 dark:border-blue-700 bg-blue-50/60 dark:bg-blue-900/20 p-2 space-y-1" data-testid="restore-schema-adjustments">
+                      <p className="text-[10px] font-semibold text-blue-800 dark:text-blue-300 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                        Schema adjustments on {restoreSummary.schemaAdjustments.length} table{restoreSummary.schemaAdjustments.length !== 1 ? "s" : ""}:
+                      </p>
+                      <ul className="space-y-1">
+                        {restoreSummary.schemaAdjustments.map((adj, i) => (
+                          <li key={i} className="text-[9px] text-blue-700 dark:text-blue-400" data-testid={`restore-schema-adj-${adj.table}`}>
+                            <span className="font-mono font-semibold">{adj.table}</span>
+                            {adj.stripped.length > 0 && <span className="ml-1 text-orange-600 dark:text-orange-400">dropped: {adj.stripped.join(", ")}</span>}
+                            {adj.injected.length > 0 && <span className="ml-1 text-purple-600 dark:text-purple-400">NULL-filled: {adj.injected.join(", ")}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   {isLenient && Array.isArray(restoreSummary.skippedSamples) && restoreSummary.skippedSamples.length > 0 && (
                     <div className="rounded border border-amber-200 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-900/20 p-2 space-y-1" data-testid="restore-skipped-samples">
                       <p className="text-[10px] font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1">
