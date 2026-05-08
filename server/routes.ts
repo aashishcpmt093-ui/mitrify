@@ -3037,6 +3037,39 @@ export async function registerRoutes(
     return "merge";
   }
 
+  /**
+   * Parse an optional excludeList param from a request body.
+   * Accepts both a JSON array sent as a native array (application/json)
+   * or as a stringified JSON value (multipart/form-data).
+   */
+  function parseExcludeList(raw: unknown): string[] {
+    if (Array.isArray(raw) && raw.every((t) => typeof t === "string")) return raw as string[];
+    if (typeof raw === "string" && raw.trim()) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.every((t) => typeof t === "string")) return parsed as string[];
+      } catch { /* ignore */ }
+    }
+    return [];
+  }
+
+  /**
+   * Apply an excludeList on top of an allowList.
+   * If allowList is undefined (= all tables), derives it from the dump SQL first.
+   * Returns undefined only if the resulting list is empty (nothing to restore).
+   */
+  function applyExcludeList(
+    sql: string,
+    allowList: string[] | undefined,
+    excludeList: string[],
+  ): string[] | undefined {
+    if (excludeList.length === 0) return allowList;
+    const excluded = new Set(excludeList);
+    const base = allowList ?? parseTablesFromDump(sql);
+    const effective = base.filter((t) => !excluded.has(t));
+    return effective.length > 0 ? effective : undefined;
+  }
+
   // POST /api/admin/restore/preview — parse a .sql dump and return a
   // dry-run summary (table list + row counts from the file) without
   // touching the database.
@@ -3142,11 +3175,13 @@ export async function registerRoutes(
         }
       }
       const mode = parseRestoreMode(req.body?.mode);
+      const excludeList = parseExcludeList(req.body?.excludeList);
+      const effectiveAllowList = applyExcludeList(sql, allowList, excludeList);
       try {
-        const result = await restoreFromSql(sql, allowList, mode);
+        const result = await restoreFromSql(sql, effectiveAllowList, mode);
         res.json({
           message: "Restore completed successfully",
-          allowList: allowList ?? null,
+          allowList: effectiveAllowList ?? null,
           ...result,
         });
       } catch (err: unknown) {
@@ -3287,8 +3322,10 @@ export async function registerRoutes(
         }
       }
       const mode = parseRestoreMode(req.body?.mode);
-      const result = await restoreFromSql(sql, allowList, mode);
-      res.json({ message: "Restore completed successfully", source: gcsName, allowList: allowList ?? null, ...result });
+      const excludeList = parseExcludeList(req.body?.excludeList);
+      const effectiveAllowList = applyExcludeList(sql, allowList, excludeList);
+      const result = await restoreFromSql(sql, effectiveAllowList, mode);
+      res.json({ message: "Restore completed successfully", source: gcsName, allowList: effectiveAllowList ?? null, ...result });
     } catch (err: unknown) {
       if (err instanceof RestoreCancelledError) {
         return res.status(409).json({ message: "RESTORE_CANCELLED", cancelled: true });
@@ -3375,9 +3412,11 @@ export async function registerRoutes(
     const resolved = await resolveStoredBackup(req, res);
     if (!resolved) return;
     const mode = parseRestoreMode(req.body?.mode);
+    const excludeList = parseExcludeList(req.body?.excludeList);
+    const effectiveAllowList = applyExcludeList(resolved.sql, resolved.allowList, excludeList);
     try {
-      const result = await restoreFromSql(resolved.sql, resolved.allowList, mode);
-      res.json({ message: "Restore completed successfully", allowList: resolved.allowList ?? null, ...result });
+      const result = await restoreFromSql(resolved.sql, effectiveAllowList, mode);
+      res.json({ message: "Restore completed successfully", allowList: effectiveAllowList ?? null, ...result });
     } catch (err: unknown) {
       if (err instanceof RestoreCancelledError) {
         return res.status(409).json({ message: "RESTORE_CANCELLED", cancelled: true });
