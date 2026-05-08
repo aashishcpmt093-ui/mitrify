@@ -940,6 +940,7 @@ export default function AdminDashboardPage() {
     unknownStatements: string[];
     mode?: "merge" | "overwrite" | "lenient";
     schemaAdjustments?: Array<{ table: string; stripped: string[]; injected: string[]; unrecoverable: string[] }>;
+    schemaAdjustmentsUnavailable?: boolean;
   } | null>(null);
 
   async function handleBackupDownload() {
@@ -1059,6 +1060,7 @@ export default function AdminDashboardPage() {
         unknownStatements: Array.isArray(data.unknownStatements) ? data.unknownStatements : [],
         mode: data.mode ?? restoreStrategy,
         schemaAdjustments: Array.isArray(data.schemaAdjustments) ? data.schemaAdjustments : undefined,
+        schemaAdjustmentsUnavailable: data.schemaAdjustmentsUnavailable === true,
       });
       // For GCS: also use the preview response to populate the table checklist
       // on first preview (when we don't yet know what tables exist).
@@ -6798,6 +6800,14 @@ export default function AdminDashboardPage() {
                     </tbody>
                   </table>
                 </div>
+                {dryRunResult.mode === "lenient" && dryRunResult.schemaAdjustmentsUnavailable && (
+                  <div className="rounded border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/30 p-2" data-testid="dry-run-schema-unavailable">
+                    <p className="text-[10px] text-slate-600 dark:text-slate-400 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                      Schema adjustment preview unavailable — live DB schema could not be queried. Column differences (if any) will still be handled automatically during restore.
+                    </p>
+                  </div>
+                )}
                 {dryRunResult.mode === "lenient" && Array.isArray(dryRunResult.schemaAdjustments) && dryRunResult.schemaAdjustments.length > 0 && (
                   <div className="rounded border border-orange-200 dark:border-orange-700 bg-orange-50/60 dark:bg-orange-900/20 p-2 space-y-1" data-testid="dry-run-schema-adjustments">
                     <p className="text-[10px] font-semibold text-orange-800 dark:text-orange-300 flex items-center gap-1">

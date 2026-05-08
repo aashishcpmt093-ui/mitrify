@@ -3086,10 +3086,12 @@ export async function registerRoutes(
         const counts = await countRowsPerTable(preview.tables.map((t) => t.name));
         preview.tables = preview.tables.map((t) => ({ ...t, existingRowCount: counts[t.name] ?? 0 }));
       }
-      const schemaAdjustments = mode === "lenient"
-        ? await previewLenientSchemaAdjustments(sql, allowList)
-        : undefined;
-      res.json({ ...preview, mode, ...(schemaAdjustments && schemaAdjustments.length > 0 ? { schemaAdjustments } : {}) });
+      if (mode === "lenient") {
+        const { adjustments, schemaQueryFailed } = await previewLenientSchemaAdjustments(sql, allowList);
+        res.json({ ...preview, mode, ...(adjustments.length > 0 ? { schemaAdjustments: adjustments } : {}), ...(schemaQueryFailed ? { schemaAdjustmentsUnavailable: true } : {}) });
+      } else {
+        res.json({ ...preview, mode });
+      }
     },
   );
 
@@ -3248,10 +3250,12 @@ export async function registerRoutes(
         const counts = await countRowsPerTable(preview.tables.map((t) => t.name));
         preview.tables = preview.tables.map((t) => ({ ...t, existingRowCount: counts[t.name] ?? 0 }));
       }
-      const schemaAdjustments = mode === "lenient"
-        ? await previewLenientSchemaAdjustments(sql, allowList)
-        : undefined;
-      res.json({ ...preview, mode, ...(schemaAdjustments && schemaAdjustments.length > 0 ? { schemaAdjustments } : {}) });
+      if (mode === "lenient") {
+        const { adjustments, schemaQueryFailed } = await previewLenientSchemaAdjustments(sql, allowList);
+        res.json({ ...preview, mode, ...(adjustments.length > 0 ? { schemaAdjustments: adjustments } : {}), ...(schemaQueryFailed ? { schemaAdjustmentsUnavailable: true } : {}) });
+      } else {
+        res.json({ ...preview, mode });
+      }
     } catch (err: any) {
       console.error("GCS restore preview failed:", err);
       res.status(500).json({ message: err?.message || "Preview failed" });
@@ -3357,10 +3361,12 @@ export async function registerRoutes(
       const counts = await countRowsPerTable(preview.tables.map((t) => t.name));
       preview.tables = preview.tables.map((t) => ({ ...t, existingRowCount: counts[t.name] ?? 0 }));
     }
-    const schemaAdjustments = mode === "lenient"
-      ? await previewLenientSchemaAdjustments(resolved.sql, resolved.allowList)
-      : undefined;
-    res.json({ ...preview, mode, ...(schemaAdjustments && schemaAdjustments.length > 0 ? { schemaAdjustments } : {}) });
+    if (mode === "lenient") {
+      const { adjustments, schemaQueryFailed } = await previewLenientSchemaAdjustments(resolved.sql, resolved.allowList);
+      res.json({ ...preview, mode, ...(adjustments.length > 0 ? { schemaAdjustments: adjustments } : {}), ...(schemaQueryFailed ? { schemaAdjustmentsUnavailable: true } : {}) });
+    } else {
+      res.json({ ...preview, mode });
+    }
   });
 
   // POST /api/admin/restore/stored — replay a stored server-side backup file

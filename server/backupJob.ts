@@ -705,7 +705,7 @@ export interface SchemaAdjustmentPreview {
 export async function previewLenientSchemaAdjustments(
   sql: string,
   allowList?: string[],
-): Promise<SchemaAdjustmentPreview[]> {
+): Promise<{ adjustments: SchemaAdjustmentPreview[]; schemaQueryFailed: boolean }> {
   const sections = parseDumpSections(sql);
   const allowed = allowList && allowList.length > 0 ? new Set(allowList) : null;
 
@@ -726,7 +726,7 @@ export async function previewLenientSchemaAdjustments(
   });
 
   const tablesToCheck = Array.from(dumpColsMap.keys());
-  if (tablesToCheck.length === 0) return [];
+  if (tablesToCheck.length === 0) return { adjustments: [], schemaQueryFailed: false };
 
   // Load live schema for all target tables in one batch query.
   const liveSchemaMap = new Map<string, LiveColInfo[]>();
@@ -754,7 +754,7 @@ export async function previewLenientSchemaAdjustments(
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn("[restore/preview] Could not load live schema for adjustment preview:", msg);
-    return [];
+    return { adjustments: [], schemaQueryFailed: true };
   }
 
   const adjustments: SchemaAdjustmentPreview[] = [];
@@ -779,7 +779,7 @@ export async function previewLenientSchemaAdjustments(
     }
   }
 
-  return adjustments;
+  return { adjustments, schemaQueryFailed: false };
 }
 
 /**
