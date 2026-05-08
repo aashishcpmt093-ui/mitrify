@@ -374,7 +374,11 @@ export interface RestoreResult {
   totalRowsBefore: number;
   totalRowsAfter: number;
   tables: RestoreTableSummary[];
-  mode: "overwrite" | "merge";
+  mode: "overwrite" | "merge" | "lenient";
+  /** Lenient mode only: count of INSERT statements that were skipped due to errors. */
+  skippedCount?: number;
+  /** Lenient mode only: first few error messages for display. */
+  skippedSamples?: string[];
 }
 
 /**
@@ -593,7 +597,7 @@ export function markRestoreCancelled(): boolean {
 export async function restoreFromSql(
   sql: string,
   allowList?: string[],
-  mode: "overwrite" | "merge" = "overwrite",
+  mode: "overwrite" | "merge" | "lenient" = "overwrite",
 ): Promise<RestoreResult> {
   const startedAt = Date.now();
 
@@ -643,6 +647,51 @@ export async function restoreFromSql(
     }
   }
 
+  // ── Lenient mode: statement-by-statement, best-effort, no wrapping transaction ──
+  let lenientSkippedCount = 0;
+  const lenientSkippedSamples: string[] = [];
+
+  if (mode === "lenient") {
+    const lenientClient = await pool.connect();
+    _activeRestore = { pid: null, cancelled: false };
+    try {
+      try {
+        const pidRes = await lenientClient.query("SELECT pg_backend_pid() AS pid");
+        if (_activeRestore) _activeRestore.pid = Number(pidRes.rows[0].pid);
+      } catch {}
+      // Best-effort FK suppression (non-fatal if not allowed)
+      try { await lenientClient.query("SET session_replication_role = 'replica'"); } catch {}
+      try { await lenientClient.query("SET CONSTRAINTS ALL DEFERRED"); } catch {}
+
+      const stmts = splitSqlStatements(sqlToRun);
+      for (const stmt of stmts) {
+        if (_activeRestore?.cancelled) throw new RestoreCancelledError();
+        const body = stmt.endsWith(";") ? stmt : `${stmt};`;
+        try {
+          await lenientClient.query(body);
+        } catch (stmtErr: any) {
+          lenientSkippedCount++;
+          if (lenientSkippedSamples.length < 5) {
+            const msg = stmtErr?.message ?? String(stmtErr);
+            lenientSkippedSamples.push(`${msg.slice(0, 120)} — ${stmt.slice(0, 80)}`);
+          }
+          console.warn("[restore/lenient] Skipped statement:", stmtErr?.message, "| SQL:", stmt.slice(0, 120));
+        }
+      }
+      try { await lenientClient.query("SET session_replication_role = 'origin'"); } catch {}
+    } catch (err) {
+      if (_activeRestore?.cancelled || err instanceof RestoreCancelledError) {
+        _activeRestore = null;
+        lenientClient.release();
+        throw new RestoreCancelledError();
+      }
+      throw err;
+    } finally {
+      _activeRestore = null;
+      lenientClient.release();
+    }
+  } else {
+  // ── Normal (transactional) path ───────────────────────────────────────────
   const client = await pool.connect();
   _activeRestore = { pid: null, cancelled: false };
   try {
@@ -712,6 +761,7 @@ export async function restoreFromSql(
     _activeRestore = null;
     client.release();
   }
+  } // end of normal path
 
   const tablesAfter = await listPublicTables();
   const afterCounts = await countRowsPerTable(tablesAfter);
@@ -753,6 +803,7 @@ export async function restoreFromSql(
     totalRowsAfter,
     tables,
     mode,
+    ...(mode === "lenient" ? { skippedCount: lenientSkippedCount, skippedSamples: lenientSkippedSamples } : {}),
   };
 }
 

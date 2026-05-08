@@ -3031,8 +3031,10 @@ export async function registerRoutes(
   });
 
   /** Parse the optional mode field from a request body. Default = "merge". */
-  function parseRestoreMode(raw: any): "overwrite" | "merge" {
-    return raw === "overwrite" ? "overwrite" : "merge";
+  function parseRestoreMode(raw: any): "overwrite" | "merge" | "lenient" {
+    if (raw === "overwrite") return "overwrite";
+    if (raw === "lenient") return "lenient";
+    return "merge";
   }
 
   // POST /api/admin/restore/preview — parse a .sql dump and return a

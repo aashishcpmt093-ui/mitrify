@@ -907,7 +907,7 @@ export default function AdminDashboardPage() {
   const [gcsUploadResult, setGcsUploadResult] = useState<{ gcsName: string; url: string; size: number } | null>(null);
   const [testAlertPending, setTestAlertPending] = useState(false);
   const [restoreMode, setRestoreMode] = useState<"upload" | "stored" | "gcs">("upload");
-  const [restoreStrategy, setRestoreStrategy] = useState<"merge" | "overwrite">("merge");
+  const [restoreStrategy, setRestoreStrategy] = useState<"merge" | "overwrite" | "lenient">("merge");
   const [selectedGcsName, setSelectedGcsName] = useState<string>("");
   const [gcsListLoading, setGcsListLoading] = useState(false);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
@@ -921,7 +921,9 @@ export default function AdminDashboardPage() {
     durationMs: number;
     tables: Array<{ table: string; rowsBefore: number; rowsAfter: number; delta: number; rowsAdded?: number; rowsSkipped?: number }>;
     allowList: string[] | null;
-    mode: "merge" | "overwrite";
+    mode: "merge" | "overwrite" | "lenient";
+    skippedCount?: number;
+    skippedSamples?: string[];
   } | null>(null);
   const [parsedTables, setParsedTables] = useState<Array<{ name: string; rowCount: number }> | null>(null);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
@@ -1135,7 +1137,7 @@ export default function AdminDashboardPage() {
       if (!res.ok) {
         throw new Error(data?.message || `HTTP ${res.status}`);
       }
-      const resultMode: "merge" | "overwrite" = data.mode === "overwrite" ? "overwrite" : "merge";
+      const resultMode: "merge" | "overwrite" | "lenient" = data.mode === "overwrite" ? "overwrite" : data.mode === "lenient" ? "lenient" : "merge";
       setRestoreSummary({
         totalRowsBefore: data.totalRowsBefore ?? 0,
         totalRowsAfter: data.totalRowsAfter ?? 0,
@@ -1152,13 +1154,17 @@ export default function AdminDashboardPage() {
           : [],
         allowList: Array.isArray(data.allowList) ? data.allowList : null,
         mode: resultMode,
+        skippedCount: data.skippedCount,
+        skippedSamples: data.skippedSamples,
       });
       const totalAdded = resultMode === "merge"
         ? (data.tables ?? []).reduce((s: number, t: any) => s + (t.rowsAdded ?? Math.max(0, t.delta ?? 0)), 0)
         : data.totalRowsAfter ?? 0;
       toast({
-        title: resultMode === "merge" ? "Merge restore complete" : "Restore complete",
-        description: resultMode === "merge"
+        title: resultMode === "lenient" ? "Best-effort restore complete" : resultMode === "merge" ? "Merge restore complete" : "Restore complete",
+        description: resultMode === "lenient"
+          ? `${data.totalRowsAfter ?? 0} rows restored. ${data.skippedCount ?? 0} statement${(data.skippedCount ?? 0) !== 1 ? "s" : ""} skipped.`
+          : resultMode === "merge"
           ? `${totalAdded} new rows added across ${data.tables?.length ?? 0} tables.`
           : `${data.totalRowsAfter ?? 0} rows restored across ${data.tables?.length ?? 0} tables.`,
       });
@@ -6325,7 +6331,7 @@ export default function AdminDashboardPage() {
               })()}
             </div>
             {/* Restore strategy toggle */}
-            <div className="grid grid-cols-2 gap-2" data-testid="restore-strategy-toggle">
+            <div className="grid grid-cols-3 gap-2" data-testid="restore-strategy-toggle">
               <button
                 type="button"
                 onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("merge"); setRestoreConfirmed(false); setDryRunResult(null); } }}
@@ -6338,6 +6344,19 @@ export default function AdminDashboardPage() {
                   <span className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-200">Merge (default)</span>
                 </span>
                 <span className="text-[10px] text-muted-foreground leading-snug pl-4.5">Existing data safe — sirf naye rows add honge, duplicates skip</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { if (!restoreInProgress && !dryRunInProgress) { setRestoreStrategy("lenient"); setRestoreConfirmed(false); setDryRunResult(null); } }}
+                disabled={restoreInProgress || dryRunInProgress}
+                data-testid="button-strategy-lenient"
+                className={`flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-colors disabled:opacity-50 ${restoreStrategy === "lenient" ? "border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/30 ring-1 ring-amber-400 dark:ring-amber-600" : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-amber-300 dark:hover:border-amber-700"}`}
+              >
+                <span className="flex items-center gap-1.5">
+                  <span className={`w-3 h-3 rounded-full border-2 flex-shrink-0 ${restoreStrategy === "lenient" ? "border-amber-500 bg-amber-500" : "border-slate-300 dark:border-slate-600"}`} />
+                  <span className="text-[11px] font-semibold text-amber-800 dark:text-amber-200">Best-effort</span>
+                </span>
+                <span className="text-[10px] text-muted-foreground leading-snug pl-4.5">Broken rows skip — purane backups ke liye useful</span>
               </button>
               <button
                 type="button"
@@ -6360,6 +6379,13 @@ export default function AdminDashboardPage() {
                 <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5" />
                 <p className="text-[11px] leading-snug text-emerald-800 dark:text-emerald-200">
                   <strong>Safe restore:</strong> Existing data untouched rahega. Backup ki sirf woh rows DB mein add hongi jinke IDs abhi exist nahi karte. Duplicate rows skip ho jaayengi.
+                </p>
+              </div>
+            ) : restoreStrategy === "lenient" ? (
+              <div className="flex items-start gap-2 rounded-lg bg-amber-50/80 dark:bg-amber-900/30 p-2.5 border border-amber-200 dark:border-amber-800">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                <p className="text-[11px] leading-snug text-amber-800 dark:text-amber-200">
+                  <strong>Best-effort mode:</strong> Har row independently insert hogi. Jo rows schema mismatch ya error ki wajah se fail hongi woh skip ho jaayengi — baaki data import hota rahega. Purane ya partially-compatible backups ke liye useful hai.
                 </p>
               </div>
             ) : (
@@ -6762,7 +6788,7 @@ export default function AdminDashboardPage() {
                 )}
                 <p className="text-[11px] text-blue-700 dark:text-blue-300">
                   No data was written. Click <strong>Restore database</strong> to apply these changes
-                  {dryRunResult.mode === "merge" ? " (merge — existing rows will be kept)" : " (overwrite — existing rows will be replaced)"}.
+                  {dryRunResult.mode === "merge" ? " (merge — existing rows will be kept)" : dryRunResult.mode === "lenient" ? " (best-effort — broken rows will be skipped)" : " (overwrite — existing rows will be replaced)"}.
                 </p>
               </div>
             )}
@@ -6773,7 +6799,8 @@ export default function AdminDashboardPage() {
               const allowSet = isSelective ? new Set(restoreSummary.allowList!) : null;
               const restoredCount = isSelective ? allowSet!.size : restoreSummary.tables.length;
               const totalCount = restoreSummary.tables.length;
-              const isMerge = restoreSummary.mode === "merge";
+              const isMerge = restoreSummary.mode === "merge" || restoreSummary.mode === "lenient";
+              const isLenient = restoreSummary.mode === "lenient";
               const totalAdded = isMerge
                 ? restoreSummary.tables.reduce((s, t) => s + (t.rowsAdded ?? Math.max(0, t.delta)), 0)
                 : restoreSummary.totalRowsAfter;
@@ -6782,7 +6809,15 @@ export default function AdminDashboardPage() {
                   <div className="flex items-center gap-2">
                     <CheckCircle className="w-4 h-4 text-emerald-700 dark:text-emerald-300" />
                     <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-200">
-                      {isMerge ? (
+                      {isLenient ? (
+                        <>Best-effort complete — {restoreSummary.totalRowsAfter.toLocaleString("en-IN")} rows in{" "}
+                        {isSelective ? <>{restoredCount} of {totalCount} tables</> : <>{totalCount} tables</>}
+                        {typeof restoreSummary.skippedCount === "number" && restoreSummary.skippedCount > 0
+                          ? <>, <span className="text-amber-700 dark:text-amber-300">{restoreSummary.skippedCount} statement{restoreSummary.skippedCount !== 1 ? "s" : ""} skipped</span></>
+                          : null
+                        }
+                        {" "}({(restoreSummary.durationMs / 1000).toFixed(1)}s)</>
+                      ) : isMerge ? (
                         <>Merge complete — {totalAdded.toLocaleString("en-IN")} new rows added in{" "}
                         {isSelective ? <>{restoredCount} of {totalCount} tables</> : <>{totalCount} tables</>}
                         {" "}({(restoreSummary.durationMs / 1000).toFixed(1)}s)</>
