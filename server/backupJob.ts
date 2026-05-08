@@ -689,6 +689,99 @@ export interface PreviewResult {
   mode?: "overwrite" | "merge";
 }
 
+export interface SchemaAdjustmentPreview {
+  table: string;
+  stripped: string[];
+  injected: string[];
+  unrecoverable: string[];
+}
+
+/**
+ * Scan a dump's INSERT statements against the live DB schema to predict
+ * which column-level adjustments would be made during a lenient restore.
+ * Only tables that have at least one parseable INSERT statement are checked.
+ * Returns an empty array when the live schema cannot be queried.
+ */
+export async function previewLenientSchemaAdjustments(
+  sql: string,
+  allowList?: string[],
+): Promise<SchemaAdjustmentPreview[]> {
+  const sections = parseDumpSections(sql);
+  const allowed = allowList && allowList.length > 0 ? new Set(allowList) : null;
+
+  // Collect one representative INSERT per table to extract its dump column list.
+  const dumpColsMap = new Map<string, string[]>();
+  sections.forEach((block, table) => {
+    if (!table) return;
+    if (allowed && !allowed.has(table)) return;
+    for (const line of block.split("\n")) {
+      if (/^INSERT\s+INTO\s+/i.test(line.trimStart())) {
+        const parsed = parseInsertStatement(line.trim());
+        if (parsed && parsed.cols.length > 0) {
+          dumpColsMap.set(table, parsed.cols);
+          break;
+        }
+      }
+    }
+  });
+
+  const tablesToCheck = Array.from(dumpColsMap.keys());
+  if (tablesToCheck.length === 0) return [];
+
+  // Load live schema for all target tables in one batch query.
+  const liveSchemaMap = new Map<string, LiveColInfo[]>();
+  try {
+    const schemaRes = await pool.query<{
+      table_name: string;
+      column_name: string;
+      is_nullable: string;
+      column_default: string | null;
+    }>(
+      `SELECT table_name, column_name, is_nullable, column_default
+         FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = ANY($1)
+        ORDER BY table_name, ordinal_position`,
+      [tablesToCheck],
+    );
+    for (const row of schemaRes.rows) {
+      if (!liveSchemaMap.has(row.table_name)) liveSchemaMap.set(row.table_name, []);
+      liveSchemaMap.get(row.table_name)!.push({
+        name: row.column_name,
+        isNullable: row.is_nullable === "YES",
+        hasDefault: row.column_default !== null,
+      });
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn("[restore/preview] Could not load live schema for adjustment preview:", msg);
+    return [];
+  }
+
+  const adjustments: SchemaAdjustmentPreview[] = [];
+  for (const [table, cols] of dumpColsMap) {
+    const liveCols = liveSchemaMap.get(table);
+    if (!liveCols) continue; // table doesn't exist in live DB; skip
+
+    const liveColNames = new Set(liveCols.map((c) => c.name));
+    const dumpColNames = new Set(cols);
+
+    const stripped = cols.filter((c) => !liveColNames.has(c));
+    const missingFromDump = liveCols.filter((c) => !dumpColNames.has(c.name));
+    const injected = missingFromDump
+      .filter((c) => c.isNullable && !c.hasDefault)
+      .map((c) => c.name);
+    const unrecoverable = missingFromDump
+      .filter((c) => !c.isNullable && !c.hasDefault)
+      .map((c) => c.name);
+
+    if (stripped.length > 0 || injected.length > 0 || unrecoverable.length > 0) {
+      adjustments.push({ table, stripped, injected, unrecoverable });
+    }
+  }
+
+  return adjustments;
+}
+
 /**
  * Parse a .sql dump produced by streamBackupSql and return a summary of what
  * a restore would do — without executing any SQL or touching the database.

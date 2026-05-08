@@ -15,7 +15,7 @@ import nodemailer from "nodemailer";
 import { createCashfreeOrder, verifyCashfreePayment } from "./cashfreeClient";
 import multer from "multer";
 import * as XLSX from "xlsx";
-import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory, recordBackupHistory, getSkippedReport, deleteSkippedReport } from "./backupJob";
+import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, previewLenientSchemaAdjustments, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory, recordBackupHistory, getSkippedReport, deleteSkippedReport } from "./backupJob";
 import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverStaleJobs } from "./lib/auto-tags";
 import { startAiWeeklyReportScheduler, sendAiWeeklyReport, rescheduleAiWeeklyReport } from "./aiWeeklyReport";
 import { AI_TOKEN_CONFIG_KEY, AI_TOKEN_HOUR_THRESHOLD_DEFAULT, getAiTokenThreshold, bustAiThresholdCache } from "./lib/aiConfig";
@@ -3086,7 +3086,10 @@ export async function registerRoutes(
         const counts = await countRowsPerTable(preview.tables.map((t) => t.name));
         preview.tables = preview.tables.map((t) => ({ ...t, existingRowCount: counts[t.name] ?? 0 }));
       }
-      res.json({ ...preview, mode });
+      const schemaAdjustments = mode === "lenient"
+        ? await previewLenientSchemaAdjustments(sql, allowList)
+        : undefined;
+      res.json({ ...preview, mode, ...(schemaAdjustments && schemaAdjustments.length > 0 ? { schemaAdjustments } : {}) });
     },
   );
 
@@ -3245,7 +3248,10 @@ export async function registerRoutes(
         const counts = await countRowsPerTable(preview.tables.map((t) => t.name));
         preview.tables = preview.tables.map((t) => ({ ...t, existingRowCount: counts[t.name] ?? 0 }));
       }
-      res.json({ ...preview, mode });
+      const schemaAdjustments = mode === "lenient"
+        ? await previewLenientSchemaAdjustments(sql, allowList)
+        : undefined;
+      res.json({ ...preview, mode, ...(schemaAdjustments && schemaAdjustments.length > 0 ? { schemaAdjustments } : {}) });
     } catch (err: any) {
       console.error("GCS restore preview failed:", err);
       res.status(500).json({ message: err?.message || "Preview failed" });
@@ -3351,7 +3357,10 @@ export async function registerRoutes(
       const counts = await countRowsPerTable(preview.tables.map((t) => t.name));
       preview.tables = preview.tables.map((t) => ({ ...t, existingRowCount: counts[t.name] ?? 0 }));
     }
-    res.json({ ...preview, mode });
+    const schemaAdjustments = mode === "lenient"
+      ? await previewLenientSchemaAdjustments(resolved.sql, resolved.allowList)
+      : undefined;
+    res.json({ ...preview, mode, ...(schemaAdjustments && schemaAdjustments.length > 0 ? { schemaAdjustments } : {}) });
   });
 
   // POST /api/admin/restore/stored — replay a stored server-side backup file

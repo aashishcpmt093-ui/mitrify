@@ -939,6 +939,7 @@ export default function AdminDashboardPage() {
     tables: Array<{ name: string; rowsInDump: number; existingRowCount?: number }>;
     unknownStatements: string[];
     mode?: "merge" | "overwrite" | "lenient";
+    schemaAdjustments?: Array<{ table: string; stripped: string[]; injected: string[]; unrecoverable: string[] }>;
   } | null>(null);
 
   async function handleBackupDownload() {
@@ -1057,6 +1058,7 @@ export default function AdminDashboardPage() {
         tables: Array.isArray(data.tables) ? data.tables : [],
         unknownStatements: Array.isArray(data.unknownStatements) ? data.unknownStatements : [],
         mode: data.mode ?? restoreStrategy,
+        schemaAdjustments: Array.isArray(data.schemaAdjustments) ? data.schemaAdjustments : undefined,
       });
       // For GCS: also use the preview response to populate the table checklist
       // on first preview (when we don't yet know what tables exist).
@@ -6796,6 +6798,24 @@ export default function AdminDashboardPage() {
                     </tbody>
                   </table>
                 </div>
+                {dryRunResult.mode === "lenient" && Array.isArray(dryRunResult.schemaAdjustments) && dryRunResult.schemaAdjustments.length > 0 && (
+                  <div className="rounded border border-orange-200 dark:border-orange-700 bg-orange-50/60 dark:bg-orange-900/20 p-2 space-y-1" data-testid="dry-run-schema-adjustments">
+                    <p className="text-[10px] font-semibold text-orange-800 dark:text-orange-300 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                      Schema differences detected on {dryRunResult.schemaAdjustments.length} table{dryRunResult.schemaAdjustments.length !== 1 ? "s" : ""} — INSERTs will be rewritten:
+                    </p>
+                    <ul className="space-y-1">
+                      {dryRunResult.schemaAdjustments.map((adj) => (
+                        <li key={adj.table} className="text-[9px]" data-testid={`dry-run-schema-adj-${adj.table}`}>
+                          <span className="font-mono font-semibold text-orange-800 dark:text-orange-200">{adj.table}</span>
+                          {adj.stripped.length > 0 && <span className="ml-1 text-orange-600 dark:text-orange-400">dropped: {adj.stripped.join(", ")}</span>}
+                          {adj.injected.length > 0 && <span className="ml-1 text-purple-600 dark:text-purple-400">NULL-filled: {adj.injected.join(", ")}</span>}
+                          {adj.unrecoverable.length > 0 && <span className="ml-1 text-red-600 dark:text-red-400">unrecoverable (rows will be skipped): {adj.unrecoverable.join(", ")}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 {dryRunResult.unknownStatements.length > 0 && (
                   <div className="space-y-1" data-testid="dry-run-unknown-statements">
                     <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1">
