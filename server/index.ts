@@ -10,6 +10,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { ensureSchema } from "./ensureSchema";
 
 const app = express();
 const httpServer = createServer(app);
@@ -76,6 +77,7 @@ httpServer.listen(
 );
 
 (async () => {
+  await ensureSchema();
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

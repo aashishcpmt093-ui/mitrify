@@ -1101,16 +1101,20 @@ export async function registerRoutes(
 
   app.get(api.admin.providers.path, adminCheck, async (req, res) => {
     try {
-      const providerProfiles = await storage.getProfilesByRole("provider");
-      const allProviders = await storage.getAllProviders();
+      const [providerProfiles, allProviders] = await Promise.all([
+        storage.getProfilesByRole("provider"),
+        storage.getAllProviders(),
+      ]);
       const result = providerProfiles.map(p => {
         const providerData = allProviders.find(pr => pr.userId === p.userId);
         return { ...p, providerData };
       });
       res.json(result);
-    } catch (error) {
-      console.error("[admin/providers]", error);
-      res.status(500).json({ message: "Failed to fetch providers" });
+    } catch (error: any) {
+      console.error("[admin/providers] FULL ERROR:", error);
+      // Include actual DB error in the message so it shows in the admin UI for diagnosis
+      const detail = error?.message || String(error);
+      res.status(500).json({ message: `Failed to fetch providers — ${detail}` });
     }
   });
 
