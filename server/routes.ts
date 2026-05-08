@@ -3056,18 +3056,22 @@ export async function registerRoutes(
   /**
    * Apply an excludeList on top of an allowList.
    * If allowList is undefined (= all tables), derives it from the dump SQL first.
-   * Returns undefined only if the resulting list is empty (nothing to restore).
+   * Always returns an array — callers must treat a returned empty array as
+   * "nothing to restore" and short-circuit BEFORE calling restoreFromSql, because
+   * restoreFromSql(sql, undefined) means "restore all tables".
    */
   function applyExcludeList(
     sql: string,
     allowList: string[] | undefined,
     excludeList: string[],
-  ): string[] | undefined {
-    if (excludeList.length === 0) return allowList;
+  ): { effective: string[]; allExcluded: boolean } {
+    if (excludeList.length === 0) {
+      return { effective: allowList ?? [], allExcluded: false };
+    }
     const excluded = new Set(excludeList);
     const base = allowList ?? parseTablesFromDump(sql);
     const effective = base.filter((t) => !excluded.has(t));
-    return effective.length > 0 ? effective : undefined;
+    return { effective, allExcluded: effective.length === 0 };
   }
 
   // POST /api/admin/restore/preview — parse a .sql dump and return a
@@ -3176,12 +3180,23 @@ export async function registerRoutes(
       }
       const mode = parseRestoreMode(req.body?.mode);
       const excludeList = parseExcludeList(req.body?.excludeList);
-      const effectiveAllowList = applyExcludeList(sql, allowList, excludeList);
+      // Start from the existing allowList (or undefined = all tables).
+      // When excludeList is non-empty, compute the effective list and guard against
+      // an empty result — restoreFromSql(sql, undefined) means "restore all tables",
+      // so we must never pass undefined when the admin explicitly excluded tables.
+      let resolvedAllowList: string[] | undefined = allowList;
+      if (excludeList.length > 0) {
+        const { effective, allExcluded } = applyExcludeList(sql, allowList, excludeList);
+        if (allExcluded) {
+          return res.status(400).json({ message: "No tables remain after applying exclude list — nothing to restore." });
+        }
+        resolvedAllowList = effective;
+      }
       try {
-        const result = await restoreFromSql(sql, effectiveAllowList, mode);
+        const result = await restoreFromSql(sql, resolvedAllowList, mode);
         res.json({
           message: "Restore completed successfully",
-          allowList: effectiveAllowList ?? null,
+          allowList: resolvedAllowList ?? null,
           ...result,
         });
       } catch (err: unknown) {
@@ -3323,9 +3338,16 @@ export async function registerRoutes(
       }
       const mode = parseRestoreMode(req.body?.mode);
       const excludeList = parseExcludeList(req.body?.excludeList);
-      const effectiveAllowList = applyExcludeList(sql, allowList, excludeList);
-      const result = await restoreFromSql(sql, effectiveAllowList, mode);
-      res.json({ message: "Restore completed successfully", source: gcsName, allowList: effectiveAllowList ?? null, ...result });
+      let resolvedAllowList: string[] | undefined = allowList;
+      if (excludeList.length > 0) {
+        const { effective, allExcluded } = applyExcludeList(sql, allowList, excludeList);
+        if (allExcluded) {
+          return res.status(400).json({ message: "No tables remain after applying exclude list — nothing to restore." });
+        }
+        resolvedAllowList = effective;
+      }
+      const result = await restoreFromSql(sql, resolvedAllowList, mode);
+      res.json({ message: "Restore completed successfully", source: gcsName, allowList: resolvedAllowList ?? null, ...result });
     } catch (err: unknown) {
       if (err instanceof RestoreCancelledError) {
         return res.status(409).json({ message: "RESTORE_CANCELLED", cancelled: true });
@@ -3413,10 +3435,17 @@ export async function registerRoutes(
     if (!resolved) return;
     const mode = parseRestoreMode(req.body?.mode);
     const excludeList = parseExcludeList(req.body?.excludeList);
-    const effectiveAllowList = applyExcludeList(resolved.sql, resolved.allowList, excludeList);
+    let resolvedAllowList: string[] | undefined = resolved.allowList;
+    if (excludeList.length > 0) {
+      const { effective, allExcluded } = applyExcludeList(resolved.sql, resolved.allowList, excludeList);
+      if (allExcluded) {
+        return res.status(400).json({ message: "No tables remain after applying exclude list — nothing to restore." });
+      }
+      resolvedAllowList = effective;
+    }
     try {
-      const result = await restoreFromSql(resolved.sql, effectiveAllowList, mode);
-      res.json({ message: "Restore completed successfully", allowList: effectiveAllowList ?? null, ...result });
+      const result = await restoreFromSql(resolved.sql, resolvedAllowList, mode);
+      res.json({ message: "Restore completed successfully", allowList: resolvedAllowList ?? null, ...result });
     } catch (err: unknown) {
       if (err instanceof RestoreCancelledError) {
         return res.status(409).json({ message: "RESTORE_CANCELLED", cancelled: true });
