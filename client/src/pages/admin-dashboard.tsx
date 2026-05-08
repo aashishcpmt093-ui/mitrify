@@ -3542,6 +3542,31 @@ export default function AdminDashboardPage() {
                 </div>
               )}
 
+              {/* Repair provider names — strip pipe-separated category suffixes */}
+              <div className="rounded-xl border border-orange-200 dark:border-orange-900 bg-orange-50 dark:bg-orange-950/20 p-3 space-y-2">
+                <p className="text-xs font-semibold text-orange-800 dark:text-orange-300">Fix: Provider Names Repair (Pipe Suffix Remove)</p>
+                <p className="text-xs text-orange-600 dark:text-orange-400">Jo providers ka naam mein extra info hai (jaise "ABC Plumbing | Civil | Shed Builder") — sirf pehla part naam banega, baaki description mein jayega. Sabhi users ke profiles fix honge.</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full h-8 text-xs border-orange-300 text-orange-700 dark:border-orange-700 dark:text-orange-300"
+                  data-testid="button-repair-provider-names"
+                  onClick={async () => {
+                    if (!window.confirm("Sabhi profiles ka naam fix karein? Yeh action safe hai aur undo ho sakti hai.")) return;
+                    try {
+                      const res = await fetch("/api/admin/repair-provider-names", { method: "POST", credentials: "include" });
+                      const d = await res.json();
+                      if (!res.ok) throw new Error(d.message || "Repair failed");
+                      toast({ title: `✅ ${d.profilesFixed} profiles + ${d.pendingFixed} pending records fix ho gaye (total: ${d.total})` });
+                    } catch (err: any) {
+                      toast({ title: err.message || "Repair failed", variant: "destructive" });
+                    }
+                  }}
+                >
+                  Fix Provider Names (Remove Pipe Suffixes)
+                </Button>
+              </div>
+
               {/* Backfill existing providers missing mobileNumbers */}
               <div className="rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/20 p-3 space-y-2">
                 <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">Fix: Purane Providers ka Mobile Number Restore Karein</p>

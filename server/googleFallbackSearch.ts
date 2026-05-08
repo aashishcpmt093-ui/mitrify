@@ -18,6 +18,7 @@
 //     stop hitting Google at all once the admin verifies them.
 
 import { type InsertCoAdmin, pendingProviders } from "@shared/schema";
+import { cleanBusinessName, extractDescriptionSuffix, mergeDescription } from "./lib/cleanName";
 import { storage } from "./storage";
 import { findKnownPhones, normalizePhone as normalizePhoneShared } from "./phoneDedupe";
 import { db } from "./db";
@@ -392,14 +393,19 @@ export async function searchSavedGoogleLeads(opts: {
 async function persistToPendingProviders(raw: RawPlace[], serviceName: string): Promise<void> {
   const records = raw
     .filter((p) => normalizePhone(p.phone).length >= 10 && p.latitude != null && p.longitude != null)
-    .map((p) => ({
-      name: p.name || "Unnamed Business",
-      mobile: p.phone,
-      serviceName,
-      address: p.address,
-      latitude: p.latitude as number,
-      longitude: p.longitude as number,
-    }));
+    .map((p) => {
+      const rawName = p.name || "Unnamed Business";
+      const descSuffix = extractDescriptionSuffix(rawName);
+      return {
+        name: cleanBusinessName(rawName),
+        mobile: p.phone,
+        serviceName,
+        address: p.address,
+        description: descSuffix || undefined,
+        latitude: p.latitude as number,
+        longitude: p.longitude as number,
+      };
+    });
   if (records.length === 0) return;
   const assignedTo = await ensureSystemCoAdmin();
   try {

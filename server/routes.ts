@@ -17,6 +17,7 @@ import multer from "multer";
 import * as XLSX from "xlsx";
 import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, previewLenientSchemaAdjustments, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory, recordBackupHistory, getSkippedReport, deleteSkippedReport, splitSqlStatements } from "./backupJob";
 import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverStaleJobs } from "./lib/auto-tags";
+import { cleanBusinessName, extractDescriptionSuffix, mergeDescription } from "./lib/cleanName";
 import { searchGoogleFallback, searchSavedGoogleLeads } from "./googleFallbackSearch";
 // Per-admin daily quota for Google Places admin search. In-memory map of
 // `{ adminKey -> [timestampMs] }`. Resets on process restart (acceptable —
@@ -2358,7 +2359,8 @@ export async function registerRoutes(
       const records: Array<{ name: string; mobile: string; addedBy: string }> = [];
       let skippedNoMobile = 0;
       for (const row of rows) {
-        const name = String(row[nameCol] || "").trim();
+        const rawName = String(row[nameCol] || "").trim();
+        const name = cleanBusinessName(rawName);
         const rawMobile = String(row[mobileCol] || "").trim().replace(/\D/g, "");
         if (!name) continue;
         if (rawMobile.length < 7) { skippedNoMobile++; continue; }
@@ -2401,7 +2403,9 @@ export async function registerRoutes(
       const records: Array<{ name: string; mobile: string; serviceName?: string; address?: string; description?: string }> = [];
       let skippedNoMobile = 0;
       for (const row of rows) {
-        const name = String(row[nameCol] || "").trim();
+        const rawName = String(row[nameCol] || "").trim();
+        const name = cleanBusinessName(rawName);
+        const nameSuffix = extractDescriptionSuffix(rawName);
         const rawMobile = String(row[mobileCol] || "").trim().replace(/\D/g, "");
         if (!name) continue;
         if (rawMobile.length < 7) { skippedNoMobile++; continue; }
@@ -2409,7 +2413,8 @@ export async function registerRoutes(
         if (mobile.length < 7) { skippedNoMobile++; continue; }
         const serviceName = serviceCol ? String(row[serviceCol] || "").trim() : "";
         const address = addressCol ? String(row[addressCol] || "").trim() : "";
-        const description = descriptionCol ? String(row[descriptionCol] || "").trim() : "";
+        const rawDescription = descriptionCol ? String(row[descriptionCol] || "").trim() : "";
+        const description = mergeDescription(rawDescription || null, nameSuffix) || "";
         records.push({ name, mobile, serviceName, address, description });
       }
       if (records.length === 0) return res.status(400).json({ message: `No valid records found. ${skippedNoMobile} rows had no mobile. Check column names.` });
@@ -2545,15 +2550,20 @@ export async function registerRoutes(
         return res.status(400).json({ message: `Co-admin '${assignToStr}' not found` });
       }
 
-      const records = places.map((p: any) => ({
-        name: String(p.name || "").trim() || "Unnamed Business",
-        mobile: String(p.phone || "").trim(),
-        serviceName: String(p.serviceName || serviceName || "").trim() || "Service",
-        address: String(p.address || "").trim(),
-        latitude: typeof p.latitude === "number" ? p.latitude : undefined,
-        longitude: typeof p.longitude === "number" ? p.longitude : undefined,
-        description: p.website ? `Website: ${p.website}` : undefined,
-      }));
+      const records = places.map((p: any) => {
+        const rawName = String(p.name || "").trim() || "Unnamed Business";
+        const descSuffix = extractDescriptionSuffix(rawName);
+        const baseDesc = p.website ? `Website: ${p.website}` : null;
+        return {
+          name: cleanBusinessName(rawName),
+          mobile: String(p.phone || "").trim(),
+          serviceName: String(p.serviceName || serviceName || "").trim() || "Service",
+          address: String(p.address || "").trim(),
+          latitude: typeof p.latitude === "number" ? p.latitude : undefined,
+          longitude: typeof p.longitude === "number" ? p.longitude : undefined,
+          description: mergeDescription(baseDesc, descSuffix) ?? undefined,
+        };
+      });
 
       const result = await storage.bulkCreateGooglePlaces(records, assignToStr, allowDuplicate === true);
 
@@ -2788,6 +2798,52 @@ export async function registerRoutes(
       res.json({ ok: true, updated });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Backfill failed" });
+    }
+  });
+
+  // One-time repair: strip pipe-separated suffixes from ALL profiles.name
+  // Safe to run multiple times — only touches rows where name contains '|'.
+  // Also repairs pending_providers rows that haven't been approved yet.
+  app.post("/api/admin/repair-provider-names", adminCheck, async (_req, res) => {
+    try {
+      const { sql: sqlExpr } = await import("drizzle-orm");
+
+      // 1. Fix profiles table (affects ALL users — customer + provider roles)
+      const profileRows = await db.execute(sqlExpr`
+        SELECT id, name FROM profiles WHERE name LIKE '%|%'
+      `);
+      let profilesFixed = 0;
+      for (const row of profileRows.rows as Array<{ id: number; name: string }>) {
+        const clean = row.name.split("|")[0].trim();
+        if (clean && clean !== row.name) {
+          await db.execute(sqlExpr`UPDATE profiles SET name = ${clean} WHERE id = ${row.id}`);
+          profilesFixed++;
+        }
+      }
+
+      // 2. Fix pending_providers table (not yet approved)
+      const ppRows = await db.execute(sqlExpr`
+        SELECT id, name, description FROM pending_providers WHERE name LIKE '%|%'
+      `);
+      let pendingFixed = 0;
+      for (const row of ppRows.rows as Array<{ id: number; name: string; description: string | null }>) {
+        const parts = row.name.split("|").map((s: string) => s.trim()).filter(Boolean);
+        const cleanName = parts[0] || row.name;
+        const suffix = parts.slice(1).join(" | ");
+        const newDesc = suffix
+          ? (row.description ? (row.description.includes(suffix) ? row.description : `${row.description} | ${suffix}`) : suffix)
+          : row.description;
+        if (cleanName !== row.name) {
+          await db.execute(sqlExpr`
+            UPDATE pending_providers SET name = ${cleanName}, description = ${newDesc} WHERE id = ${row.id}
+          `);
+          pendingFixed++;
+        }
+      }
+
+      res.json({ ok: true, profilesFixed, pendingFixed, total: profilesFixed + pendingFixed });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Repair failed" });
     }
   });
 

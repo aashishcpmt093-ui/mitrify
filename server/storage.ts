@@ -1,5 +1,6 @@
 import { db } from "./db";
 import { findKnownPhones } from "./phoneDedupe";
+import { cleanBusinessName, extractDescriptionSuffix, mergeDescription } from "./lib/cleanName";
 import {
   profiles, providers, calls, promoCodes, localUsers, credits, subscriptions, siteContent,
   coAdmins, pendingProviders, visitorStats, jobs, promoUsageLog, employees, searchLog,
@@ -1557,7 +1558,7 @@ export class DatabaseStorage implements IStorage {
       await this.createProfile({
         userId,
         role: "provider",
-        name: pp.name,
+        name: cleanBusinessName(pp.name),
         mobile: phone || "",
         isBlocked: false,
       });
@@ -1568,7 +1569,7 @@ export class DatabaseStorage implements IStorage {
       await this.createProfile({
         userId,
         role: "customer",
-        name: pp.name,
+        name: cleanBusinessName(pp.name),
         mobile: phone || "",
         isBlocked: false,
       });
@@ -1929,21 +1930,23 @@ export class DatabaseStorage implements IStorage {
     const insertedIds: number[] = [];
     const BATCH = 500;
     for (let i = 0; i < toInsert.length; i += BATCH) {
-      const chunk = toInsert.slice(i, i + BATCH).map(rec => ({
-        name: rec.name,
-        mobile: rec.mobile || "",
-        // Also pre-populate mobileNumbers so approvePendingProvider has a
-        // consistent array even if the co-admin skips adding numbers manually.
-        mobileNumbers: rec.mobile ? [rec.mobile] : [],
-        serviceName: rec.serviceName || "",
-        address: rec.address || "",
-        description: rec.description || null,
-        latitude: rec.latitude ?? null,
-        longitude: rec.longitude ?? null,
-        addedBy: assignedTo,
-        source: "google" as const,
-        status: "pending" as const,
-      }));
+      const chunk = toInsert.slice(i, i + BATCH).map(rec => {
+        const cleanName = cleanBusinessName(rec.name);
+        const descSuffix = extractDescriptionSuffix(rec.name);
+        return {
+          name: cleanName,
+          mobile: rec.mobile || "",
+          mobileNumbers: rec.mobile ? [rec.mobile] : [],
+          serviceName: rec.serviceName || "",
+          address: rec.address || "",
+          description: mergeDescription(rec.description || null, descSuffix),
+          latitude: rec.latitude ?? null,
+          longitude: rec.longitude ?? null,
+          addedBy: assignedTo,
+          source: "google" as const,
+          status: "pending" as const,
+        };
+      });
       try {
         const rows = await db.insert(pendingProviders).values(chunk).returning({ id: pendingProviders.id });
         imported += rows.length;
