@@ -681,8 +681,7 @@ export async function restoreFromSql(
       try { await lenientClient.query("SET session_replication_role = 'origin'"); } catch {}
     } catch (err) {
       if (_activeRestore?.cancelled || err instanceof RestoreCancelledError) {
-        _activeRestore = null;
-        lenientClient.release();
+        // release handled in finally
         throw new RestoreCancelledError();
       }
       throw err;

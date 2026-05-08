@@ -935,7 +935,7 @@ export default function AdminDashboardPage() {
     tableCount: number;
     tables: Array<{ name: string; rowsInDump: number; existingRowCount?: number }>;
     unknownStatements: string[];
-    mode?: "merge" | "overwrite";
+    mode?: "merge" | "overwrite" | "lenient";
   } | null>(null);
 
   async function handleBackupDownload() {
