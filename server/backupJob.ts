@@ -673,13 +673,13 @@ export async function restoreFromSql(
         const body = stmt.endsWith(";") ? stmt : `${stmt};`;
         try {
           await lenientClient.query(body);
-        } catch (stmtErr: any) {
+        } catch (stmtErr: unknown) {
           lenientSkippedCount++;
+          const errMsg = stmtErr instanceof Error ? stmtErr.message : String(stmtErr);
           if (lenientSkippedSamples.length < 5) {
-            const msg = stmtErr?.message ?? String(stmtErr);
-            lenientSkippedSamples.push(`${msg.slice(0, 120)} — ${stmt.slice(0, 80)}`);
+            lenientSkippedSamples.push(`${errMsg.slice(0, 120)} — [sql truncated]`);
           }
-          console.warn("[restore/lenient] Skipped statement:", stmtErr?.message, "| SQL:", stmt.slice(0, 120));
+          console.warn("[restore/lenient] Skipped statement:", errMsg.slice(0, 200));
         }
       }
     } catch (err) {

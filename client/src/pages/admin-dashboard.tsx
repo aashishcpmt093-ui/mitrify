@@ -6661,6 +6661,8 @@ export default function AdminDashboardPage() {
                   <span>
                     {restoreStrategy === "merge"
                       ? <>I understand this will add new rows from <strong>{sourceName}</strong>, keeping all existing rows untouched.</>
+                      : restoreStrategy === "lenient"
+                      ? <>I understand this will attempt to restore rows from <strong>{sourceName}</strong> in best-effort mode — broken or incompatible rows will be skipped and logged.</>
                       : parsedTables && selectedTables.size < (parsedTables?.length ?? 0) && selectedTables.size > 0
                         ? <>I understand this will permanently overwrite the <strong>{selectedTables.size} selected table{selectedTables.size !== 1 ? "s" : ""}</strong> with data from <strong>{sourceName}</strong>. Unselected tables are left unchanged.</>
                         : <>I understand this will permanently overwrite all existing data with the contents of <strong>{sourceName}</strong>.</>
