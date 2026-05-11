@@ -35,6 +35,7 @@ export const profiles = pgTable("profiles", {
   latitude: real("latitude"),
   longitude: real("longitude"),
   acceptDoubleCharge: boolean("accept_double_charge").default(false),
+  profileCompleted: boolean("profile_completed").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("profiles_user_role_idx").on(table.userId, table.role),
