@@ -160,6 +160,7 @@ import OurTeamPage from "@/pages/our-team";
 import EmployeeEditPage from "@/pages/employee-edit";
 import JobDetailPage from "@/pages/job-detail";
 import InvestmentPage from "@/pages/investment";
+import CompleteProfilePage from "@/pages/complete-profile";
 import NotFound from "@/pages/not-found";
 import VisitorCounter from "@/components/VisitorCounter";
 
@@ -353,6 +354,9 @@ function Router() {
       </Route>
       <Route path="/customer/edit-profile">
         <LoggedInRoute><EditProfilePage /></LoggedInRoute>
+      </Route>
+      <Route path="/complete-profile">
+        <LoggedInRoute><CompleteProfilePage /></LoggedInRoute>
       </Route>
 
       {/* Provider pages — login + provider profile required */}
