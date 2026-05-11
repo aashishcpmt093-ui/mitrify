@@ -613,7 +613,7 @@ export class DatabaseStorage implements IStorage {
     return provider;
   }
 
-  async searchProviders(query?: string, lat?: number, lng?: number, radius?: number): Promise<ProviderSearchResult[]> {
+  async searchProviders(query?: string, lat?: number, lng?: number, radius?: number, limit = 30, offset = 0): Promise<ProviderSearchResult[]> {
     // Use a short-lived in-memory cache for the heavy "load all providers + profiles + credits"
     // dataset. Repeated searches within the TTL are near-instant (avoids 3 full table scans).
     const ds = await getSearchDataset();
@@ -694,10 +694,13 @@ export class DatabaseStorage implements IStorage {
 
     // Use cached credit map; cap to top 200 results to keep payload light
     const creditMap = ds.creditMap;
+    const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(60, Math.floor(limit))) : 30;
+    const safeOffset = Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0;
     const top = scoredResults.slice(0, 200);
+    const paged = top.slice(safeOffset, safeOffset + safeLimit);
 
     const lowBalanceMap = ds.lowBalanceMap;
-    return top.map(({ provider, profile, distanceKm, distanceApprox, city, plan }) => {
+    return paged.map(({ provider, profile, distanceKm, distanceApprox, city, plan }) => {
       const contactHidden = provider.isHidden ?? false;
       // We no longer block calls just because the provider has 0 credits —
       // the customer can opt into a double-charge. canCall stays gated on

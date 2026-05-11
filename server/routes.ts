@@ -612,12 +612,14 @@ export async function registerRoutes(
   // only on Enter / button click / category click.
   app.get(api.providers.search.path, async (req: any, res) => {
     try {
-      const { query, lat, lng, radius } = req.query;
+      const { query, lat, lng, radius, limit, offset } = req.query;
       const results = await storage.searchProviders(
         query as string,
         lat ? parseFloat(lat as string) : undefined,
         lng ? parseFloat(lng as string) : undefined,
         radius ? parseFloat(radius as string) : undefined,
+        limit ? parseInt(limit as string, 10) : 30,
+        offset ? parseInt(offset as string, 10) : 0,
       );
       res.json({ results });
     } catch (error) {
