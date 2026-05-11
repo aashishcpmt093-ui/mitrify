@@ -126,6 +126,7 @@ function JobList({ jobList, jobListLoading, jobFilterText, jobFilterState, onSel
 }
 
 export default function CustomerHomePage() {
+  const PROVIDERS_PAGE_SIZE = 30;
   const { user, logout, isAuthenticated } = useAuth();
   const { toast } = useToast();
   const { t, lang, setLang } = useLanguage();
@@ -175,6 +176,10 @@ export default function CustomerHomePage() {
         { label: t("mailContact"), email: "contact@mitrify.in" },
       ];
   const [searching, setSearching] = useState(false);
+  const [providerOffset, setProviderOffset] = useState(0);
+  const [providerResults, setProviderResults] = useState<ProviderSearchResult[]>([]);
+  const [hasMoreProviders, setHasMoreProviders] = useState(false);
+  const [loadingMoreProviders, setLoadingMoreProviders] = useState(false);
   const [phoneQuery, setPhoneQuery] = useState("");
   const [phoneSearching, setPhoneSearching] = useState(false);
   const [jobMenuOpen, setJobMenuOpen] = useState(false);
@@ -239,6 +244,10 @@ export default function CustomerHomePage() {
     setShowMyPosts(false);
     setSelectedJob(null);
     setShowScrollToTop(false);
+    setProviderOffset(0);
+    setProviderResults([]);
+    setHasMoreProviders(false);
+    setLoadingMoreProviders(false);
     setScrollToTopVisible(false);
     if (contentRef.current) {
       contentRef.current.scrollTo(0, 0);
@@ -268,9 +277,16 @@ export default function CustomerHomePage() {
 
   const handleScroll = () => {
     if (contentRef.current) {
-      const shouldShow = contentRef.current.scrollTop > 300;
+      const { scrollTop, clientHeight, scrollHeight } = contentRef.current;
+      const shouldShow = scrollTop > 300;
       setShowScrollToTop(shouldShow);
       setScrollToTopVisible(shouldShow);
+      if (scrollHeight - (scrollTop + clientHeight) < 420) {
+        if (!loadingMoreProviders && !isLoading && hasMoreProviders && searching && !phoneSearching) {
+          setLoadingMoreProviders(true);
+          setProviderOffset((prev) => prev + PROVIDERS_PAGE_SIZE);
+        }
+      }
     }
   };
 
@@ -362,12 +378,14 @@ export default function CustomerHomePage() {
   });
 
   const { data: searchData, refetch, isLoading } = useQuery<{ results: ProviderSearchResult[], suggestion?: string | null }>({
-    queryKey: ["/api/providers/search", searchQuery, activeLat, activeLng],
+    queryKey: ["/api/providers/search", searchQuery, activeLat, activeLng, providerOffset],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (searchQuery) params.set("query", searchQuery);
       if (activeLat) params.set("lat", String(activeLat));
       if (activeLng) params.set("lng", String(activeLng));
+      params.set("limit", String(PROVIDERS_PAGE_SIZE));
+      params.set("offset", String(providerOffset));
       const res = await fetch(`/api/providers/search?${params}`, { credentials: "include" });
       if (!res.ok) throw new Error("Search failed");
       return res.json();
@@ -375,7 +393,25 @@ export default function CustomerHomePage() {
     enabled: searching || searchQuery.length === 0,
   });
 
-  const rawResults = searchData?.results || [];
+  useEffect(() => {
+    if (!searchData?.results) return;
+    const chunk = searchData.results;
+    setHasMoreProviders(chunk.length === PROVIDERS_PAGE_SIZE);
+    if (providerOffset === 0) {
+      setProviderResults(chunk);
+      setLoadingMoreProviders(false);
+      return;
+    }
+    setProviderResults((prev) => {
+      const seen = new Set(prev.map((r) => r.provider.id));
+      const merged = [...prev];
+      for (const item of chunk) if (!seen.has(item.provider.id)) merged.push(item);
+      return merged;
+    });
+    setLoadingMoreProviders(false);
+  }, [searchData, providerOffset, PROVIDERS_PAGE_SIZE]);
+
+  const rawResults = providerResults;
   const suggestion = searchData?.suggestion;
 
   // Apply UI filters (distance cap + same-city) on the verified provider
@@ -476,6 +512,9 @@ export default function CustomerHomePage() {
           await apiRequest("POST", "/api/search/location", { latitude: activeLat, longitude: activeLng });
         } catch {}
       }
+      setProviderOffset(0);
+      setProviderResults([]);
+      setHasMoreProviders(false);
       setSearching(true);
       setPhoneSearching(false);
       refetch();
@@ -514,6 +553,9 @@ export default function CustomerHomePage() {
       }
     }
     setSearchQuery(query);
+    setProviderOffset(0);
+    setProviderResults([]);
+    setHasMoreProviders(false);
     setSearching(true);
   };
 
@@ -2032,6 +2074,12 @@ export default function CustomerHomePage() {
               </CardContent>
             </Card>
           ))}
+
+          {searching && !phoneSearching && loadingMoreProviders && (
+            <div className="flex items-center justify-center py-3" data-testid="loading-more-providers">
+              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+            </div>
+          )}
 
           {/* ── Saved Google leads (previously auto-saved) ──────────
               Render these BEFORE the "from Google" separator so they
