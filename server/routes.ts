@@ -498,7 +498,26 @@ export async function registerRoutes(
     (req.session as any).localUserId = null;
     req.session.save(() => res.json({ success: true }));
   });
+  // --- Self delete: permanently delete current user and all linked data ---
+  app.delete("/api/profile/me", isLocalAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub as string;
+      await storage.deleteProfile(userId);
 
+      req.logout(() => {
+        try {
+          req.session.destroy(() => {
+            res.clearCookie("connect.sid");
+            res.json({ success: true });
+          });
+        } catch {
+          res.json({ success: true });
+        }
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error?.message || "Failed to delete profile" });
+    }
+  });
   // --- Guest mode: clear ALL session types (called by skip login buttons) ---
   app.post("/api/guest-mode", (req, res) => {
     (req.session as any).localUserId = null;
