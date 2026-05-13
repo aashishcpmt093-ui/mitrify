@@ -11,7 +11,7 @@ import { useLocation } from "wouter";
 import {
   Phone, BarChart3, Coins, LogOut, Zap, AlertCircle,
   Share2, Copy, Clock, Wrench, Search, User, Plus, Minus,
-  Menu, X, Home, Settings, Moon, Sun, History, Info, ScrollText, Camera, Briefcase, Bell, Mail, ChevronRight, Sparkles
+  Menu, X, Home, Settings, Moon, Sun, History, Info, ScrollText, Camera, Briefcase, Bell, Mail, ChevronRight, Sparkles, Trash2, Loader2
 } from "lucide-react";
 import { PlanTick } from "@/components/PlanTick";
 import { Switch } from "@/components/ui/switch";
@@ -33,6 +33,9 @@ export default function ProviderDashboardPage() {
   const { theme, toggleTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [isDeletingProfile, setIsDeletingProfile] = useState(false);
   const { data: contactEmailsData } = useQuery<{ label: string; email: string }[] | null>({
     queryKey: ["/api/content", "contact_emails"],
     queryFn: async () => {
@@ -205,9 +208,85 @@ export default function ProviderDashboardPage() {
               <Button variant="ghost" className="w-full justify-start gap-3 text-destructive" onClick={() => logout()} data-testid="button-logout">
                 <LogOut className="w-4 h-4" /> {t("logout")}
               </Button>
+              <Button
+                variant="ghost"
+                className="w-full justify-start gap-3 text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+                onClick={() => { setMenuOpen(false); setDeleteConfirmText(""); setShowDeleteDialog(true); }}
+                data-testid="button-delete-profile"
+              >
+                <Trash2 className="w-4 h-4" /> Delete Profile
+              </Button>
             </div>
           </div>
           <div className="flex-1 bg-black/30" onClick={() => setMenuOpen(false)} />
+        </div>
+      )}
+
+      {showDeleteDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 pointer-events-auto px-4" data-testid="dialog-delete-profile">
+          <div className="w-full max-w-md bg-card border rounded-2xl shadow-2xl p-6 space-y-5 animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-950/50 flex items-center justify-center shrink-0 mt-0.5">
+                <Trash2 className="w-5 h-5 text-red-600 dark:text-red-500" />
+              </div>
+              <div>
+                <h3 className="font-bold text-lg text-foreground">Delete Your Profile</h3>
+                <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+                  This will <span className="font-semibold text-red-600 dark:text-red-500">permanently delete</span> your account and all associated data — including call history, credits, subscriptions, and provider profile. This action <span className="font-semibold">cannot be undone, ever.</span>
+                </p>
+              </div>
+            </div>
+            <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-xl p-3 text-sm text-red-700 dark:text-red-400">
+              ⚠️ Once deleted, your account will be gone forever with no way to recover it.
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-foreground">Type <span className="font-mono font-bold tracking-widest text-red-600 dark:text-red-500">DELETE</span> to confirm:</p>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder="Type DELETE here"
+                className="w-full px-3 py-2 rounded-lg border bg-background text-sm font-mono tracking-wider focus:outline-none focus:ring-2 focus:ring-red-500"
+                data-testid="input-delete-confirm"
+                autoComplete="off"
+              />
+            </div>
+            <div className="flex gap-3 pt-1">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => { setShowDeleteDialog(false); setDeleteConfirmText(""); }}
+                disabled={isDeletingProfile}
+                data-testid="button-cancel-delete"
+              >
+                Cancel
+              </Button>
+              <Button
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+                disabled={deleteConfirmText !== "DELETE" || isDeletingProfile}
+                data-testid="button-confirm-delete"
+                onClick={async () => {
+                  setIsDeletingProfile(true);
+                  try {
+                    const res = await fetch("/api/profile/me", { method: "DELETE", credentials: "include" });
+                    if (res.ok) {
+                      toast({ title: "Account deleted", description: "Your profile has been permanently deleted." });
+                      setTimeout(() => { window.location.href = "/"; }, 1000);
+                    } else {
+                      const data = await res.json().catch(() => ({}));
+                      toast({ title: "Delete failed", description: data.message || "Something went wrong. Please try again.", variant: "destructive" });
+                      setIsDeletingProfile(false);
+                    }
+                  } catch {
+                    toast({ title: "Delete failed", description: "Network error. Please try again.", variant: "destructive" });
+                    setIsDeletingProfile(false);
+                  }
+                }}
+              >
+                {isDeletingProfile ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Deleting…</> : "Yes, Delete Forever"}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 
