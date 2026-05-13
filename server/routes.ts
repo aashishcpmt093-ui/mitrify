@@ -177,6 +177,39 @@ export async function registerRoutes(
     }
   });
 
+  const repairProfileColumns = async () => {
+    await pool.query(`
+      ALTER TABLE profiles ADD COLUMN IF NOT EXISTS profile_completed boolean DEFAULT false;
+      ALTER TABLE profiles ADD COLUMN IF NOT EXISTS accept_double_charge boolean DEFAULT false;
+      ALTER TABLE providers ADD COLUMN IF NOT EXISTS profile_completed boolean DEFAULT false;
+      ALTER TABLE providers ADD COLUMN IF NOT EXISTS profile_visibility varchar(20) DEFAULT 'public';
+    `);
+  };
+
+  app.post("/api/profiles", async (req: any, res) => {
+    try {
+      await repairProfileColumns();
+      const profile = await storage.createProfile(req.body);
+      res.status(201).json(profile);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message || "Failed to create profile" });
+    }
+  });
+
+  app.put("/api/profiles/me", async (req: any, res) => {
+    try {
+      await repairProfileColumns();
+      const userId = req.user?.claims?.sub;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const role = req.body?.role === "provider" ? "provider" : "customer";
+      const { role: _role, ...update } = req.body;
+      const profile = await storage.updateProfile(userId, update, role);
+      res.json(profile);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message || "Failed to update profile" });
+    }
+  });
+
   // --- Local Auth: ID/Password Login ---
   app.post("/api/local/login", async (req, res) => {
     try {
