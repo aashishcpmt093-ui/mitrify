@@ -186,10 +186,15 @@ export async function registerRoutes(
     `);
   };
 
+  const stripLegacyCompletionFields = (input: Record<string, any>) => {
+    const { profile_completed, profileCompleted, ...rest } = input || {};
+    return rest;
+  };
+
   app.post("/api/profiles", async (req: any, res) => {
     try {
       await repairProfileColumns();
-      const profile = await storage.createProfile(req.body);
+      const profile = await storage.createProfile(stripLegacyCompletionFields(req.body));
       res.status(201).json(profile);
     } catch (error: any) {
       res.status(400).json({ message: error.message || "Failed to create profile" });
@@ -202,7 +207,7 @@ export async function registerRoutes(
       const userId = req.user?.claims?.sub;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
       const role = req.body?.role === "provider" ? "provider" : "customer";
-      const { role: _role, ...update } = req.body;
+      const { role: _role, ...update } = stripLegacyCompletionFields(req.body);
       const profile = await storage.updateProfile(userId, update, role);
       res.json(profile);
     } catch (error: any) {
@@ -750,6 +755,7 @@ export async function registerRoutes(
 
   app.post(api.providers.create.path, isLocalAuthenticated, async (req: any, res) => {
     try {
+      await repairProfileColumns();
       const userId = req.user.claims.sub;
       const existing = await storage.getProvider(userId);
       const verifiedNumbers: string[] = Array.isArray(req.body.mobileNumbers) ? req.body.mobileNumbers : [];
@@ -764,7 +770,7 @@ export async function registerRoutes(
         }
       }
 
-      const { name, mobile, role, ...providerBody } = req.body;
+      const { name, mobile, role, ...providerBody } = stripLegacyCompletionFields(req.body);
       const data = { ...providerBody, userId, mobileNumbers: verifiedNumbers };
       const provider = existing
         ? await storage.updateProvider(userId, data)
@@ -792,6 +798,7 @@ export async function registerRoutes(
 
   app.put(api.providers.update.path, isLocalAuthenticated, async (req: any, res) => {
     try {
+      await repairProfileColumns();
       const userId = req.user.claims.sub;
       if (req.body.mobileNumbers) {
         for (const num of req.body.mobileNumbers as string[]) {
@@ -800,7 +807,7 @@ export async function registerRoutes(
           }
         }
       }
-      const { name, mobile, role, ...providerBody } = req.body;
+      const { name, mobile, role, ...providerBody } = stripLegacyCompletionFields(req.body);
       const provider = await storage.updateProvider(userId, providerBody);
       res.json(provider);
     } catch (error: any) {
