@@ -181,7 +181,7 @@ export default function CustomerHomePage() {
   const [searching, setSearching] = useState(false);
   const [providerOffset, setProviderOffset] = useState(0);
   const [providerResults, setProviderResults] = useState<ProviderSearchResult[]>([]);
-  const [hasMoreProviders, setHasMoreProviders] = useState(false);
+  const [hasMoreProviders, setHasMoreProviders] = useState(true);
   const [loadingMoreProviders, setLoadingMoreProviders] = useState(false);
   const [phoneQuery, setPhoneQuery] = useState("");
   const [phoneSearching, setPhoneSearching] = useState(false);
@@ -413,6 +413,22 @@ export default function CustomerHomePage() {
     });
     setLoadingMoreProviders(false);
   }, [searchData, providerOffset, PROVIDERS_PAGE_SIZE]);
+
+  useEffect(() => {
+    if (!searching || phoneSearching) return;
+    if (isLoading || loadingMoreProviders) return;
+    if (!hasMoreProviders) return;
+    if (typeof window === "undefined") return;
+    const onScroll = () => {
+      const nearBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 700;
+      if (nearBottom) {
+        setLoadingMoreProviders(true);
+        setProviderOffset((prev) => prev + PROVIDERS_PAGE_SIZE);
+      }
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [searching, phoneSearching, isLoading, loadingMoreProviders, hasMoreProviders]);
 
   const rawResults = providerResults;
   const suggestion = searchData?.suggestion;
@@ -1842,6 +1858,45 @@ export default function CustomerHomePage() {
               <>
                 <p className="text-sm text-muted-foreground">{phoneResults.length} provider{phoneResults.length > 1 ? "s" : ""} found</p>
               </>
+            )}
+          </div>
+        )}
+
+        {searching && !phoneSearching && !isLoading && results.length === 0 && (
+          <div className="text-center py-12 text-muted-foreground">
+            <Phone className="w-12 h-12 mx-auto mb-3 opacity-30" />
+            <p>No service providers found</p>
+          </div>
+        )}
+
+        {searching && !phoneSearching && results.length > 0 && (
+          <div className="space-y-3">
+            {results.map((result) => (
+              <div key={result.provider.id} className="rounded-2xl border bg-card p-4 shadow-sm" data-testid={`card-provider-${result.provider.id}`}>
+                <div className="flex items-start gap-3">
+                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                    <User className="w-6 h-6 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-semibold text-base truncate">{result.profile.name}</h3>
+                      {result.plan && <Badge variant="secondary">{result.plan}</Badge>}
+                    </div>
+                    <p className="text-sm text-muted-foreground truncate">{result.provider.serviceName || "Service provider"}</p>
+                    {typeof result.distanceKm === "number" && (
+                      <p className="text-xs text-muted-foreground mt-1">{result.distanceKm.toFixed(1)} km away</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {loadingMoreProviders && (
+              <div className="flex items-center justify-center py-6">
+                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+              </div>
+            )}
+            {searching && !phoneSearching && !loadingMoreProviders && hasMoreProviders && (
+              <div className="text-center text-xs text-muted-foreground py-4">Scroll for more</div>
             )}
           </div>
         )}

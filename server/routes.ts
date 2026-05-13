@@ -697,7 +697,17 @@ export async function registerRoutes(
   app.get(api.providers.myProfile.path, isLocalAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const provider = await storage.getProvider(userId);
+      let provider;
+      try {
+        provider = await storage.getProvider(userId);
+      } catch (error: any) {
+        if (String(error?.message || "").includes("profile_completed")) {
+          await pool.query(`ALTER TABLE providers ADD COLUMN IF NOT EXISTS profile_completed boolean DEFAULT false`);
+          provider = await storage.getProvider(userId);
+        } else {
+          throw error;
+        }
+      }
       if (!provider) return res.status(404).json({ message: "Provider not found" });
       res.json(provider);
     } catch (error) {
