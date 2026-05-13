@@ -1,17 +1,39 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ArrowLeft, Coins, Phone, Settings, Plus, History, ChevronRight, Sparkles } from "lucide-react";
+import { ArrowLeft, Coins, Phone, Settings, Plus, History, ChevronRight, Sparkles, Trash2, Loader2 } from "lucide-react";
 import { useLanguage } from "@/lib/language";
 import { useHomeRoute } from "@/hooks/use-auth";
 import { PlanTick } from "@/components/PlanTick";
+import { useMutation, queryClient, apiRequest } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { useState } from "react";
 import type { SubscriptionResponse, SubscriptionPlan } from "@shared/schema";
 
 export default function MyProfilePage() {
   const [, setLocation] = useLocation();
   const { t } = useLanguage();
+  const { toast } = useToast();
   const homeRoute = useHomeRoute();
+  const [deleteText, setDeleteText] = useState("");
+
+  const deleteProfile = useMutation({
+    mutationFn: async () => {
+      await fetch("/api/profile/me", { method: "DELETE", credentials: "include" });
+    },
+    onSuccess: () => {
+      localStorage.removeItem("mitrify_auth_v1");
+      queryClient.setQueryData(["/api/auth/user"], null);
+      toast({ title: "Profile deleted", description: "Your account was permanently removed." });
+      setLocation("/welcome");
+    },
+    onError: (err: any) => {
+      toast({ title: "Delete failed", description: err?.message || "Could not delete profile", variant: "destructive" });
+    },
+  });
 
   const { data: credits } = useQuery<{ freeCredits: number; purchasedCredits: number; totalCredits: number }>({
     queryKey: ["/api/credits/me"],
@@ -197,6 +219,59 @@ export default function MyProfilePage() {
             <ChevronRight className="w-5 h-5 text-primary shrink-0" />
           </div>
         </button>
+
+        <Card className="border-red-200 dark:border-red-900/40">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div>
+                <p className="font-semibold text-sm text-red-700 dark:text-red-300">Delete My Profile</p>
+                <p className="text-xs text-muted-foreground">This permanently deletes your account and all linked data.</p>
+              </div>
+            </div>
+
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button type="button" variant="destructive" className="w-full" data-testid="button-open-delete-profile">
+                  <Trash2 className="w-4 h-4 mr-2" /> Delete My Profile
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Are you sure you want to permanently delete your profile?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This action cannot be undone. Type <b>DELETE</b> below to confirm.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <Input
+                  value={deleteText}
+                  onChange={(e) => setDeleteText(e.target.value)}
+                  placeholder="Type DELETE"
+                  data-testid="input-delete-confirmation"
+                />
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={(e) => {
+                      if (deleteText.trim() !== "DELETE") {
+                        e.preventDefault();
+                        toast({ title: "Please type DELETE to confirm", variant: "destructive" });
+                        return;
+                      }
+                      deleteProfile.mutate();
+                    }}
+                    disabled={deleteProfile.isPending}
+                    data-testid="button-confirm-delete-profile"
+                  >
+                    {deleteProfile.isPending ? "Deleting..." : "Permanently Delete"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </CardContent>
+        </Card>
 
         {/* Call History */}
         <Card data-testid="card-call-history">
