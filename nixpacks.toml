@@ -4,5 +4,8 @@ cmds = ["npm ci --include=dev"]
 [phases.build]
 cmds = ["npm run build"]
 
+[phases.build.env]
+NODE_ENV = "production"
+
 [start]
-cmd = "npm run start"
+cmd = "node dist/index.cjs"
