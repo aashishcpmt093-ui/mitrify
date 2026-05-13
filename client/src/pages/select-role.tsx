@@ -24,12 +24,6 @@ export default function SelectRolePage() {
           const data = await customerRes.json();
           if (data && data.id) { setLocation("/customer/home"); return; }
         }
-        // If no customer profile, check provider (existing provider-only users)
-        const providerRes = await fetch("/api/providers/me", { credentials: "include" });
-        if (providerRes.ok) {
-          const data = await providerRes.json();
-          if (data && data.id) { setLocation("/customer/home"); return; }
-        }
         // No customer or provider profile exists for this account — this is a
         // fresh signup (or a previously deleted user re-registering). Send
         // them to the customer setup screen so a profile actually gets

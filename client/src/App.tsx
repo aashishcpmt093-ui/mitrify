@@ -355,8 +355,11 @@ function Router() {
       <Route path="/customer/edit-profile">
         <LoggedInRoute><EditProfilePage /></LoggedInRoute>
       </Route>
+      <Route path="/provider/edit-profile">
+        <LoggedInRoute><EditProfilePage /></LoggedInRoute>
+      </Route>
       <Route path="/complete-profile">
-        <LoggedInRoute><CompleteProfilePage /></LoggedInRoute>
+        <LoggedInRoute><EditProfilePage /></LoggedInRoute>
       </Route>
 
       {/* Provider pages — login + provider profile required */}
@@ -366,10 +369,6 @@ function Router() {
       <Route path="/provider/balance">
         <AuthenticatedRoute><ProviderBalancePage /></AuthenticatedRoute>
       </Route>
-      <Route path="/provider/edit-profile">
-        <AuthenticatedRoute><ProviderEditProfilePage /></AuthenticatedRoute>
-      </Route>
-
       <Route path="/subscriptions">
         <LoggedInRoute><SubscriptionsPage /></LoggedInRoute>
       </Route>

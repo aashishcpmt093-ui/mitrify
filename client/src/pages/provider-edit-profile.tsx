@@ -111,10 +111,6 @@ export default function ProviderEditProfilePage() {
     }
   }, [provider]);
 
-  // One-shot prefill: if contact numbers are empty after initial load but the
-  // primary mobile exists, pre-fill so the warning doesn't show unnecessarily.
-  // A ref prevents this from re-running on every subsequent profile refetch,
-  // which would wipe any unsaved edits the provider made to the contact list.
   const mobilePreFilled = useRef(false);
   useEffect(() => {
     if (mobilePreFilled.current) return;
@@ -228,7 +224,6 @@ export default function ProviderEditProfilePage() {
       </header>
 
       <main className="p-4 max-w-md mx-auto pb-10">
-        {/* Profile Photo Upload */}
         <div className="flex flex-col items-center mb-6">
           <div className="relative">
             <div className="w-24 h-24 rounded-full overflow-hidden bg-primary/10 border-2 border-border flex items-center justify-center">
@@ -240,140 +235,76 @@ export default function ProviderEditProfilePage() {
                 <User className="w-10 h-10 text-primary/60" />
               )}
             </div>
-            <label
-              htmlFor="photo-upload"
-              className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center cursor-pointer shadow-md hover:bg-primary/90 transition-colors"
-              data-testid="button-upload-photo"
-            >
+            <label htmlFor="photo-upload" className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center cursor-pointer shadow-md hover:bg-primary/90 transition-colors" data-testid="button-upload-photo">
               <Camera className="w-4 h-4" />
             </label>
-            <input
-              id="photo-upload"
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handlePhotoSelect}
-            />
+            <input id="photo-upload" type="file" accept="image/*" className="hidden" onChange={handlePhotoSelect} />
           </div>
           <p className="text-xs text-muted-foreground mt-2">Tap camera icon to upload photo</p>
           {profilePhoto && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="mt-1 text-xs text-destructive h-7"
-              onClick={() => setProfilePhoto(null)}
-              data-testid="button-remove-photo"
-            >
+            <Button type="button" variant="ghost" size="sm" className="mt-1 text-xs text-destructive h-7" onClick={() => setProfilePhoto(null)} data-testid="button-remove-photo">
               <X className="w-3 h-3 mr-1" /> Remove photo
             </Button>
           )}
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-
-          {/* Basic Info */}
           <Card>
             <CardContent className="p-4 space-y-4">
               <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Basic Information</h3>
               <div className="space-y-2">
                 <Label htmlFor="name">Full Name</Label>
-                <Input
-                  id="name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Enter your name"
-                  data-testid="input-edit-name"
-                />
+                <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Enter your name" data-testid="input-edit-name" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="mobile">Primary Mobile Number</Label>
-                <Input
-                  id="mobile"
-                  value={mobile}
-                  onChange={(e) => setMobile(e.target.value)}
-                  placeholder="Enter mobile number"
-                  data-testid="input-edit-mobile"
-                />
+                <Input id="mobile" value={mobile} onChange={(e) => setMobile(e.target.value)} placeholder="Enter mobile number" data-testid="input-edit-mobile" />
                 <p className="text-xs text-muted-foreground">This is your account mobile (for login/OTP)</p>
               </div>
             </CardContent>
           </Card>
 
-          {/* Profile Phone Numbers for Calls */}
           <Card>
             <CardContent className="p-4 space-y-4">
               <div>
                 <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide mb-1">Contact Numbers for Customers</h3>
                 <p className="text-xs text-muted-foreground">These numbers will be shown to customers when they want to call you. Add all numbers where you want to receive calls.</p>
               </div>
-
               {mobileNumbers.length > 0 && (
                 <div className="space-y-2">
                   {mobileNumbers.map((num, i) => (
                     <div key={i} className="flex items-center gap-2 p-2.5 bg-muted/50 rounded-lg" data-testid={`phone-chip-${i}`}>
                       <Phone className="w-3.5 h-3.5 text-primary flex-shrink-0" />
                       <span className="flex-1 text-sm font-medium">{num}</span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                        onClick={() => setMobileNumbers(mobileNumbers.filter((_, j) => j !== i))}
-                        data-testid={`phone-remove-${i}`}
-                      >
+                      <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => setMobileNumbers(mobileNumbers.filter((_, j) => j !== i))} data-testid={`phone-remove-${i}`}>
                         <X className="w-3.5 h-3.5" />
                       </Button>
                     </div>
                   ))}
                 </div>
               )}
-
               <div className="flex gap-2">
-                <Input
-                  value={newPhone}
-                  onChange={(e) => setNewPhone(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addPhone(); } }}
-                  placeholder="+91 XXXXXXXXXX or 0XXXXXXXXXX"
-                  type="tel"
-                  data-testid="input-new-phone"
-                />
+                <Input value={newPhone} onChange={(e) => setNewPhone(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addPhone(); } }} placeholder="+91 XXXXXXXXXX or 0XXXXXXXXXX" type="tel" data-testid="input-new-phone" />
                 <Button type="button" variant="outline" size="sm" onClick={addPhone} data-testid="button-add-phone">
                   <Plus className="w-4 h-4 mr-1" /> Add
                 </Button>
               </div>
-
               {mobileNumbers.length === 0 && (
-                <p className="text-xs text-orange-600 dark:text-orange-400">
-                  ⚠️ No contact numbers added. Customers won't be able to call you.
-                </p>
+                <p className="text-xs text-orange-600 dark:text-orange-400">⚠️ No contact numbers added. Customers won't be able to call you.</p>
               )}
             </CardContent>
           </Card>
 
-          {/* Service Details */}
           <Card>
             <CardContent className="p-4 space-y-4">
               <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Service Details</h3>
               <div className="space-y-2">
                 <Label htmlFor="serviceName">Service Name</Label>
-                <Input
-                  id="serviceName"
-                  value={serviceName}
-                  onChange={(e) => setServiceName(e.target.value)}
-                  placeholder="e.g. Plumbing, Electrician"
-                  data-testid="input-edit-service"
-                />
+                <Input id="serviceName" value={serviceName} onChange={(e) => setServiceName(e.target.value)} placeholder="e.g. Plumbing, Electrician" data-testid="input-edit-service" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="description">Description</Label>
-                <Textarea
-                  id="description"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Describe your service"
-                  data-testid="input-edit-description"
-                />
+                <Textarea id="description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Describe your service" data-testid="input-edit-description" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="hashtags">Tags</Label>
@@ -388,25 +319,7 @@ export default function ProviderEditProfilePage() {
                   ))}
                 </div>
                 <div className="flex gap-2">
-                  <Input
-                    id="hashtags"
-                    value={tagInput}
-                    onChange={e => {
-                      const v = e.target.value;
-                      if (v.includes(",")) {
-                        const val = v.replace(",", "").trim().replace(/^#/, "");
-                        if (val && !hashtags.includes(val)) setHashtags(prev => [...prev, val]);
-                        setTagInput("");
-                      } else {
-                        setTagInput(v);
-                      }
-                    }}
-                    onKeyDown={e => {
-                      if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); addTag(); }
-                    }}
-                    placeholder="Type a tag, press Add"
-                    data-testid="input-edit-hashtags"
-                  />
+                  <Input id="hashtags" value={tagInput} onChange={e => { const v = e.target.value; if (v.includes(",")) { const val = v.replace(",", "").trim().replace(/^#/, ""); if (val && !hashtags.includes(val)) setHashtags(prev => [...prev, val]); setTagInput(""); } else { setTagInput(v); } }} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); addTag(); } }} placeholder="Type a tag, press Add" data-testid="input-edit-hashtags" />
                   <Button type="button" variant="outline" size="sm" onClick={addTag} data-testid="button-add-tag">
                     <Plus className="w-4 h-4 mr-1" /> Add
                   </Button>
@@ -414,23 +327,11 @@ export default function ProviderEditProfilePage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="charge">Approx Charge (Rs.)</Label>
-                <Input
-                  id="charge"
-                  value={approxCharge}
-                  onChange={(e) => setApproxCharge(e.target.value)}
-                  placeholder="e.g. 500"
-                  data-testid="input-edit-charge"
-                />
+                <Input id="charge" value={approxCharge} onChange={(e) => setApproxCharge(e.target.value)} placeholder="e.g. 500" data-testid="input-edit-charge" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="address">Service Area Address</Label>
-                <Input
-                  id="address"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="Enter your service area"
-                  data-testid="input-edit-address"
-                />
+                <Input id="address" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Enter your service area" data-testid="input-edit-address" />
               </div>
               <div className="space-y-2">
                 <Label>Live Location</Label>
@@ -460,32 +361,16 @@ export default function ProviderEditProfilePage() {
                     {isHidden ? "Profile Hidden" : "Profile Visible"}
                   </Label>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {isHidden
-                      ? "Aapki profile public search mein nahi aayegi. Aap baaki providers ko search kar sakte hain."
-                      : "Aapki profile public search mein dikhegi."}
+                    {isHidden ? "Aapki profile public search mein nahi aayegi. Aap baaki providers ko search kar sakte hain." : "Aapki profile public search mein dikhegi."}
                   </p>
                 </div>
               </div>
-              <Switch
-                id="edit-hide-toggle"
-                checked={isHidden}
-                onCheckedChange={setIsHidden}
-                data-testid="switch-edit-hide-profile"
-              />
+              <Switch id="edit-hide-toggle" checked={isHidden} onCheckedChange={setIsHidden} data-testid="switch-edit-hide-profile" />
             </div>
           </div>
 
-          <Button
-            type="submit"
-            className="w-full"
-            disabled={updateProfile.isPending}
-            data-testid="button-save-profile"
-          >
-            {updateProfile.isPending ? (
-              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</>
-            ) : (
-              <><Save className="w-4 h-4 mr-2" /> Save Changes</>
-            )}
+          <Button type="submit" className="w-full" disabled={updateProfile.isPending} data-testid="button-save-profile">
+            {updateProfile.isPending ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</>) : (<><Save className="w-4 h-4 mr-2" /> Save Changes</>)}
           </Button>
 
           <Card className="border-dashed">
@@ -500,13 +385,7 @@ export default function ProviderEditProfilePage() {
                     <p className="text-xs text-muted-foreground">OTP verify karke login details badlein</p>
                   </div>
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCredsOpen(true)}
-                  data-testid="button-open-change-credentials"
-                >
+                <Button type="button" variant="outline" size="sm" onClick={() => setCredsOpen(true)} data-testid="button-open-change-credentials">
                   Change
                 </Button>
               </div>
@@ -515,10 +394,7 @@ export default function ProviderEditProfilePage() {
         </form>
       </main>
 
-      <ChangeCredentialsDialog
-        open={credsOpen}
-        onOpenChange={setCredsOpen}
-      />
+      <ChangeCredentialsDialog open={credsOpen} onOpenChange={setCredsOpen} />
     </div>
   );
 }
