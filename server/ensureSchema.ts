@@ -19,6 +19,7 @@ export async function ensureSchema(): Promise<void> {
       ALTER TABLE profiles ADD COLUMN IF NOT EXISTS latitude real;
       ALTER TABLE profiles ADD COLUMN IF NOT EXISTS longitude real;
       ALTER TABLE profiles ADD COLUMN IF NOT EXISTS accept_double_charge boolean DEFAULT false;
+      ALTER TABLE profiles ADD COLUMN IF NOT EXISTS profile_completed boolean DEFAULT false;
 
       -- providers: extra columns not in migration 0000
       ALTER TABLE providers ADD COLUMN IF NOT EXISTS profile_photo text;

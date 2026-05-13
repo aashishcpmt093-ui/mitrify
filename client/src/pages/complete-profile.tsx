@@ -85,7 +85,6 @@ export default function CompleteProfilePage() {
         mobile: mobile.trim(),
         latitude,
         longitude,
-        profileCompleted: true,
         role: "customer",
       });
       return res.json();
