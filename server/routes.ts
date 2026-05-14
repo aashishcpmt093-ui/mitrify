@@ -183,6 +183,8 @@ export async function registerRoutes(
       ALTER TABLE profiles ADD COLUMN IF NOT EXISTS accept_double_charge boolean DEFAULT false;
       ALTER TABLE providers ADD COLUMN IF NOT EXISTS profile_completed boolean DEFAULT false;
       ALTER TABLE providers ADD COLUMN IF NOT EXISTS profile_visibility varchar(20) DEFAULT 'public';
+      ALTER TABLE providers ADD COLUMN IF NOT EXISTS mobile_numbers text[];
+      ALTER TABLE providers ADD COLUMN IF NOT EXISTS hashtags text[];
     `);
   };
 
@@ -191,10 +193,50 @@ export async function registerRoutes(
     return rest;
   };
 
+  const normalizeProviderPayload = (input: Record<string, any>) => {
+    const body = stripLegacyCompletionFields(input);
+    const mobileNumbers = Array.isArray(body.mobileNumbers)
+      ? body.mobileNumbers
+      : Array.isArray(body.mobile_numbers)
+        ? body.mobile_numbers
+        : [];
+    const hashtags = Array.isArray(body.hashtags) ? body.hashtags : [];
+    return {
+      ...body,
+      mobileNumbers,
+      hashtags,
+    };
+  };
+
   app.post("/api/profiles", async (req: any, res) => {
     try {
       await repairProfileColumns();
       const profile = await storage.createProfile(stripLegacyCompletionFields(req.body));
+      if ((req.body?.role || profile.role) === "provider") {
+        const provider = await storage.getProvider(profile.userId);
+        if (!provider) {
+          await storage.createProvider({
+            userId: profile.userId,
+            serviceName: req.body?.serviceName || req.body?.name || profile.name || "Service",
+            description: req.body?.description || null,
+            hashtags: Array.isArray(req.body?.hashtags) ? req.body.hashtags : [],
+            radiusKm: req.body?.radiusKm ?? 10,
+            approxCharge: req.body?.approxCharge || null,
+            mobileNumbers: Array.isArray(req.body?.mobileNumbers) ? req.body.mobileNumbers : [],
+            latitude: req.body?.latitude ?? profile.latitude ?? null,
+            longitude: req.body?.longitude ?? profile.longitude ?? null,
+            address: req.body?.address || null,
+            state: req.body?.state || null,
+            district: req.body?.district || null,
+            pinCode: req.body?.pinCode || null,
+            profilePhoto: req.body?.profilePhoto || null,
+            isActive: true,
+            isHidden: !!req.body?.isHidden,
+            profileVisibility: req.body?.profileVisibility || "public",
+            addedBy: "self",
+          } as any);
+        }
+      }
       res.status(201).json(profile);
     } catch (error: any) {
       res.status(400).json({ message: error.message || "Failed to create profile" });
@@ -209,6 +251,30 @@ export async function registerRoutes(
       const role = req.body?.role === "provider" ? "provider" : "customer";
       const { role: _role, ...update } = stripLegacyCompletionFields(req.body);
       const profile = await storage.updateProfile(userId, update, role);
+      if (role === "provider") {
+        const provider = await storage.getProvider(userId);
+        const providerPayload = normalizeProviderPayload({
+          userId,
+          serviceName: req.body?.serviceName || provider?.serviceName || update.serviceName || profile.name || "Service",
+          description: req.body?.description ?? provider?.description ?? null,
+          hashtags: req.body?.hashtags ?? provider?.hashtags ?? [],
+          radiusKm: req.body?.radiusKm ?? provider?.radiusKm ?? 10,
+          approxCharge: req.body?.approxCharge ?? provider?.approxCharge ?? null,
+          mobileNumbers: req.body?.mobileNumbers ?? provider?.mobileNumbers ?? update.mobile ? [update.mobile] : [],
+          latitude: req.body?.latitude ?? provider?.latitude ?? update.latitude ?? null,
+          longitude: req.body?.longitude ?? provider?.longitude ?? update.longitude ?? null,
+          address: req.body?.address ?? provider?.address ?? null,
+          state: req.body?.state ?? provider?.state ?? null,
+          district: req.body?.district ?? provider?.district ?? null,
+          pinCode: req.body?.pinCode ?? provider?.pinCode ?? null,
+          profilePhoto: req.body?.profilePhoto ?? provider?.profilePhoto ?? null,
+          isHidden: req.body?.isHidden ?? provider?.isHidden ?? false,
+          profileVisibility: req.body?.profileVisibility ?? provider?.profileVisibility ?? "public",
+          isActive: req.body?.isActive ?? provider?.isActive ?? true,
+        });
+        if (provider) await storage.updateProvider(userId, providerPayload);
+        else await storage.createProvider(providerPayload as any);
+      }
       res.json(profile);
     } catch (error: any) {
       res.status(400).json({ message: error.message || "Failed to update profile" });

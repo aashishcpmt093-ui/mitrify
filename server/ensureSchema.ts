@@ -31,6 +31,11 @@ export async function ensureSchema(): Promise<void> {
       ALTER TABLE providers ADD COLUMN IF NOT EXISTS added_by varchar(100) DEFAULT 'self';
       ALTER TABLE providers ADD COLUMN IF NOT EXISTS approved_by varchar(100);
       ALTER TABLE providers ADD COLUMN IF NOT EXISTS profile_completed boolean DEFAULT false;
+      ALTER TABLE providers ADD COLUMN IF NOT EXISTS mobile_numbers text[] DEFAULT '{}';
+      ALTER TABLE providers ADD COLUMN IF NOT EXISTS hashtags text[] DEFAULT '{}';
+      ALTER TABLE providers ADD COLUMN IF NOT EXISTS service_name varchar(255);
+      ALTER TABLE providers ALTER COLUMN mobile_numbers SET DEFAULT '{}';
+      ALTER TABLE providers ALTER COLUMN hashtags SET DEFAULT '{}';
 
       -- calls: extra columns not in migration 0000
       ALTER TABLE calls ADD COLUMN IF NOT EXISTS charge_reason varchar(30) DEFAULT 'normal';
