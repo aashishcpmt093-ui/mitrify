@@ -76,7 +76,7 @@ export default function ProviderEditProfilePage() {
     setNewPhone("");
   };
 
-  const { data: profile, isLoading: profileLoading } = useQuery({
+  const { data: profile } = useQuery({
     queryKey: ["/api/profiles/me", "provider"],
     queryFn: async () => {
       const res = await fetch("/api/profiles/me?role=provider", { credentials: "include" });
@@ -85,7 +85,7 @@ export default function ProviderEditProfilePage() {
     },
   });
 
-  const { data: provider, isLoading: providerLoading } = useQuery<Provider>({
+  const { data: provider } = useQuery<Provider>({
     queryKey: ["/api/providers/me"],
   });
 
@@ -203,14 +203,6 @@ export default function ProviderEditProfilePage() {
     }
     updateProfile.mutate();
   };
-
-  if (profileLoading || providerLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-background">
