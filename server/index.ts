@@ -13,6 +13,9 @@ import { createServer } from "http";
 import { ensureSchema } from "./ensureSchema";
 
 const app = express();
+app.get("/", (req, res) => {
+  res.send("Server is running ✅");
+});
 const httpServer = createServer(app);
 
 app.use(express.json({ limit: "5mb" }));
