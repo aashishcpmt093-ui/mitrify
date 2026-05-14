@@ -55,6 +55,14 @@ export async function sendFirebaseOtp(phoneNumber: string, _buttonId?: string): 
       formatted = "+91" + formatted.replace(/^0+/, "");
     }
 
+    if (formatted.replace(/\D/g, "").length < 10) {
+      throw new Error("Invalid phone number. Use format: +91XXXXXXXXXX");
+    }
+
+    if (formatted.replace(/\D/g, "").slice(0, 2) !== "91" && !formatted.startsWith("+")) {
+      formatted = "+91" + formatted.replace(/\D/g, "").slice(-10);
+    }
+
     cleanupRecaptcha();
     const container = getOrCreateRecaptchaContainer();
 
@@ -63,11 +71,18 @@ export async function sendFirebaseOtp(phoneNumber: string, _buttonId?: string): 
       callback: () => {},
     });
 
+    await recaptchaVerifier.render();
     confirmationResult = await signInWithPhoneNumber(firebaseAuth, formatted, recaptchaVerifier);
     return true;
   } catch (error: any) {
     console.error("Firebase OTP send error:", error);
     cleanupRecaptcha();
+    if (error?.code === "auth/operation-not-allowed") {
+      throw new Error("Phone OTP is disabled in Firebase. Please enable Phone Auth.");
+    }
+    if (error?.code === "auth/invalid-app-credential") {
+      throw new Error("reCAPTCHA verification failed. Please try again.");
+    }
     throw error;
   }
 }
