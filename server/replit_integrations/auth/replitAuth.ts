@@ -189,9 +189,19 @@ export async function setupAuth(app: Express) {
             username: null,
             password: null,
             phone: null,
-            role: "customer",
+            role: "provider",
             authMethod: "google",
           });
+          try {
+            await storage.createProfile({
+              userId: user.userId,
+              role: "provider",
+              name: profile.displayName || email,
+              mobile: null,
+              isBlocked: false,
+              profileCompleted: true,
+            } as any);
+          } catch {}
         }
 
         done(null, { localUserId: user.userId, email });

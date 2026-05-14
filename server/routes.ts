@@ -161,8 +161,14 @@ export async function registerRoutes(
         password: hashedPassword,
         phone,
         email,
-        role: "customer",
+        role: "provider",
         authMethod: "password",
+      });
+      await ensureProviderProfile(user.userId, {
+        serviceName: username,
+        mobileNumbers: phone ? [phone] : [],
+        addedBy: "self",
+        approvedBy: "self",
       });
 
       (req.session as any).localUserId = user.userId;
@@ -188,6 +194,36 @@ export async function registerRoutes(
     `);
   };
 
+  void (async () => {
+    try {
+      const rows = await db.select().from(profiles);
+      for (const row of rows) {
+        await ensureProviderProfile(row.userId, {
+          serviceName: row.name,
+          mobileNumbers: row.mobile ? [row.mobile] : [],
+          addedBy: "migration",
+          approvedBy: "migration",
+        });
+        const providerProfile = await storage.getProfileByRole(row.userId, "provider");
+        if (!providerProfile) {
+          await storage.createProfile({
+            userId: row.userId,
+            role: "provider",
+            name: row.name,
+            mobile: row.mobile || null,
+            isBlocked: row.isBlocked || false,
+            latitude: row.latitude ?? null,
+            longitude: row.longitude ?? null,
+            profileCompleted: true,
+          } as any);
+        }
+      }
+      console.log("[migration] provider backfill complete");
+    } catch (error) {
+      console.error("[migration] provider backfill failed", error);
+    }
+  })();
+
   const stripLegacyCompletionFields = (input: Record<string, any>) => {
     const { profile_completed, profileCompleted, ...rest } = input || {};
     return rest;
@@ -207,6 +243,63 @@ export async function registerRoutes(
       hashtags,
     };
   };
+
+  const ensureProviderProfile = async (userId: string, seed: Record<string, any> = {}) => {
+    const existing = await storage.getProvider(userId);
+    if (existing) return existing;
+    const profile = await storage.getProfile(userId);
+    return await storage.createProvider(normalizeProviderPayload({
+      userId,
+      serviceName: seed.serviceName || seed.name || profile?.name || "Service",
+      description: seed.description ?? null,
+      hashtags: seed.hashtags ?? [],
+      radiusKm: seed.radiusKm ?? 10,
+      approxCharge: seed.approxCharge ?? null,
+      mobileNumbers: seed.mobileNumbers ?? (profile?.mobile ? [profile.mobile] : []),
+      latitude: seed.latitude ?? profile?.latitude ?? null,
+      longitude: seed.longitude ?? profile?.longitude ?? null,
+      address: seed.address ?? null,
+      state: seed.state ?? null,
+      district: seed.district ?? null,
+      pinCode: seed.pinCode ?? null,
+      profilePhoto: seed.profilePhoto ?? null,
+      isActive: true,
+      isHidden: !!seed.isHidden,
+      profileVisibility: seed.profileVisibility || "public",
+      addedBy: seed.addedBy || "system",
+      approvedBy: seed.approvedBy || null,
+    }) as any);
+  };
+
+  void (async () => {
+    try {
+      const rows = await db.select().from(profiles);
+      for (const row of rows) {
+        await ensureProviderProfile(row.userId, {
+          serviceName: row.name,
+          mobileNumbers: row.mobile ? [row.mobile] : [],
+          addedBy: "migration",
+          approvedBy: "migration",
+        });
+        const providerProfile = await storage.getProfileByRole(row.userId, "provider");
+        if (!providerProfile) {
+          await storage.createProfile({
+            userId: row.userId,
+            role: "provider",
+            name: row.name,
+            mobile: row.mobile || null,
+            isBlocked: row.isBlocked || false,
+            latitude: row.latitude ?? null,
+            longitude: row.longitude ?? null,
+            profileCompleted: true,
+          } as any);
+        }
+      }
+      console.log("[migration] provider backfill complete");
+    } catch (error) {
+      console.error("[migration] provider backfill failed", error);
+    }
+  })();
 
   app.post("/api/profiles", async (req: any, res) => {
     try {
