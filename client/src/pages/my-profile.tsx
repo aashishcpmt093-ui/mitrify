@@ -1,13 +1,13 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { ArrowLeft, Coins, Phone, Settings, Plus, History, ChevronRight, Sparkles, Trash2, Loader2 } from "lucide-react";
 import { useLanguage } from "@/lib/language";
 import { useHomeRoute } from "@/hooks/use-auth";
 import { PlanTick } from "@/components/PlanTick";
-import { useMutation, queryClient, apiRequest } from "@tanstack/react-query";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useState } from "react";
