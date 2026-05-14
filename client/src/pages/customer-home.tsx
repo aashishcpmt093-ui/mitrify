@@ -408,7 +408,15 @@ export default function CustomerHomePage() {
     setProviderResults((prev) => {
       const seen = new Set(prev.map((r) => r.provider.id));
       const merged = [...prev];
-      for (const item of chunk) if (!seen.has(item.provider.id)) merged.push(item);
+      for (const item of chunk) {
+  if (
+    !seen.has(item.provider.id) &&
+    item.provider.mobileNumbers &&
+    item.provider.mobileNumbers.length > 0
+  ) {
+    merged.push(item);
+  }
+}
       return merged;
     });
     setLoadingMoreProviders(false);
