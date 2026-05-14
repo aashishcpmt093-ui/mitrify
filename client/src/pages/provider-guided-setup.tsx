@@ -8,7 +8,7 @@ import { useState, useEffect, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
-  Loader2, ArrowLeft, Camera, Plus, CheckCircle2, ChevronRight, ChevronLeft, X,
+  Loader2, Home, Camera, Plus, CheckCircle2, ChevronRight, ChevronLeft, X,
 } from "lucide-react";
 import { sendFirebaseOtp, verifyFirebaseOtp } from "@/lib/firebase";
 
@@ -344,8 +344,8 @@ export default function ProviderGuidedSetupPage() {
       <div className="min-h-screen bg-background flex flex-col">
         {/* Header */}
         <div className="sticky top-0 bg-card border-b px-4 py-3 flex items-center gap-3 z-10">
-          <Button variant="ghost" size="icon" onClick={() => qaStep === 0 ? setMode("form") : setQaStep(s => s - 1)}>
-            <ArrowLeft className="w-5 h-5" />
+          <Button variant="ghost" size="icon" onClick={() => setLocation("/customer/home")}>
+            <Home className="w-5 h-5" />
           </Button>
           <span className="text-sm text-muted-foreground hindi-text">{qaStep + 1} / {QA_QUESTIONS.length}</span>
           <Button variant="ghost" size="sm" className="ml-auto text-xs" onClick={() => setMode("form")}>

@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Phone, Clock, Sparkles, CreditCard } from "lucide-react";
+import { Home, Phone, Clock, Sparkles, CreditCard } from "lucide-react";
 import { useLocation } from "wouter";
 import type { CallLog, SubscriptionPlan } from "@shared/schema";
 import { useLanguage } from "@/lib/language";
@@ -49,8 +49,8 @@ export default function CustomerHistoryPage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 bg-card border-b px-4 py-3 flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => setLocation("/customer/home")} data-testid="button-back">
-          <ArrowLeft className="w-5 h-5" />
+        <Button variant="ghost" size="icon" onClick={() => setLocation("/customer/home")} data-testid="button-home">
+          <Home className="w-5 h-5" />
         </Button>
         <h1 className="font-semibold text-lg">Activity History</h1>
       </header>

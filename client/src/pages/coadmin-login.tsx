@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, ShieldCheck } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
-import { BackButton } from "@/components/BackButton";
+import { Home } from "lucide-react";
 
 export default function CoAdminLoginPage() {
   const [, setLocation] = useLocation();
@@ -41,7 +41,9 @@ export default function CoAdminLoginPage() {
 
   return (
     <>
-      <BackButton />
+      <Button variant="ghost" size="icon" onClick={() => setLocation("/customer/home")} className="fixed top-4 left-4 z-50 hover:bg-muted/50 rounded-full" title="Home" data-testid="button-home-universal">
+        <Home className="w-5 h-5" />
+      </Button>
       <div className="min-h-screen bg-background flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-6">

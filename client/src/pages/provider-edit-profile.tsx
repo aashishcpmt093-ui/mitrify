@@ -9,7 +9,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { useState, useEffect, useRef } from "react";
-import { ArrowLeft, Save, Loader2, Wrench, X, Plus, Phone, Camera, User, EyeOff, Eye, Lock } from "lucide-react";
+import { Home, Save, Loader2, Wrench, X, Plus, Phone, Camera, User, EyeOff, Eye, Lock } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import ChangeCredentialsDialog from "@/components/ChangeCredentialsDialog";
 import type { Provider } from "@shared/schema";
@@ -216,8 +216,8 @@ export default function ProviderEditProfilePage() {
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 bg-card border-b px-4 py-3">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => setLocation("/provider/dashboard")} data-testid="button-back">
-            <ArrowLeft className="w-5 h-5" />
+          <Button variant="ghost" size="icon" onClick={() => setLocation("/customer/home")} data-testid="button-home">
+            <Home className="w-5 h-5" />
           </Button>
           <h1 className="font-semibold text-lg">Edit Provider Profile</h1>
         </div>

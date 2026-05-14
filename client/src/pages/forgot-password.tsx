@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Zap } from "lucide-react";
+import { Home, Zap } from "lucide-react";
 import { useLocation } from "wouter";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -89,8 +89,8 @@ export default function ForgotPasswordPage() {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <div className="p-4">
-        <Button variant="ghost" size="icon" onClick={() => setLocation("/welcome")} data-testid="button-back">
-          <ArrowLeft className="w-5 h-5" />
+        <Button variant="ghost" size="icon" onClick={() => setLocation("/customer/home")} data-testid="button-home">
+          <Home className="w-5 h-5" />
         </Button>
       </div>
 

@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Zap, Phone, KeyRound, Eye, EyeOff } from "lucide-react";
+import { Home, Zap, Phone, KeyRound, Eye, EyeOff } from "lucide-react";
 import { SiGoogle, SiApple } from "react-icons/si";
 import { useLocation } from "wouter";
 import { useState } from "react";
@@ -150,8 +150,8 @@ export default function LoginPage() {
         <div className="absolute -bottom-4 -left-6 w-20 h-20 rounded-full bg-white/10 animate-float delay-200" />
 
         <div className="relative z-10">
-          <Button variant="ghost" size="icon" onClick={() => setLocation("/welcome")} className="text-white/80" data-testid="button-back">
-            <ArrowLeft className="w-5 h-5" />
+          <Button variant="ghost" size="icon" onClick={() => setLocation("/customer/home")} className="text-white/80" data-testid="button-home">
+            <Home className="w-5 h-5" />
           </Button>
 
           <div className="flex flex-col items-center mt-2 mb-2">

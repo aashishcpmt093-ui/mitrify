@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { ArrowLeft, Bell, Phone } from "lucide-react";
+import { Home, Bell, Phone } from "lucide-react";
 import { useLocation } from "wouter";
 import { useEffect } from "react";
 import { useLanguage } from "@/lib/language";
@@ -59,9 +59,9 @@ export default function NotificationsPage() {
           variant="ghost"
           size="icon"
           onClick={() => setLocation(homeRoute)}
-          data-testid="button-back"
+          data-testid="button-home"
         >
-          <ArrowLeft className="w-5 h-5" />
+          <Home className="w-5 h-5" />
         </Button>
         <h1 className="font-semibold text-lg" data-testid="text-page-title">{t("notifications")}</h1>
       </header>

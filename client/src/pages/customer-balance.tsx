@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Coins, Plus, Minus, Tag, TrendingDown, Phone, Briefcase, X, Loader2 } from "lucide-react";
+import { Home, Coins, Plus, Minus, Tag, TrendingDown, Phone, Briefcase, X, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { BackButton } from "@/components/BackButton";
 
@@ -99,8 +99,8 @@ export default function CustomerBalancePage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 bg-card border-b px-4 py-3 flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => setLocation("/customer/home")} data-testid="button-back">
-          <ArrowLeft className="w-5 h-5" />
+        <Button variant="ghost" size="icon" onClick={() => setLocation("/customer/home")} data-testid="button-home">
+          <Home className="w-5 h-5" />
         </Button>
         <h1 className="font-semibold text-lg">My Credits</h1>
       </header>

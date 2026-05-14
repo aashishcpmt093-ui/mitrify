@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, ScrollText } from "lucide-react";
+import { Home, ScrollText } from "lucide-react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useHomeRoute } from "@/hooks/use-auth";
@@ -63,8 +63,8 @@ export default function TermsPage() {
       <div className="gradient-hero dark:gradient-hero-dark pt-3 pb-4 px-4 relative overflow-hidden">
         <div className="relative z-10">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => setLocation(homeRoute)} className="text-white/80" data-testid="button-back">
-              <ArrowLeft className="w-5 h-5" />
+            <Button variant="ghost" size="icon" onClick={() => setLocation("/customer/home")} className="text-white/80" data-testid="button-home">
+              <Home className="w-5 h-5" />
             </Button>
             <div className="flex items-center gap-2">
               <ScrollText className="w-5 h-5 text-white" />

@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { ArrowLeft, Coins, Phone, Settings, Plus, History, ChevronRight, Sparkles, Trash2, Loader2 } from "lucide-react";
+import { Home, Coins, Phone, Settings, Plus, History, ChevronRight, Sparkles, Trash2, Loader2 } from "lucide-react";
 import { useLanguage } from "@/lib/language";
 import { useHomeRoute } from "@/hooks/use-auth";
 import { PlanTick } from "@/components/PlanTick";
@@ -120,8 +120,8 @@ export default function MyProfilePage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 bg-card border-b px-4 py-3 flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={goBack} data-testid="button-back">
-          <ArrowLeft className="w-5 h-5" />
+        <Button variant="ghost" size="icon" onClick={() => setLocation("/customer/home")} data-testid="button-home">
+          <Home className="w-5 h-5" />
         </Button>
         <h1 className="font-semibold text-lg">{t("myProfile")}</h1>
       </header>

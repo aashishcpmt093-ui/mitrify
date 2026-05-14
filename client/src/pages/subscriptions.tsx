@@ -5,7 +5,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
-import { ArrowLeft, Check, Loader2, Sparkles } from "lucide-react";
+import { Home, Check, Loader2, Sparkles } from "lucide-react";
 import { PlanTick } from "@/components/PlanTick";
 import type { SubscriptionPlanConfig, SubscriptionResponse, SubscriptionPlan } from "@shared/schema";
 import { useHomeRoute } from "@/hooks/use-auth";
@@ -94,8 +94,8 @@ export default function SubscriptionsPage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 bg-card border-b px-4 py-3 flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => setLocation(homeRoute)} data-testid="button-back">
-          <ArrowLeft className="w-5 h-5" />
+          <Button variant="ghost" size="icon" onClick={() => setLocation("/customer/home")} data-testid="button-home">
+            <Home className="w-5 h-5" />
         </Button>
         <h1 className="font-semibold text-lg flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-amber-500" /> {t("subTitle")}

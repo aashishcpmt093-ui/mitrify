@@ -9,10 +9,9 @@ import { useLocation } from "wouter";
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Wrench, MapPin, Navigation, Loader2, X, Plus, CheckCircle2, Phone, EyeOff, Eye, Camera, User, KeyRound, AtSign } from "lucide-react";
+import { Wrench, MapPin, Navigation, Loader2, X, Plus, CheckCircle2, Phone, EyeOff, Eye, Camera, User, KeyRound, AtSign, Home } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { sendFirebaseOtp, verifyFirebaseOtp } from "@/lib/firebase";
-import { BackButton } from "@/components/BackButton";
 import { ALL_STATES, getDistricts, DEFAULT_STATE, DEFAULT_DISTRICT } from "@/lib/india-locations";
 import { useLanguage } from "@/lib/language";
 
