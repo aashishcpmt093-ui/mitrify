@@ -96,11 +96,7 @@ export default function LoginPage() {
       // Brand-new account (e.g. previously deleted user re-signing up) →
       // force them through profile creation so the customer profile actually
       // gets created instead of skipping straight to home.
-      if (data.isNewUser) {
-        setLocation("/customer/setup");
-      } else {
-        setLocation("/select-role");
-      }
+      setLocation("/provider/guided-setup");
     } catch (err: any) {
       const msg = err?.code === "auth/invalid-verification-code"
         ? "Invalid OTP. Please check and try again."
@@ -133,7 +129,7 @@ export default function LoginPage() {
       }
       localStorage.setItem("mitrify_saved_username", username.trim());
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
-      setLocation("/select-role");
+      setLocation("/provider/guided-setup");
     } catch {
       toast({ title: "Login failed", variant: "destructive" });
     } finally {

@@ -15,26 +15,7 @@ export default function SelectRolePage() {
     const role = (user as any)?.role || (user as any)?.authType;
     if (role === "admin") { setLocation("/admin/dashboard"); return; }
     if (role === "coadmin") { setLocation("/coadmin/dashboard"); return; }
-
-    const autoRedirect = async () => {
-      try {
-        // Customer home is the default landing page for all users
-        const customerRes = await fetch("/api/profiles/me?role=customer", { credentials: "include" });
-        if (customerRes.ok) {
-          const data = await customerRes.json();
-          if (data && data.id) { setLocation("/customer/home"); return; }
-        }
-        // No customer or provider profile exists for this account — this is a
-        // fresh signup (or a previously deleted user re-registering). Send
-        // them to the customer setup screen so a profile actually gets
-        // created instead of skipping straight to the home page.
-        setLocation("/customer/setup");
-      } catch {
-        setLocation("/customer/setup");
-      }
-    };
-
-    autoRedirect();
+    setLocation("/provider/guided-setup");
   }, [isLoading, isAuthenticated, user]);
 
   return (

@@ -160,7 +160,7 @@ export default function ProviderSetupPage() {
         if (res.ok) {
           const profile = await res.json();
           if (profile && profile.name) {
-            setLocation("/customer/home");
+            setLocation("/provider/dashboard");
             return;
           }
         }

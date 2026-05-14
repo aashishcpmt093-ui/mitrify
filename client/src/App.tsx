@@ -181,7 +181,7 @@ function AutoSkipToHome() {
         ?? (user as { role?: string; authType?: string }).authType;
       if (role === "admin") setLocation("/admin/dashboard");
       else if (role === "coadmin") setLocation("/coadmin/dashboard");
-      else setLocation("/customer/home");
+      else setLocation("/provider/guided-setup");
       return;
     }
     let alreadySkipped = false;
@@ -197,7 +197,7 @@ function AutoSkipToHome() {
         queryClient.setQueryData(["/api/auth/user"], null);
         await fetch("/api/guest-mode", { method: "POST", credentials: "include" });
       } catch {}
-      setLocation("/customer/home");
+      setLocation("/welcome");
     })();
   }, [isLoading, isAuthenticated, user, setLocation]);
   return (
@@ -307,7 +307,7 @@ function Router() {
     if (current === "/" || current === "/welcome" || current === "/login") {
       if (role === "admin") setLocation("/admin/dashboard");
       else if (role === "coadmin") setLocation("/coadmin/dashboard");
-      else setLocation("/customer/home");
+      else setLocation("/provider/guided-setup");
     }
   }, [isLoading, user, setLocation]);
 
@@ -327,10 +327,10 @@ function Router() {
       <Route path="/employee/edit" component={EmployeeEditPage} />
 
       <Route path="/customer/setup">
-        <SetupRoute role="customer"><CustomerSetupPage /></SetupRoute>
+        <SetupRoute role="provider"><ProviderGuidedSetupPage /></SetupRoute>
       </Route>
       <Route path="/provider/setup">
-        <SetupRoute role="provider"><ProviderSetupPage /></SetupRoute>
+        <SetupRoute role="provider"><ProviderGuidedSetupPage /></SetupRoute>
       </Route>
       <Route path="/provider/guided-setup">
         <SetupRoute role="provider"><ProviderGuidedSetupPage /></SetupRoute>

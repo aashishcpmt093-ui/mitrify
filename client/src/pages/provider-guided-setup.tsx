@@ -289,7 +289,7 @@ export default function ProviderGuidedSetupPage() {
         <p className="text-center text-muted-foreground hindi-text">
           आपकी प्रोफाइल बन गई है।<br />अब लोग आपको खोज सकते हैं!
         </p>
-        <Button className="w-full max-w-xs" onClick={() => setLocation("/customer/home")}>
+        <Button className="w-full max-w-xs" onClick={() => setLocation("/provider/dashboard")}>
           शुरू करें
         </Button>
         <Button
