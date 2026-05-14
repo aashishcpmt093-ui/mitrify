@@ -19,6 +19,32 @@ import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupSchedu
 import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverStaleJobs } from "./lib/auto-tags";
 import { cleanBusinessName, extractDescriptionSuffix, mergeDescription } from "./lib/cleanName";
 import { searchGoogleFallback, searchSavedGoogleLeads } from "./googleFallbackSearch";
+  const ensureProviderProfile = async (userId: string, seed: Record<string, any> = {}) => {
+    const existing = await storage.getProvider(userId);
+    if (existing) return existing;
+    const profile = await storage.getProfile(userId);
+    return await storage.createProvider(({
+      userId,
+      serviceName: seed.serviceName || seed.name || profile?.name || "Service",
+      description: seed.description ?? null,
+      hashtags: seed.hashtags ?? [],
+      radiusKm: seed.radiusKm ?? 10,
+      approxCharge: seed.approxCharge ?? null,
+      mobileNumbers: seed.mobileNumbers ?? (profile?.mobile ? [profile.mobile] : []),
+      latitude: seed.latitude ?? profile?.latitude ?? null,
+      longitude: seed.longitude ?? profile?.longitude ?? null,
+      address: seed.address ?? null,
+      state: seed.state ?? null,
+      district: seed.district ?? null,
+      pinCode: seed.pinCode ?? null,
+      profilePhoto: seed.profilePhoto ?? null,
+      isActive: true,
+      isHidden: !!seed.isHidden,
+      profileVisibility: seed.profileVisibility || "public",
+      addedBy: seed.addedBy || "system",
+      approvedBy: seed.approvedBy || null,
+    }) as any);
+  };
 // Per-admin daily quota for Google Places admin search. In-memory map of
 // `{ adminKey -> [timestampMs] }`. Resets on process restart (acceptable —
 // the safety cap is to prevent accidental cost spikes from rapid clicks).
@@ -244,32 +270,6 @@ export async function registerRoutes(
     };
   };
 
-  const ensureProviderProfile = async (userId: string, seed: Record<string, any> = {}) => {
-    const existing = await storage.getProvider(userId);
-    if (existing) return existing;
-    const profile = await storage.getProfile(userId);
-    return await storage.createProvider(normalizeProviderPayload({
-      userId,
-      serviceName: seed.serviceName || seed.name || profile?.name || "Service",
-      description: seed.description ?? null,
-      hashtags: seed.hashtags ?? [],
-      radiusKm: seed.radiusKm ?? 10,
-      approxCharge: seed.approxCharge ?? null,
-      mobileNumbers: seed.mobileNumbers ?? (profile?.mobile ? [profile.mobile] : []),
-      latitude: seed.latitude ?? profile?.latitude ?? null,
-      longitude: seed.longitude ?? profile?.longitude ?? null,
-      address: seed.address ?? null,
-      state: seed.state ?? null,
-      district: seed.district ?? null,
-      pinCode: seed.pinCode ?? null,
-      profilePhoto: seed.profilePhoto ?? null,
-      isActive: true,
-      isHidden: !!seed.isHidden,
-      profileVisibility: seed.profileVisibility || "public",
-      addedBy: seed.addedBy || "system",
-      approvedBy: seed.approvedBy || null,
-    }) as any);
-  };
 
   void (async () => {
     try {
@@ -304,7 +304,7 @@ export async function registerRoutes(
   app.post("/api/profiles", async (req: any, res) => {
     try {
       await repairProfileColumns();
-      const profile = await storage.createProfile(stripLegacyCompletionFields(req.body));
+      const profile = await storage.createProfile((stripLegacyCompletionFields(req.body) as any));
       if ((req.body?.role || profile.role) === "provider") {
         const provider = await storage.getProvider(profile.userId);
         if (!provider) {
@@ -933,7 +933,7 @@ export async function registerRoutes(
       const data = { ...providerBody, userId, mobileNumbers: verifiedNumbers };
       const provider = existing
         ? await storage.updateProvider(userId, data)
-        : await storage.createProvider(data);
+        : await storage.createProvider(data as any);
 
       // Auto-create customer profile so user can also search for services
       const existingCustomerProfile = await storage.getProfileByRole(userId, "customer");
