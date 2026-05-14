@@ -14,7 +14,7 @@ import { ensureSchema } from "./ensureSchema";
 
 const app = express();
 app.get("/", (req, res) => {
-  res.send("Server is running ✅");
+  res.redirect("/customer/home");
 });
 const httpServer = createServer(app);
 
