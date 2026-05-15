@@ -480,22 +480,30 @@ async function getSuggestion(query: string): Promise<string | null> {
 
 export class DatabaseStorage implements IStorage {
   async getLocalUserByPhone(phone: string): Promise<LocalUser | undefined> {
-    const [user] = await db.select().from(localUsers).where(eq(localUsers.phone, phone));
+    const [user] = await db.select().from(localUsers).where(
+      and(eq(localUsers.phone, phone), eq(localUsers.isDeleted, false))
+    );
     return user;
   }
 
   async getLocalUserByUsername(username: string): Promise<LocalUser | undefined> {
-    const [user] = await db.select().from(localUsers).where(eq(localUsers.username, username));
+    const [user] = await db.select().from(localUsers).where(
+      and(eq(localUsers.username, username), eq(localUsers.isDeleted, false))
+    );
     return user;
   }
 
   async getLocalUserByEmail(email: string): Promise<LocalUser | undefined> {
-    const [user] = await db.select().from(localUsers).where(eq(localUsers.email, email));
+    const [user] = await db.select().from(localUsers).where(
+      and(eq(localUsers.email, email), eq(localUsers.isDeleted, false))
+    );
     return user;
   }
 
   async getLocalUserByUserId(userId: string): Promise<LocalUser | undefined> {
-    const [user] = await db.select().from(localUsers).where(eq(localUsers.userId, userId));
+    const [user] = await db.select().from(localUsers).where(
+      and(eq(localUsers.userId, userId), eq(localUsers.isDeleted, false))
+    );
     return user;
   }
 
@@ -565,6 +573,8 @@ export class DatabaseStorage implements IStorage {
     const [lu] = await db.select().from(localUsers).where(eq(localUsers.userId, userId));
     const phone = lu?.phone || null;
 
+    // Hard-delete all activity data so a future re-registration starts fresh
+    // with no call history, credits, subscriptions, or profile data.
     await db.delete(calls).where(or(eq(calls.customerId, userId), eq(calls.providerId, userId)));
     await db.delete(credits).where(eq(credits.userId, userId));
     await db.delete(subscriptions).where(eq(subscriptions.userId, userId));
@@ -572,7 +582,15 @@ export class DatabaseStorage implements IStorage {
     await db.delete(jobs).where(eq(jobs.userId, userId));
     await db.delete(providers).where(eq(providers.userId, userId));
     await db.delete(profiles).where(eq(profiles.userId, userId));
-    await db.delete(localUsers).where(eq(localUsers.userId, userId));
+
+    // Soft-delete the local_users row instead of hard-deleting it.
+    // This marks the credentials (username / phone / email) as "freed" so they
+    // can be re-used for a new registration, while still keeping the row for
+    // audit purposes. Partial unique indexes on local_users exclude rows where
+    // is_deleted = true, so the credentials are immediately available again.
+    await db.update(localUsers)
+      .set({ isDeleted: true })
+      .where(eq(localUsers.userId, userId));
 
     if (phone) {
       try { await db.delete(promoUsageLog).where(eq(promoUsageLog.phone, phone)); } catch {}
@@ -1746,7 +1764,7 @@ export class DatabaseStorage implements IStorage {
   async isMobileNumberTaken(phone: string, excludeUserId?: string): Promise<boolean> {
     const normalised = phone.trim();
     const [inLocalUsers] = await db.select().from(localUsers)
-      .where(eq(localUsers.phone, normalised));
+      .where(and(eq(localUsers.phone, normalised), eq(localUsers.isDeleted, false)));
     if (inLocalUsers && inLocalUsers.userId !== excludeUserId) return true;
 
     const [inProfiles] = await db.select().from(profiles)

@@ -9,15 +9,20 @@ export * from "./models/auth";
 export const localUsers = pgTable("local_users", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull().unique().default(sql`gen_random_uuid()`),
-  phone: varchar("phone", { length: 20 }).unique(),
-  email: varchar("email", { length: 255 }).unique(),
-  username: varchar("username", { length: 100 }).unique(),
+  phone: varchar("phone", { length: 20 }),
+  email: varchar("email", { length: 255 }),
+  username: varchar("username", { length: 100 }),
   password: varchar("password", { length: 255 }),
   role: varchar("role", { length: 20 }).notNull().default("customer"),
   authMethod: varchar("auth_method", { length: 20 }).notNull().default("password"),
   isBlocked: boolean("is_blocked").default(false),
+  isDeleted: boolean("is_deleted").default(false),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  uniqueIndex("local_users_username_active_unique").on(table.username).where(sql`is_deleted = false AND username IS NOT NULL`),
+  uniqueIndex("local_users_phone_active_unique").on(table.phone).where(sql`is_deleted = false AND phone IS NOT NULL`),
+  uniqueIndex("local_users_email_active_unique").on(table.email).where(sql`is_deleted = false AND email IS NOT NULL`),
+]);
 
 export const insertLocalUserSchema = createInsertSchema(localUsers).omit({ id: true, createdAt: true, userId: true });
 export type LocalUser = typeof localUsers.$inferSelect;

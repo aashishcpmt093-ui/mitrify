@@ -189,7 +189,7 @@ export async function registerRoutes(
       }
 
       const existing = await storage.getLocalUserByUsername(username);
-      if (existing) return res.status(400).json({ message: "Username already taken" });
+      if (existing) return res.status(400).json({ message: "Username already in use", field: "username" });
 
       const hashedPassword = await bcrypt.hash(password, 10);
       const phone = verifiedType === "phone" ? verifiedContact : null;
@@ -206,7 +206,11 @@ export async function registerRoutes(
       }
 
       if (user) {
-        return res.status(400).json({ message: "Is number se account already ban chuki hai. Login karein." });
+        const contactField = verifiedType === "email" ? "email" : "phone";
+        const contactMsg = verifiedType === "email"
+          ? "Email already registered"
+          : "Mobile number already registered";
+        return res.status(400).json({ message: contactMsg, field: contactField });
       }
 
       user = await storage.createLocalUser({

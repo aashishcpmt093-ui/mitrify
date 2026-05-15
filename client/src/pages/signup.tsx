@@ -41,6 +41,8 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false);
   const [otpSending, setOtpSending] = useState(false);
   const [otpUnavailable, setOtpUnavailable] = useState(false);
+  const [usernameError, setUsernameError] = useState("");
+  const [contactError, setContactError] = useState("");
 
   const suggestions = useMemo(() => generateUsernameSuggestions(phone), [phone]);
 
@@ -130,6 +132,8 @@ export default function SignupPage() {
       toast({ title: t("signupPwLen"), variant: "destructive" });
       return;
     }
+    setUsernameError("");
+    setContactError("");
     setLoading(true);
     try {
       const res = await fetch("/api/local/register", {
@@ -140,7 +144,13 @@ export default function SignupPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        toast({ title: data.message || t("signupRegFail"), variant: "destructive" });
+        if (data.field === "username") {
+          setUsernameError(data.message || "Username already in use");
+        } else if (data.field === "phone" || data.field === "email") {
+          setContactError(data.message || "This contact is already registered. Please log in instead.");
+        } else {
+          toast({ title: data.message || t("signupRegFail"), variant: "destructive" });
+        }
         return;
       }
       // Save username so login page can autofill it
@@ -313,6 +323,22 @@ export default function SignupPage() {
                   <span>{phone} {t("signupVerifiedOk")}</span>
                 </div>
 
+                {contactError && (
+                  <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 flex items-start gap-2" data-testid="error-contact">
+                    <AlertTriangle className="w-4 h-4 text-destructive mt-0.5 shrink-0" />
+                    <div className="text-xs text-destructive">
+                      <p className="font-medium">{contactError}</p>
+                      <button
+                        type="button"
+                        className="underline mt-0.5 hover:no-underline"
+                        onClick={() => setLocation("/welcome")}
+                      >
+                        Login karein
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Browser password manager form — autocomplete triggers save prompt */}
                 <form
                   autoComplete="on"
@@ -326,10 +352,14 @@ export default function SignupPage() {
                       name="username"
                       autoComplete="username"
                       value={username}
-                      onChange={(e) => setUsername(e.target.value)}
+                      onChange={(e) => { setUsername(e.target.value); if (usernameError) setUsernameError(""); }}
                       placeholder={t("signupUsernamePh")}
                       data-testid="input-signup-username"
+                      className={usernameError ? "border-destructive focus-visible:ring-destructive" : ""}
                     />
+                    {usernameError && (
+                      <p className="text-xs text-destructive" data-testid="error-username">{usernameError}</p>
+                    )}
 
                     {/* Username suggestions */}
                     {!username && (

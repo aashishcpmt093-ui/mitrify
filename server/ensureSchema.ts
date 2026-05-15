@@ -334,6 +334,40 @@ export async function ensureSchema(): Promise<void> {
       ALTER TABLE "subscriptions" ADD COLUMN IF NOT EXISTS "plan" varchar(20);
     `);
 
+    // ── STEP 5: Soft-delete aware credential uniqueness ───────────────────────
+    // Add is_deleted column to local_users (default false = active).
+    // Drop the old blanket unique constraints on username/phone/email and
+    // replace with partial unique indexes that only apply to active rows.
+    // This lets re-registration with previously-used credentials succeed when
+    // the old account was deleted, while still blocking duplicate active accounts.
+    await client.query(`
+      ALTER TABLE "local_users" ADD COLUMN IF NOT EXISTS "is_deleted" boolean DEFAULT false;
+
+      -- Drop old blanket unique constraints (created by 0000 migration).
+      -- Use IF EXISTS so this is safe to re-run on DBs that already dropped them.
+      ALTER TABLE "local_users" DROP CONSTRAINT IF EXISTS "local_users_phone_unique";
+      ALTER TABLE "local_users" DROP CONSTRAINT IF EXISTS "local_users_email_unique";
+      ALTER TABLE "local_users" DROP CONSTRAINT IF EXISTS "local_users_username_unique";
+
+      -- Also drop any index-form duplicates that might exist.
+      DROP INDEX IF EXISTS "local_users_phone_unique";
+      DROP INDEX IF EXISTS "local_users_email_unique";
+      DROP INDEX IF EXISTS "local_users_username_unique";
+
+      -- Partial unique indexes — only active (non-deleted) rows compete.
+      CREATE UNIQUE INDEX IF NOT EXISTS "local_users_username_active_unique"
+        ON "local_users" (username)
+        WHERE is_deleted = false AND username IS NOT NULL;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS "local_users_phone_active_unique"
+        ON "local_users" (phone)
+        WHERE is_deleted = false AND phone IS NOT NULL;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS "local_users_email_active_unique"
+        ON "local_users" (email)
+        WHERE is_deleted = false AND email IS NOT NULL;
+    `);
+
     console.log("[ensureSchema] all 22 tables verified — schema is up to date");
   } catch (err) {
     console.error("[ensureSchema] WARNING: schema repair failed:", err);
