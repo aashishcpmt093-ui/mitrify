@@ -161,6 +161,7 @@ import EmployeeEditPage from "@/pages/employee-edit";
 import JobDetailPage from "@/pages/job-detail";
 import InvestmentPage from "@/pages/investment";
 import CompleteProfilePage from "@/pages/complete-profile";
+import ProviderCompleteProfilePage from "@/pages/provider-complete-profile";
 import NotFound from "@/pages/not-found";
 import VisitorCounter from "@/components/VisitorCounter";
 
@@ -209,7 +210,7 @@ function AutoSkipToHome() {
 
 // ── Auth-guarded route wrappers ───────────────────────────────────────────────
 
-// Requires login + provider profile
+// Requires login + provider profile + profile completeness
 function AuthenticatedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading, isAuthenticated } = useAuth();
   const [location, setLocation] = useLocation();
@@ -226,6 +227,18 @@ function AuthenticatedRoute({ children }: { children: React.ReactNode }) {
     retry: false,
   });
 
+  const { data: providerStatus, isLoading: statusLoading } = useQuery({
+    queryKey: ["/api/providers/profile-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/providers/profile-status", { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: isAuthenticated && !!roleProfile,
+    staleTime: 30 * 1000,
+    retry: false,
+  });
+
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       setLocation("/welcome");
@@ -235,9 +248,17 @@ function AuthenticatedRoute({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!profileLoading && isAuthenticated && roleProfile === undefined) return;
     if (!profileLoading && isAuthenticated && !roleProfile) {
-      setLocation("/provider/setup");
+      setLocation("/provider/guided-setup");
     }
   }, [profileLoading, isAuthenticated, roleProfile]);
+
+  useEffect(() => {
+    if (!statusLoading && providerStatus && providerStatus.exists && !providerStatus.profileComplete) {
+      if (location !== "/provider/complete-profile") {
+        setLocation("/provider/complete-profile");
+      }
+    }
+  }, [statusLoading, providerStatus, location]);
 
   if (isLoading) {
     return (
@@ -248,6 +269,7 @@ function AuthenticatedRoute({ children }: { children: React.ReactNode }) {
   }
   if (!isAuthenticated) return null;
   if (profileLoading && roleProfile === undefined) return <>{children}</>;
+  if (statusLoading && roleProfile) return <>{children}</>;
   return <>{children}</>;
 }
 
@@ -360,6 +382,10 @@ function Router() {
       </Route>
       <Route path="/complete-profile">
         <LoggedInRoute><EditProfilePage /></LoggedInRoute>
+      </Route>
+      {/* Provider complete-profile — LoggedInRoute only (not AuthenticatedRoute) to avoid redirect loop */}
+      <Route path="/provider/complete-profile">
+        <LoggedInRoute><ProviderCompleteProfilePage /></LoggedInRoute>
       </Route>
 
       {/* Provider pages — login + provider profile required */}

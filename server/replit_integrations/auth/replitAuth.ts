@@ -263,10 +263,23 @@ export async function setupAuth(app: Express) {
             return res.redirect("/welcome?error=session_error");
           }
           (req.session as any).localUserId = user.localUserId;
-          let hasProviderProfile = false;
+          let redirectPath = "/provider/guided-setup";
           try {
             const existingProfile = await storage.getProfileByRole(user.localUserId, "provider");
-            hasProviderProfile = !!existingProfile;
+            if (existingProfile) {
+              const provider = await storage.getProvider(user.localUserId);
+              if (provider) {
+                const missing = [];
+                if (!provider.serviceName?.trim()) missing.push("serviceName");
+                if (!provider.mobileNumbers || provider.mobileNumbers.length === 0) missing.push("mobileNumbers");
+                if (!provider.description?.trim()) missing.push("description");
+                if (!provider.address?.trim() && (provider.latitude == null || provider.longitude == null)) missing.push("location");
+                if (!provider.approxCharge?.trim()) missing.push("approxCharge");
+                redirectPath = missing.length === 0 ? "/provider/dashboard" : "/provider/complete-profile";
+              } else {
+                redirectPath = "/provider/complete-profile";
+              }
+            }
           } catch (e) {
             console.error("Google callback: profile check error", e);
           }
@@ -274,7 +287,7 @@ export async function setupAuth(app: Express) {
             if (saveErr) {
               console.error("Session save error:", saveErr);
             }
-            res.redirect(hasProviderProfile ? "/provider/dashboard" : "/provider/guided-setup");
+            res.redirect(redirectPath);
           });
         });
       })(req, res, next);
@@ -391,10 +404,23 @@ export async function setupAuth(app: Express) {
             return res.redirect("/welcome?error=session_error");
           }
           (req.session as any).localUserId = user.localUserId;
-          let isNewUser = false;
+          let appleRedirectPath = "/provider/guided-setup";
           try {
-            const existingProfile = await storage.getProfileByRole(user.localUserId, "customer");
-            isNewUser = !existingProfile;
+            const existingProfile = await storage.getProfileByRole(user.localUserId, "provider");
+            if (existingProfile) {
+              const provider = await storage.getProvider(user.localUserId);
+              if (provider) {
+                const missing = [];
+                if (!provider.serviceName?.trim()) missing.push("serviceName");
+                if (!provider.mobileNumbers || provider.mobileNumbers.length === 0) missing.push("mobileNumbers");
+                if (!provider.description?.trim()) missing.push("description");
+                if (!provider.address?.trim() && (provider.latitude == null || provider.longitude == null)) missing.push("location");
+                if (!provider.approxCharge?.trim()) missing.push("approxCharge");
+                appleRedirectPath = missing.length === 0 ? "/provider/dashboard" : "/provider/complete-profile";
+              } else {
+                appleRedirectPath = "/provider/complete-profile";
+              }
+            }
           } catch (e) {
             console.error("Apple callback: profile check error", e);
           }
@@ -402,7 +428,7 @@ export async function setupAuth(app: Express) {
             if (saveErr) {
               console.error("Apple session save error:", saveErr);
             }
-            res.redirect("/provider/guided-setup");
+            res.redirect(appleRedirectPath);
           });
         });
       })(req, res, next);

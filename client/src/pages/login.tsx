@@ -18,6 +18,16 @@ async function enterGuestMode() {
   try { await fetch("/api/guest-mode", { method: "POST", credentials: "include" }); } catch {}
 }
 
+async function getPostLoginPath(): Promise<string> {
+  const profileRes = await fetch("/api/profiles/me?role=provider", { credentials: "include" });
+  if (!profileRes.ok) return "/provider/guided-setup";
+  const statusRes = await fetch("/api/providers/profile-status", { credentials: "include" });
+  if (!statusRes.ok) return "/provider/dashboard";
+  const status = await statusRes.json();
+  if (!status.profileComplete) return "/provider/complete-profile";
+  return "/provider/dashboard";
+}
+
 const FIREBASE_DOMAIN_ERRORS = new Set([
   "auth/unauthorized-domain",
   "auth/invalid-app-credential",
@@ -96,8 +106,7 @@ export default function LoginPage() {
         return;
       }
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
-      const profileRes = await fetch("/api/profiles/me?role=provider", { credentials: "include" });
-      setLocation(profileRes.ok ? "/provider/dashboard" : "/provider/guided-setup");
+      setLocation(await getPostLoginPath());
     } catch (err: any) {
       const msg = err?.code === "auth/invalid-verification-code"
         ? "Invalid OTP. Please check and try again."
@@ -130,8 +139,7 @@ export default function LoginPage() {
       }
       localStorage.setItem("mitrify_saved_username", username.trim());
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
-      const profileRes = await fetch("/api/profiles/me?role=provider", { credentials: "include" });
-      setLocation(profileRes.ok ? "/provider/dashboard" : "/provider/guided-setup");
+      setLocation(await getPostLoginPath());
     } catch {
       toast({ title: "Login failed", variant: "destructive" });
     } finally {

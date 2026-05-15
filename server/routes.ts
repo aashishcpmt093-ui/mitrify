@@ -1012,6 +1012,36 @@ export async function registerRoutes(
     }
   });
 
+  // Lightweight completeness check — used by route guards without loading full provider data
+  app.get("/api/providers/profile-status", isLocalAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      let provider: any;
+      try {
+        provider = await storage.getProvider(userId);
+      } catch (error: any) {
+        if (String(error?.message || "").includes("profile_completed")) {
+          await pool.query(`ALTER TABLE providers ADD COLUMN IF NOT EXISTS profile_completed boolean DEFAULT false`);
+          provider = await storage.getProvider(userId);
+        } else {
+          throw error;
+        }
+      }
+      if (!provider) {
+        return res.json({ exists: false, profileComplete: false, missingFields: [] });
+      }
+      const missingFields: string[] = [];
+      if (!provider.serviceName?.trim()) missingFields.push("serviceName");
+      if (!provider.mobileNumbers || provider.mobileNumbers.length === 0) missingFields.push("mobileNumbers");
+      if (!provider.description?.trim()) missingFields.push("description");
+      if (!provider.address?.trim() && (provider.latitude == null || provider.longitude == null)) missingFields.push("location");
+      if (!provider.approxCharge?.trim()) missingFields.push("approxCharge");
+      res.json({ exists: true, profileComplete: missingFields.length === 0, missingFields });
+    } catch (error) {
+      res.status(500).json({ message: "Internal error" });
+    }
+  });
+
   app.post(api.providers.create.path, isLocalAuthenticated, async (req: any, res) => {
     try {
       await repairProfileColumns();
