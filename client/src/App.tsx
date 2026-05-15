@@ -323,15 +323,16 @@ function LoggedInRoute({ children }: { children: React.ReactNode }) {
     if (statusLoading || !isAuthenticated) return;
     if (PROVIDER_GATE_ALLOWLIST.has(location)) return;
 
-    // Fail closed: status fetch error → block access
-    if (statusError) {
+    // Gate applies when user has a provider role OR provider data row exists
+    // (covers inconsistent state: data row exists but profile row deleted)
+    const isProviderUser = providerStatus?.hasProviderRole || providerStatus?.exists;
+
+    // Fail closed only for confirmed provider users — avoids locking out customers on transient errors
+    if (statusError && isProviderUser) {
       setLocation("/provider/complete-profile");
       return;
     }
 
-    // Gate applies when user has a provider role OR provider data row exists
-    // (covers inconsistent state: data row exists but profile row deleted)
-    const isProviderUser = providerStatus?.hasProviderRole || providerStatus?.exists;
     if (!isProviderUser) return; // pure customer-only user — no gate
 
     // Incomplete or missing provider data → completion gate
