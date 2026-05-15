@@ -72,16 +72,16 @@ export default function ProviderCompleteProfilePage() {
     }
   }, [provider]);
 
-  // ── Back button trap: keep user on this page until profile is complete ──────
+  // ── Back button trap: force logout when user tries to navigate away ─────────
   const handlePopState = useCallback(() => {
-    window.history.pushState(null, "", window.location.href);
-    toast({
-      title: "Profile Complete karo pehle",
-      description: "Dashboard access karne ke liye sab required fields fill karo.",
-    });
-  }, [toast]);
+    // Preferred strict behavior: log the user out on any back attempt
+    logout();
+  }, [logout]);
 
   useEffect(() => {
+    // Replace current history entry, then push a dummy state on top.
+    // This means pressing Back fires popstate instead of leaving the page.
+    window.history.replaceState(null, "", window.location.href);
     window.history.pushState(null, "", window.location.href);
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);

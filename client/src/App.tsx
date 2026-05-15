@@ -231,7 +231,7 @@ function AuthenticatedRoute({ children }: { children: React.ReactNode }) {
     queryKey: ["/api/providers/profile-status"],
     queryFn: async () => {
       const res = await fetch("/api/providers/profile-status", { credentials: "include" });
-      if (!res.ok) return null;
+      if (!res.ok) throw new Error("status fetch failed");
       return res.json();
     },
     enabled: isAuthenticated && !!roleProfile,
@@ -253,12 +253,22 @@ function AuthenticatedRoute({ children }: { children: React.ReactNode }) {
   }, [profileLoading, isAuthenticated, roleProfile]);
 
   useEffect(() => {
-    if (!statusLoading && providerStatus && providerStatus.exists && !providerStatus.profileComplete) {
-      if (location !== "/provider/complete-profile") {
-        setLocation("/provider/complete-profile");
-      }
+    if (statusLoading || !roleProfile) return;
+    // Fail closed: if status fetch errored (providerStatus is undefined after error), block
+    if (providerStatus === undefined) {
+      if (location !== "/provider/complete-profile") setLocation("/provider/complete-profile");
+      return;
     }
-  }, [statusLoading, providerStatus, location]);
+    // No provider row yet → send to guided-setup to create one
+    if (!providerStatus.exists) {
+      setLocation("/provider/guided-setup");
+      return;
+    }
+    // Provider exists but incomplete → gate to completion page
+    if (!providerStatus.profileComplete) {
+      if (location !== "/provider/complete-profile") setLocation("/provider/complete-profile");
+    }
+  }, [statusLoading, providerStatus, roleProfile, location]);
 
   if (isLoading) {
     return (
@@ -268,8 +278,18 @@ function AuthenticatedRoute({ children }: { children: React.ReactNode }) {
     );
   }
   if (!isAuthenticated) return null;
-  if (profileLoading && roleProfile === undefined) return <>{children}</>;
-  if (statusLoading && roleProfile) return <>{children}</>;
+  // Hold render while profile row or status is loading to prevent flash of content
+  if (profileLoading || (!!roleProfile && statusLoading)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+  // Block render if gate conditions not satisfied
+  if (roleProfile && providerStatus && (!providerStatus.exists || !providerStatus.profileComplete)) {
+    return null;
+  }
   return <>{children}</>;
 }
 
@@ -378,7 +398,7 @@ function Router() {
         <LoggedInRoute><EditProfilePage /></LoggedInRoute>
       </Route>
       <Route path="/provider/edit-profile">
-        <LoggedInRoute><EditProfilePage /></LoggedInRoute>
+        <AuthenticatedRoute><EditProfilePage /></AuthenticatedRoute>
       </Route>
       <Route path="/complete-profile">
         <LoggedInRoute><EditProfilePage /></LoggedInRoute>
