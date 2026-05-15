@@ -144,6 +144,10 @@ export default function ProviderCompleteProfilePage() {
     setNewPhone("");
   };
 
+  // When provider row doesn't exist yet, treat all 5 fields as required
+  const ALL_FIELDS = ["serviceName", "description", "approxCharge", "mobileNumbers", "location"];
+  const effectiveMissing = !status?.exists ? ALL_FIELDS : (status?.missingFields || []);
+
   // ── Inline validation ────────────────────────────────────────────────────────
   const validateFields = (missingFields: string[]): Record<string, string> => {
     const errors: Record<string, string> = {};
@@ -163,7 +167,7 @@ export default function ProviderCompleteProfilePage() {
   // ── Save mutation ────────────────────────────────────────────────────────────
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const missingFields = status?.missingFields || [];
+      const missingFields = effectiveMissing;
       const errors = validateFields(missingFields);
       if (Object.keys(errors).length > 0) {
         setFieldErrors(errors);
@@ -182,7 +186,12 @@ export default function ProviderCompleteProfilePage() {
       }
       if (missingFields.includes("mobileNumbers")) body.mobileNumbers = mobileNumbers;
 
-      await apiRequest("PUT", "/api/providers/me", body);
+      // Create provider row if it doesn't exist yet; otherwise update it
+      if (!status?.exists) {
+        await apiRequest("POST", "/api/providers", body);
+      } else {
+        await apiRequest("PUT", "/api/providers/me", body);
+      }
     },
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ["/api/providers/me"] });
@@ -204,7 +213,7 @@ export default function ProviderCompleteProfilePage() {
     },
   });
 
-  const missing = status?.missingFields || [];
+  const missing = effectiveMissing;
 
   if (statusLoading) {
     return (

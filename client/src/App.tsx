@@ -259,13 +259,8 @@ function AuthenticatedRoute({ children }: { children: React.ReactNode }) {
       if (location !== "/provider/complete-profile") setLocation("/provider/complete-profile");
       return;
     }
-    // No provider row yet → send to guided-setup to create one
-    if (!providerStatus.exists) {
-      setLocation("/provider/guided-setup");
-      return;
-    }
-    // Provider exists but incomplete → gate to completion page
-    if (!providerStatus.profileComplete) {
+    // No provider data row yet OR incomplete → gate to completion page
+    if (!providerStatus.exists || !providerStatus.profileComplete) {
       if (location !== "/provider/complete-profile") setLocation("/provider/complete-profile");
     }
   }, [statusLoading, providerStatus, roleProfile, location]);
@@ -306,11 +301,11 @@ function LoggedInRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
   const [location, setLocation] = useLocation();
 
-  const { data: providerStatus, isLoading: statusLoading } = useQuery({
+  const { data: providerStatus, isLoading: statusLoading, isError: statusError } = useQuery({
     queryKey: ["/api/providers/profile-status"],
     queryFn: async () => {
       const res = await fetch("/api/providers/profile-status", { credentials: "include" });
-      if (!res.ok) return null;
+      if (!res.ok) throw new Error("profile-status fetch failed");
       return res.json();
     },
     enabled: isAuthenticated,
@@ -326,19 +321,24 @@ function LoggedInRoute({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (statusLoading || !isAuthenticated) return;
-    if (!providerStatus?.hasProviderRole) return; // customer-only user — no gate
-    if (!PROVIDER_GATE_ALLOWLIST.has(location)) {
-      // Provider with no data row → send to guided-setup to create profile
-      if (!providerStatus.exists) {
-        setLocation("/provider/guided-setup");
-        return;
-      }
-      // Provider with incomplete data → send to completion gate
-      if (!providerStatus.profileComplete) {
-        setLocation("/provider/complete-profile");
-      }
+    if (PROVIDER_GATE_ALLOWLIST.has(location)) return;
+
+    // Fail closed: status fetch error → block access
+    if (statusError) {
+      setLocation("/provider/complete-profile");
+      return;
     }
-  }, [statusLoading, providerStatus, isAuthenticated, location]);
+
+    // Gate applies when user has a provider role OR provider data row exists
+    // (covers inconsistent state: data row exists but profile row deleted)
+    const isProviderUser = providerStatus?.hasProviderRole || providerStatus?.exists;
+    if (!isProviderUser) return; // pure customer-only user — no gate
+
+    // Incomplete or missing provider data → completion gate
+    if (!providerStatus.exists || !providerStatus.profileComplete) {
+      setLocation("/provider/complete-profile");
+    }
+  }, [statusLoading, statusError, providerStatus, isAuthenticated, location]);
 
   if (isLoading || (isAuthenticated && statusLoading)) {
     return (
