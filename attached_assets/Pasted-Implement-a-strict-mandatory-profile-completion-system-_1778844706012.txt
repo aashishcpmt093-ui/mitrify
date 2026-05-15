@@ -1,0 +1,77 @@
+Implement a strict mandatory profile completion system after user login in my web app.
+
+Current issue:
+- Users are able to log in even if their profile is incomplete, missing, or deleted.
+- This leads to inconsistent and low-quality data.
+
+Expected behavior:
+
+1. After successful login, the system must immediately verify the user's profile status.
+
+2. Profile validation conditions:
+   The user should be treated as "INCOMPLETE" if:
+   - Profile does not exist
+   - Profile was deleted by the user
+   - Profile was deleted by admin
+   - Any required (*) field is missing
+   - Any required field is empty, null, or invalid
+
+3. Access control:
+   - If profile is NOT complete → DO NOT allow access to dashboard or any protected page
+   - Immediately redirect user to "Complete Profile" page
+   - Only after full completion → allow access to app
+
+4. Required fields validation:
+   Ensure all "*" marked fields are filled, such as:
+   - Name
+   - Mobile number
+   - Service/category
+   - Any other required fields
+
+5. UX behavior:
+   - Show message: "Please complete your profile to continue."
+   - Highlight missing required fields
+   - Disable navigation to other pages until profile is complete
+
+6. Navigation restrictions:
+   - If user is on "Complete Profile" page:
+     - Pressing browser back OR app back button should NOT allow access to previous pages
+     - Instead, user should either:
+       - Stay on same page OR
+       - Be logged out (preferred for strict control)
+
+7. Logout enforcement:
+   - If user tries to bypass profile completion (via back button, URL change, etc.)
+     → Force logout OR redirect back to profile completion page
+
+8. Technical implementation:
+
+   Backend:
+   - On login, return:
+     {
+       user,
+       isProfileComplete: boolean
+     }
+   - Validate profile existence + required fields
+
+   Frontend:
+   - After login:
+     if (!isProfileComplete) → redirect("/complete-profile")
+   - Add route guards (protected routes)
+   - Block access to all internal pages if profile incomplete
+
+   Route protection:
+   - Prevent direct URL access (e.g., /dashboard बिना profile complete)
+   - Middleware / guard must enforce profile check globally
+
+9. Edge cases:
+   - Profile deleted after login → restrict access again
+   - User logs out and logs in again → re-check profile
+   - Avoid infinite redirect loops
+   - Handle session expiry properly
+
+10. Deliverables:
+   - Backend profile completeness logic
+   - Frontend redirect + route guard implementation
+   - Required field validation system
+   - Back button restriction logic
