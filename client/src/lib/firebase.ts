@@ -48,20 +48,34 @@ function cleanupRecaptcha() {
   }
 }
 
+function normalizePhoneNumber(phoneNumber: string): string {
+  let formatted = phoneNumber.trim();
+  if (!formatted) throw new Error("Mobile number required");
+  if (!formatted.startsWith("+")) {
+    formatted = "+91" + formatted.replace(/^0+/, "");
+  }
+  const digits = formatted.replace(/\D/g, "");
+  if (digits.length < 10) {
+    throw new Error("Invalid phone number. Use format: +91XXXXXXXXXX");
+  }
+  if (!formatted.startsWith("+")) {
+    formatted = "+91" + digits.slice(-10);
+  }
+  return formatted;
+}
+
+function mapFirebaseOtpError(error: any): Error {
+  const code = String(error?.code || "");
+  if (code === "auth/operation-not-allowed") return new Error("Phone OTP is disabled in Firebase. Please enable Phone Auth.");
+  if (code === "auth/invalid-app-credential") return new Error("reCAPTCHA verification failed. Please try again.");
+  if (code === "auth/too-many-requests") return new Error("Too many OTP attempts. Try again later.");
+  if (code === "auth/invalid-phone-number") return new Error("Invalid phone number. Use format: +91XXXXXXXXXX");
+  return error instanceof Error ? error : new Error("Failed to send OTP");
+}
+
 export async function sendFirebaseOtp(phoneNumber: string, _buttonId?: string): Promise<boolean> {
   try {
-    let formatted = phoneNumber.trim();
-    if (!formatted.startsWith("+")) {
-      formatted = "+91" + formatted.replace(/^0+/, "");
-    }
-
-    if (formatted.replace(/\D/g, "").length < 10) {
-      throw new Error("Invalid phone number. Use format: +91XXXXXXXXXX");
-    }
-
-    if (formatted.replace(/\D/g, "").slice(0, 2) !== "91" && !formatted.startsWith("+")) {
-      formatted = "+91" + formatted.replace(/\D/g, "").slice(-10);
-    }
+    const formatted = normalizePhoneNumber(phoneNumber);
 
     cleanupRecaptcha();
     const container = getOrCreateRecaptchaContainer();
@@ -77,13 +91,7 @@ export async function sendFirebaseOtp(phoneNumber: string, _buttonId?: string): 
   } catch (error: any) {
     console.error("Firebase OTP send error:", error);
     cleanupRecaptcha();
-    if (error?.code === "auth/operation-not-allowed") {
-      throw new Error("Phone OTP is disabled in Firebase. Please enable Phone Auth.");
-    }
-    if (error?.code === "auth/invalid-app-credential") {
-      throw new Error("reCAPTCHA verification failed. Please try again.");
-    }
-    throw error;
+    throw mapFirebaseOtpError(error);
   }
 }
 

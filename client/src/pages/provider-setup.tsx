@@ -240,11 +240,12 @@ export default function ProviderSetupPage() {
       await sendFirebaseOtp(num, "provider-add-number-btn");
       toast({ title: "OTP sent to " + num });
     } catch (err: any) {
-      const msg = err?.code === "auth/too-many-requests"
-        ? "Too many attempts. Try again later."
-        : err?.code === "auth/invalid-phone-number"
-          ? "Invalid number. Use format: +91XXXXXXXXXX"
-          : "Failed to send OTP";
+      const code = String(err?.code || "");
+      const msg = code === "auth/too-many-requests"
+        ? err?.message || "Too many attempts. Try again later."
+        : code === "auth/invalid-phone-number"
+          ? err?.message || "Invalid number. Use format: +91XXXXXXXXXX"
+          : err?.message || "Failed to send OTP";
       toast({ title: msg, variant: "destructive" });
     } finally {
       setOtpSending(false);
@@ -261,7 +262,6 @@ export default function ProviderSetupPage() {
       toast({ title: "Number already added", variant: "destructive" });
       return;
     }
-    setOtpSent(true);
     sendOtpInBackground(num);
   };
 

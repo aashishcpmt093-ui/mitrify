@@ -60,18 +60,20 @@ export default function SignupPage() {
       await sendFirebaseOtp(phone.trim(), "signup-send-otp-btn");
       toast({ title: t("signupOtpSentToast") });
     } catch (err: any) {
-      if (FIREBASE_DOMAIN_ERRORS.has(err?.code)) {
+      const code = String(err?.code || "");
+      if (FIREBASE_DOMAIN_ERRORS.has(code)) {
         setOtpUnavailable(true);
         setStep("contact");
-      } else if (err?.code === "auth/too-many-requests") {
-        toast({ title: t("signupTooMany"), variant: "destructive" });
+      } else if (code === "auth/too-many-requests") {
+        toast({ title: err?.message || t("signupTooMany"), variant: "destructive" });
         setStep("contact");
-      } else if (err?.code === "auth/invalid-phone-number") {
-        toast({ title: t("signupInvalidNumber"), variant: "destructive" });
+      } else if (code === "auth/invalid-phone-number") {
+        toast({ title: err?.message || t("signupInvalidNumber"), variant: "destructive" });
         setStep("contact");
       } else {
         setOtpUnavailable(true);
         setStep("contact");
+        toast({ title: err?.message || t("signupVerifyFail"), variant: "destructive" });
       }
     } finally {
       setOtpSending(false);
@@ -83,7 +85,6 @@ export default function SignupPage() {
       toast({ title: t("signupMobileRequired"), variant: "destructive" });
       return;
     }
-    setStep("otp");
     sendOtpInBackground();
   };
 

@@ -59,11 +59,12 @@ export default function ChangeCredentialsDialog({
       setStep("otp");
       toast({ title: "OTP bhej diya gaya hai" });
     } catch (err: any) {
-      const msg = err?.code === "auth/too-many-requests"
-        ? "Bahut zyada attempts. Thodi der baad try karein."
-        : err?.code === "auth/invalid-phone-number"
-          ? "Galat mobile number format. Format: +91XXXXXXXXXX"
-          : "OTP bhejne mein dikkat aayi";
+      const code = String(err?.code || "");
+      const msg = code === "auth/too-many-requests"
+        ? err?.message || "Bahut zyada attempts. Thodi der baad try karein."
+        : code === "auth/invalid-phone-number"
+          ? err?.message || "Galat mobile number format. Format: +91XXXXXXXXXX"
+          : err?.message || "OTP bhejne mein dikkat aayi";
       toast({ title: msg, variant: "destructive" });
     } finally {
       setOtpSending(false);

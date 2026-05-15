@@ -38,18 +38,16 @@ export default function ForgotPasswordPage() {
       await sendFirebaseOtp(phone.trim(), "forgot-send-otp-btn");
       toast({ title: t("forgotOtpSentToast") });
     } catch (err: any) {
-      if (FIREBASE_DOMAIN_ERRORS.has(err?.code)) {
+      const code = String(err?.code || "");
+      if (FIREBASE_DOMAIN_ERRORS.has(code)) {
         setOtpUnavailable(true);
-        setOtpSent(false);
-      } else if (err?.code === "auth/too-many-requests") {
-        toast({ title: t("signupTooMany"), variant: "destructive" });
-        setOtpSent(false);
-      } else if (err?.code === "auth/invalid-phone-number") {
-        toast({ title: t("signupInvalidNumber"), variant: "destructive" });
-        setOtpSent(false);
+      } else if (code === "auth/too-many-requests") {
+        toast({ title: err?.message || t("signupTooMany"), variant: "destructive" });
+      } else if (code === "auth/invalid-phone-number") {
+        toast({ title: err?.message || t("signupInvalidNumber"), variant: "destructive" });
       } else {
         setOtpUnavailable(true);
-        setOtpSent(false);
+        toast({ title: err?.message || t("forgotResetFail"), variant: "destructive" });
       }
     } finally {
       setOtpSending(false);
@@ -61,7 +59,6 @@ export default function ForgotPasswordPage() {
       toast({ title: t("forgotPhoneRequired"), variant: "destructive" });
       return;
     }
-    setOtpSent(true);
     sendOtpInBackground();
   };
 

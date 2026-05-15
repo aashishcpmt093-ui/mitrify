@@ -56,18 +56,16 @@ export default function LoginPage() {
       await sendFirebaseOtp(otpContact.trim(), "login-send-otp-btn");
       toast({ title: "OTP sent to your mobile" });
     } catch (err: any) {
-      if (FIREBASE_DOMAIN_ERRORS.has(err?.code)) {
+      const code = String(err?.code || "");
+      if (FIREBASE_DOMAIN_ERRORS.has(code)) {
         setOtpUnavailable(true);
-        setOtpSent(false);
-      } else if (err?.code === "auth/too-many-requests") {
-        toast({ title: "Too many attempts. Try again later.", variant: "destructive" });
-        setOtpSent(false);
-      } else if (err?.code === "auth/invalid-phone-number") {
-        toast({ title: "Invalid number. Use format: +91XXXXXXXXXX", variant: "destructive" });
-        setOtpSent(false);
+      } else if (code === "auth/too-many-requests") {
+        toast({ title: err?.message || "Too many attempts. Try again later.", variant: "destructive" });
+      } else if (code === "auth/invalid-phone-number") {
+        toast({ title: err?.message || "Invalid number. Use format: +91XXXXXXXXXX", variant: "destructive" });
       } else {
         setOtpUnavailable(true);
-        setOtpSent(false);
+        toast({ title: err?.message || "Failed to send OTP", variant: "destructive" });
       }
     } finally {
       setOtpSending(false);
@@ -79,7 +77,6 @@ export default function LoginPage() {
       toast({ title: "Mobile number required", variant: "destructive" });
       return;
     }
-    setOtpSent(true);
     sendOtpInBackground();
   };
 

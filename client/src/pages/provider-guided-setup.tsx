@@ -176,10 +176,11 @@ export default function ProviderGuidedSetupPage() {
       updateMobile(idx, { otpSent: true });
       toast({ title: "OTP भेज दिया!" });
     } catch (err: any) {
-      const msg = err?.code === "auth/too-many-requests"
-        ? "बहुत ज्यादा tries हो गए, थोड़ी देर बाद try करो"
-        : err?.code === "auth/invalid-phone-number"
-          ? "नंबर गलत है, 10 अंक का सही नंबर डालो"
+      const code = String(err?.code || "");
+      const msg = code === "auth/too-many-requests"
+        ? err?.message || "बहुत ज्यादा tries हो गए, थोड़ी देर बाद try करो"
+        : code === "auth/invalid-phone-number"
+          ? err?.message || "नंबर गलत है, 10 अंक का सही नंबर डालो"
           : err?.message || "OTP नहीं भेजा जा सका";
       toast({ title: msg, variant: "destructive" });
     }
