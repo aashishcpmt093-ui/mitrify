@@ -1,11 +1,11 @@
-// Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
+import {
+  getAuth,
+  RecaptchaVerifier,
+  signInWithPhoneNumber,
+  type ConfirmationResult,
+} from "firebase/auth";
 
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
   apiKey: "AIzaSyAqb1v62CsRF04e67T7DtZFGssr5KT0wYA",
   authDomain: "mitrifyindia.firebaseapp.com",
@@ -13,10 +13,9 @@ const firebaseConfig = {
   storageBucket: "mitrifyindia.firebasestorage.app",
   messagingSenderId: "100179659463",
   appId: "1:100179659463:web:254dd7853b43e3b69b0ce2",
-  measurementId: "G-J7HV79T83H"
+  measurementId: "G-J7HV79T83H",
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 export const firebaseAuth = getAuth(app);
 firebaseAuth.useDeviceLanguage();
@@ -72,10 +71,12 @@ function normalizePhoneNumber(phoneNumber: string): string {
 
 function mapFirebaseOtpError(error: any): Error {
   const code = String(error?.code || "");
-  if (code === "auth/operation-not-allowed") return new Error("Phone OTP is disabled in Firebase. Please enable Phone Auth.");
+  if (code === "auth/operation-not-allowed") return new Error("Phone OTP is disabled. Please try another login method.");
   if (code === "auth/invalid-app-credential") return new Error("reCAPTCHA verification failed. Please try again.");
   if (code === "auth/too-many-requests") return new Error("Too many OTP attempts. Try again later.");
   if (code === "auth/invalid-phone-number") return new Error("Invalid phone number. Use format: +91XXXXXXXXXX");
+  if (code === "auth/unauthorized-domain") return new Error("This domain is not authorized for OTP. Contact support.");
+  if (code === "auth/app-not-authorized") return new Error("App not authorized for phone auth.");
   return error instanceof Error ? error : new Error("Failed to send OTP");
 }
 
