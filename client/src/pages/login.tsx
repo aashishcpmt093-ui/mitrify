@@ -22,8 +22,9 @@ async function getPostLoginPath(): Promise<string> {
   const profileRes = await fetch("/api/profiles/me?role=provider", { credentials: "include" });
   if (!profileRes.ok) return "/provider/guided-setup";
   const statusRes = await fetch("/api/providers/profile-status", { credentials: "include" });
-  if (!statusRes.ok) return "/provider/dashboard";
+  if (!statusRes.ok) return "/provider/complete-profile";
   const status = await statusRes.json();
+  if (!status.exists) return "/provider/guided-setup";
   if (!status.profileComplete) return "/provider/complete-profile";
   return "/provider/dashboard";
 }

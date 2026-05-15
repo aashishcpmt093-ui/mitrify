@@ -1,0 +1,86 @@
+Implement a strict profile validation and uniqueness system in my web app.
+
+Current issues:
+- Users can log in or create profiles with incomplete or invalid data
+- Deleted profiles may allow reuse of credentials without proper validation
+- Duplicate usernames/mobile numbers may exist across profiles
+
+Expected behavior:
+
+1. Profile existence and completeness check (after login):
+   - After login, system must check:
+     - Does profile exist?
+     - Is profile deleted (by user or admin)?
+     - Are all required (*) fields filled?
+   - If ANY condition fails → treat profile as INCOMPLETE
+
+2. Access control:
+   - If profile is incomplete or missing:
+     → Block access to dashboard
+     → Redirect to "Complete Profile" page
+   - Only allow access after full completion
+
+3. Credential uniqueness (VERY IMPORTANT):
+
+   When user tries to create/recreate profile using:
+   - Same username
+   - Same mobile number
+
+   System must check:
+
+   Case A: Credential already exists in ACTIVE profile
+   → Reject with clear message:
+     "Username/mobile number already in use"
+
+   Case B: Credential exists in DELETED profile
+   → Allow reuse ✅
+   → BUT do NOT restore old data
+
+   Case C: Credential does NOT exist anywhere
+   → Allow normally ✅
+
+4. Data reset rules:
+   - Even if user uses same old credentials:
+     → Do NOT restore:
+       - Call history
+       - Activity logs
+       - Previous profile data
+   - Treat as completely new profile
+
+5. Admin deletion handling:
+   - If admin deletes a profile:
+     → Credentials become reusable
+     → But old data must remain inaccessible
+
+6. Navigation and security:
+   - User must NOT bypass profile completion using:
+     - Back button
+     - Direct URL access
+   - If attempted:
+     → Redirect back OR force logout
+
+7. Backend requirements:
+   - Enforce unique constraints on:
+     - username
+     - mobile number
+   - Add soft delete flag (e.g., isDeleted = true)
+   - While checking uniqueness:
+     - Only block if active record exists
+
+8. Frontend behavior:
+   - Show clear error messages:
+     - "Username already in use"
+     - "Mobile number already registered"
+   - Redirect incomplete users to profile form
+
+9. Edge cases:
+   - Deleted profile + re-register → allowed (fresh start)
+   - Duplicate active profile → blocked
+   - Profile deleted after login → access revoked
+   - Avoid infinite redirect loops
+
+Deliverables:
+- Backend validation logic (uniqueness + deletion handling)
+- Frontend validation + error messages
+- Profile completion enforcement
+- Secure routing and access control
