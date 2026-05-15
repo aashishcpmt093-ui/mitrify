@@ -326,8 +326,15 @@ function LoggedInRoute({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (statusLoading || !isAuthenticated) return;
-    if (providerStatus?.exists && !providerStatus?.profileComplete) {
-      if (!PROVIDER_GATE_ALLOWLIST.has(location)) {
+    if (!providerStatus?.hasProviderRole) return; // customer-only user — no gate
+    if (!PROVIDER_GATE_ALLOWLIST.has(location)) {
+      // Provider with no data row → send to guided-setup to create profile
+      if (!providerStatus.exists) {
+        setLocation("/provider/guided-setup");
+        return;
+      }
+      // Provider with incomplete data → send to completion gate
+      if (!providerStatus.profileComplete) {
         setLocation("/provider/complete-profile");
       }
     }

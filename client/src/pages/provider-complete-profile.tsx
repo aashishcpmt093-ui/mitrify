@@ -18,6 +18,7 @@ interface ProfileStatus {
   exists: boolean;
   profileComplete: boolean;
   missingFields: string[];
+  hasProviderRole: boolean;
 }
 
 export default function ProviderCompleteProfilePage() {

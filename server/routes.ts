@@ -1056,6 +1056,11 @@ export async function registerRoutes(
   app.get("/api/providers/profile-status", isLocalAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
+
+      // Check whether the user has registered as a provider (profiles table row)
+      const providerRoleProfile = await storage.getProfileByRole(userId, "provider");
+      const hasProviderRole = !!providerRoleProfile;
+
       let provider: any;
       try {
         provider = await storage.getProvider(userId);
@@ -1068,7 +1073,7 @@ export async function registerRoutes(
         }
       }
       if (!provider) {
-        return res.json({ exists: false, profileComplete: false, missingFields: [] });
+        return res.json({ exists: false, profileComplete: false, missingFields: [], hasProviderRole });
       }
       const missingFields: string[] = [];
       if (!provider.serviceName?.trim()) missingFields.push("serviceName");
@@ -1076,7 +1081,7 @@ export async function registerRoutes(
       if (!provider.description?.trim()) missingFields.push("description");
       if (!provider.address?.trim() && (provider.latitude == null || provider.longitude == null)) missingFields.push("location");
       if (!provider.approxCharge?.trim()) missingFields.push("approxCharge");
-      res.json({ exists: true, profileComplete: missingFields.length === 0, missingFields });
+      res.json({ exists: true, profileComplete: missingFields.length === 0, missingFields, hasProviderRole });
     } catch (error) {
       res.status(500).json({ message: "Internal error" });
     }
