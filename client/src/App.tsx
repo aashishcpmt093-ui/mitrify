@@ -320,11 +320,31 @@ function SetupRoute({ role, children }: { role: "customer" | "provider"; childre
   const { isAuthenticated, isLoading } = useAuth();
   const [, setLocation] = useLocation();
 
+  const { data: providerStatus, isLoading: statusLoading } = useQuery({
+    queryKey: ["/api/providers/profile-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/providers/profile-status", { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: isAuthenticated && role === "provider",
+    staleTime: 30 * 1000,
+    retry: false,
+  });
+
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
       setLocation("/welcome");
     }
   }, [isLoading, isAuthenticated]);
+
+  useEffect(() => {
+    if (role !== "provider" || statusLoading) return;
+    // Incomplete profile: provider row exists but required fields missing → gate
+    if (providerStatus?.exists && !providerStatus?.profileComplete) {
+      setLocation("/provider/complete-profile");
+    }
+  }, [role, statusLoading, providerStatus, setLocation]);
 
   if (isLoading) {
     return (
@@ -334,6 +354,13 @@ function SetupRoute({ role, children }: { role: "customer" | "provider"; childre
     );
   }
   if (!isAuthenticated) return null;
+  if (role === "provider" && statusLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
   return <>{children}</>;
 }
 

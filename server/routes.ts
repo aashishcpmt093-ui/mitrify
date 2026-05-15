@@ -414,8 +414,28 @@ export async function registerRoutes(
         return res.status(401).json({ message: "Invalid username or password" });
       }
       (req.session as any).localUserId = user.userId;
+
+      let profileExists = false;
+      let isProfileComplete: boolean | null = null;
+      try {
+        const provProfile = await storage.getProfileByRole(user.userId, "provider");
+        if (provProfile) {
+          profileExists = true;
+          const provider = await storage.getProvider(user.userId);
+          if (provider) {
+            const missing: string[] = [];
+            if (!provider.serviceName?.trim()) missing.push("serviceName");
+            if (!provider.mobileNumbers || provider.mobileNumbers.length === 0) missing.push("mobileNumbers");
+            if (!provider.description?.trim()) missing.push("description");
+            if (!provider.address?.trim() && (provider.latitude == null || provider.longitude == null)) missing.push("location");
+            if (!provider.approxCharge?.trim()) missing.push("approxCharge");
+            isProfileComplete = missing.length === 0;
+          }
+        }
+      } catch (_) {}
+
       req.session.save(() => {
-        res.json({ userId: user.userId, username: user.username });
+        res.json({ userId: user.userId, username: user.username, profileExists, isProfileComplete });
       });
     } catch (error: any) {
       res.status(500).json({ message: "Login failed" });
@@ -499,8 +519,28 @@ export async function registerRoutes(
 
       (req.session as any).localUserId = user.userId;
       const existingProfile = await storage.getProfileByRole(user.userId, "customer");
+
+      let profileExists = false;
+      let isProfileComplete: boolean | null = null;
+      try {
+        const provProfile = await storage.getProfileByRole(user.userId, "provider");
+        if (provProfile) {
+          profileExists = true;
+          const provider = await storage.getProvider(user.userId);
+          if (provider) {
+            const missing: string[] = [];
+            if (!provider.serviceName?.trim()) missing.push("serviceName");
+            if (!provider.mobileNumbers || provider.mobileNumbers.length === 0) missing.push("mobileNumbers");
+            if (!provider.description?.trim()) missing.push("description");
+            if (!provider.address?.trim() && (provider.latitude == null || provider.longitude == null)) missing.push("location");
+            if (!provider.approxCharge?.trim()) missing.push("approxCharge");
+            isProfileComplete = missing.length === 0;
+          }
+        }
+      } catch (_) {}
+
       req.session.save(() => {
-        res.json({ userId: user!.userId, isNewUser: !existingProfile, verified: true });
+        res.json({ userId: user!.userId, isNewUser: !existingProfile, verified: true, profileExists, isProfileComplete });
       });
     } catch (error: any) {
       console.error("Firebase OTP verify error:", error);
