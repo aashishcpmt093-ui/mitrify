@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Home, Zap, Phone, KeyRound, Eye, EyeOff } from "lucide-react";
+import { Home, Zap, Phone, KeyRound, Eye, EyeOff, AlertTriangle } from "lucide-react";
 import { SiGoogle, SiApple } from "react-icons/si";
 import { useLocation } from "wouter";
 import { useState } from "react";
@@ -18,6 +18,13 @@ async function enterGuestMode() {
   try { await fetch("/api/guest-mode", { method: "POST", credentials: "include" }); } catch {}
 }
 
+const FIREBASE_DOMAIN_ERRORS = new Set([
+  "auth/unauthorized-domain",
+  "auth/invalid-app-credential",
+  "auth/operation-not-allowed",
+  "auth/app-not-authorized",
+]);
+
 type Tab = "social" | "password" | "otp";
 
 export default function LoginPage() {
@@ -29,6 +36,7 @@ export default function LoginPage() {
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [otpSending, setOtpSending] = useState(false);
+  const [otpUnavailable, setOtpUnavailable] = useState(false);
   const [username, setUsername] = useState(() => localStorage.getItem("mitrify_saved_username") || "");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -36,29 +44,24 @@ export default function LoginPage() {
 
   const sendOtpInBackground = async () => {
     setOtpSending(true);
+    setOtpUnavailable(false);
     try {
       await sendFirebaseOtp(otpContact.trim(), "login-send-otp-btn");
-      const res = await fetch("/api/otp/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ phone: otpContact.trim() }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        toast({ title: data.message || "Failed to send OTP", variant: "destructive" });
-        setOtpSent(false);
-        return;
-      }
       toast({ title: "OTP sent to your mobile" });
     } catch (err: any) {
-      const msg = err?.code === "auth/too-many-requests"
-        ? "Too many attempts. Try again later."
-        : err?.code === "auth/invalid-phone-number"
-          ? "Invalid number. Use format: +91XXXXXXXXXX"
-          : err?.message || "Failed to send OTP";
-      toast({ title: msg, variant: "destructive" });
-      setOtpSent(false);
+      if (FIREBASE_DOMAIN_ERRORS.has(err?.code)) {
+        setOtpUnavailable(true);
+        setOtpSent(false);
+      } else if (err?.code === "auth/too-many-requests") {
+        toast({ title: "Too many attempts. Try again later.", variant: "destructive" });
+        setOtpSent(false);
+      } else if (err?.code === "auth/invalid-phone-number") {
+        toast({ title: "Invalid number. Use format: +91XXXXXXXXXX", variant: "destructive" });
+        setOtpSent(false);
+      } else {
+        setOtpUnavailable(true);
+        setOtpSent(false);
+      }
     } finally {
       setOtpSending(false);
     }
@@ -267,54 +270,89 @@ export default function LoginPage() {
                   {/* Hidden reCAPTCHA container for Firebase */}
                   <div id="login-send-otp-btn" style={{ position: "absolute", left: "-9999px" }} />
 
-                  <div className="space-y-2">
-                    <Label htmlFor="otpContact">Mobile Number</Label>
-                    <Input
-                      id="otpContact"
-                      type="tel"
-                      value={otpContact}
-                      onChange={(e) => setOtpContact(e.target.value)}
-                      placeholder="+91 XXXXXXXXXX"
-                      disabled={otpSent}
-                      data-testid="input-otp-contact"
-                    />
-                    <p className="text-xs text-muted-foreground">Enter your registered mobile number with country code</p>
-                  </div>
-
-                  {otpSent && (
-                    <>
-                      <p className="text-xs text-muted-foreground text-center">
-                        {otpSending ? "Sending OTP..." : `OTP sent to ${otpContact}`}
-                      </p>
-                      <div className="space-y-2">
-                        <Label htmlFor="otp">Enter OTP</Label>
-                        <Input
-                          id="otp"
-                          value={otp}
-                          onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
-                          placeholder="Enter 6-digit OTP"
-                          maxLength={6}
-                          inputMode="numeric"
-                          className="text-center text-lg tracking-widest font-semibold"
-                          data-testid="input-otp"
-                        />
+                  {otpUnavailable ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-4 space-y-3">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                        <p className="text-sm text-amber-800 dark:text-amber-300 font-medium">
+                          Mobile OTP abhi available nahi hai
+                        </p>
                       </div>
-                    </>
-                  )}
-
-                  {!otpSent ? (
-                    <Button className="w-full font-semibold" onClick={handleSendOtp} data-testid="button-send-otp">
-                      <Phone className="w-4 h-4 mr-2" />Send OTP
-                    </Button>
-                  ) : (
-                    <div className="space-y-2">
-                      <Button className="w-full font-semibold" onClick={handleVerifyOtp} disabled={loading} data-testid="button-verify-otp">
-                        {loading ? "Verifying..." : "Verify & Login"}
-                      </Button>
-                      <Button variant="ghost" className="w-full text-sm" onClick={() => { setOtpSent(false); setOtp(""); }} data-testid="button-resend-otp">
-                        Change Number / Resend OTP
-                      </Button>
+                      <p className="text-xs text-amber-700 dark:text-amber-400">
+                        Please use <strong>ID & Password</strong> or <strong>Google login</strong> to sign in.
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => { setActiveTab("password"); setOtpUnavailable(false); }}
+                          data-testid="button-switch-to-password"
+                        >
+                          <KeyRound className="w-3.5 h-3.5 mr-1.5" />ID & Password
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => { setActiveTab("social"); setOtpUnavailable(false); }}
+                          data-testid="button-switch-to-google"
+                        >
+                          Google Login
+                        </Button>
+                      </div>
                     </div>
+                  ) : (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="otpContact">Mobile Number</Label>
+                        <Input
+                          id="otpContact"
+                          type="tel"
+                          value={otpContact}
+                          onChange={(e) => setOtpContact(e.target.value)}
+                          placeholder="+91 XXXXXXXXXX"
+                          disabled={otpSent}
+                          data-testid="input-otp-contact"
+                        />
+                        <p className="text-xs text-muted-foreground">Enter your registered mobile number with country code</p>
+                      </div>
+
+                      {otpSent && (
+                        <>
+                          <p className="text-xs text-muted-foreground text-center">
+                            {otpSending ? "Sending OTP..." : `OTP sent to ${otpContact}`}
+                          </p>
+                          <div className="space-y-2">
+                            <Label htmlFor="otp">Enter OTP</Label>
+                            <Input
+                              id="otp"
+                              value={otp}
+                              onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+                              placeholder="Enter 6-digit OTP"
+                              maxLength={6}
+                              inputMode="numeric"
+                              className="text-center text-lg tracking-widest font-semibold"
+                              data-testid="input-otp"
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      {!otpSent ? (
+                        <Button className="w-full font-semibold" onClick={handleSendOtp} data-testid="button-send-otp">
+                          <Phone className="w-4 h-4 mr-2" />Send OTP
+                        </Button>
+                      ) : (
+                        <div className="space-y-2">
+                          <Button className="w-full font-semibold" onClick={handleVerifyOtp} disabled={loading} data-testid="button-verify-otp">
+                            {loading ? "Verifying..." : "Verify & Login"}
+                          </Button>
+                          <Button variant="ghost" className="w-full text-sm" onClick={() => { setOtpSent(false); setOtp(""); setOtpUnavailable(false); }} data-testid="button-resend-otp">
+                            Change Number / Resend OTP
+                          </Button>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               )}

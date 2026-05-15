@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Eye, EyeOff, Phone, CheckCircle2, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, Phone, CheckCircle2, ShieldCheck, Sparkles, AlertTriangle, KeyRound } from "lucide-react";
 import { SiGoogle } from "react-icons/si";
 import { useLocation } from "wouter";
 import { useState, useMemo } from "react";
@@ -40,34 +40,37 @@ export default function SignupPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [otpSending, setOtpSending] = useState(false);
+  const [otpUnavailable, setOtpUnavailable] = useState(false);
 
   const suggestions = useMemo(() => generateUsernameSuggestions(phone), [phone]);
 
+  const FIREBASE_DOMAIN_ERRORS = new Set([
+    "auth/unauthorized-domain",
+    "auth/invalid-app-credential",
+    "auth/operation-not-allowed",
+    "auth/app-not-authorized",
+  ]);
+
   const sendOtpInBackground = async () => {
     setOtpSending(true);
+    setOtpUnavailable(false);
     try {
       await sendFirebaseOtp(phone.trim(), "signup-send-otp-btn");
-      const res = await fetch("/api/otp/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ phone: phone.trim() }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        toast({ title: data.message || t("signupOtpFailToast"), variant: "destructive" });
-        setStep("contact");
-        return;
-      }
       toast({ title: t("signupOtpSentToast") });
     } catch (err: any) {
-      const msg = err?.code === "auth/too-many-requests"
-        ? t("signupTooMany")
-        : err?.code === "auth/invalid-phone-number"
-          ? t("signupInvalidNumber")
-          : t("signupOtpFailToast");
-      toast({ title: msg, variant: "destructive" });
-      setStep("contact");
+      if (FIREBASE_DOMAIN_ERRORS.has(err?.code)) {
+        setOtpUnavailable(true);
+        setStep("contact");
+      } else if (err?.code === "auth/too-many-requests") {
+        toast({ title: t("signupTooMany"), variant: "destructive" });
+        setStep("contact");
+      } else if (err?.code === "auth/invalid-phone-number") {
+        toast({ title: t("signupInvalidNumber"), variant: "destructive" });
+        setStep("contact");
+      } else {
+        setOtpUnavailable(true);
+        setStep("contact");
+      }
     } finally {
       setOtpSending(false);
     }
@@ -214,6 +217,14 @@ export default function SignupPage() {
 
               <Card>
                 <CardContent className="pt-6 space-y-4">
+                  {otpUnavailable && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3 flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                      <p className="text-xs text-amber-800 dark:text-amber-300">
+                        Mobile OTP abhi available nahi hai. Please <strong>Google login</strong> use karo.
+                      </p>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
                     <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
                     <p className="text-xs text-blue-700 dark:text-blue-300">{t("signupSecurityNote")}</p>
@@ -286,7 +297,7 @@ export default function SignupPage() {
                 <Button className="w-full" onClick={handleVerifyOtp} disabled={loading} data-testid="button-verify-otp">
                   {loading ? t("signupVerifying") : t("signupVerifyOtp")}
                 </Button>
-                <Button variant="ghost" className="w-full text-sm" onClick={() => { setStep("contact"); setOtp(""); }} disabled={loading} data-testid="button-resend-otp">
+                <Button variant="ghost" className="w-full text-sm" onClick={() => { setStep("contact"); setOtp(""); setOtpUnavailable(false); }} disabled={loading} data-testid="button-resend-otp">
                   {t("signupChangeResend")}
                 </Button>
               </CardContent>
