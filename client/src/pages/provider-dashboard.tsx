@@ -11,7 +11,7 @@ import { useLocation } from "wouter";
 import {
   Phone, BarChart3, Coins, LogOut, Zap, AlertCircle,
   Share2, Copy, Clock, Wrench, Search, User, Plus, Minus,
-  Menu, X, Home, Settings, Moon, Sun, History, Info, ScrollText, Camera, Briefcase, Bell, Mail, ChevronRight, Sparkles, Trash2, Loader2
+  Menu, X, Home, Settings, Moon, Sun, History, Info, ScrollText, Camera, Briefcase, Bell, Mail, ChevronRight, Sparkles, Trash2, Loader2, CheckCircle2
 } from "lucide-react";
 import { PlanTick } from "@/components/PlanTick";
 import { Switch } from "@/components/ui/switch";
@@ -287,6 +287,49 @@ export default function ProviderDashboardPage() {
             <Button variant="ghost" size="sm" className="shrink-0 text-xs" onClick={() => setLocation("/provider/edit-profile")} data-testid="button-edit-photo">
               <Camera className="w-3.5 h-3.5 mr-1" /> Edit
             </Button>
+          </div>
+        )}
+
+        {/* Profile completion banner */}
+        {provider && (provider as any).profileComplete === false && (() => {
+          const FIELD_LABELS: Record<string, string> = {
+            serviceName: "Service naam",
+            mobileNumbers: "Mobile number",
+            description: "Service description",
+            location: "Location / Address",
+            approxCharge: "Approx charge",
+          };
+          const missing: string[] = (provider as any).missingFields || [];
+          if (missing.length === 0) return null;
+          return (
+            <div
+              className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3 cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors"
+              onClick={() => setLocation("/provider/edit-profile")}
+              data-testid="banner-profile-incomplete"
+            >
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Profile Incomplete — Customers nahi dhundh paenge!</p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">Yeh fields abhi bhi khali hain:</p>
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {missing.map(f => (
+                      <span key={f} className="text-[11px] bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-700 rounded-md px-1.5 py-0.5 font-medium">
+                        {FIELD_LABELS[f] || f}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              </div>
+            </div>
+          );
+        })()}
+
+        {provider && (provider as any).profileComplete === true && (
+          <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 p-3 flex items-center gap-2" data-testid="banner-profile-complete">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <p className="text-sm text-emerald-800 dark:text-emerald-300 font-medium">Profile Complete hai — Customers aapko search mein dekh sakte hain!</p>
           </div>
         )}
 

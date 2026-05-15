@@ -997,7 +997,16 @@ export async function registerRoutes(
         }
       }
       if (!provider) return res.status(404).json({ message: "Provider not found" });
-      res.json(provider);
+
+      // Calculate which required fields are missing
+      const missingFields: string[] = [];
+      if (!provider.serviceName?.trim()) missingFields.push("serviceName");
+      if (!provider.mobileNumbers || provider.mobileNumbers.length === 0) missingFields.push("mobileNumbers");
+      if (!provider.description?.trim()) missingFields.push("description");
+      if (!provider.address?.trim() && (provider.latitude == null || provider.longitude == null)) missingFields.push("location");
+      if (!provider.approxCharge?.trim()) missingFields.push("approxCharge");
+
+      res.json({ ...provider, profileComplete: missingFields.length === 0, missingFields });
     } catch (error) {
       res.status(500).json({ message: "Internal error" });
     }
