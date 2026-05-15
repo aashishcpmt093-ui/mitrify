@@ -361,7 +361,7 @@ export async function registerRoutes(
     }
   });
 
-  app.put("/api/profiles/me", async (req: any, res) => {
+  app.put("/api/profiles/me", isLocalAuthenticated, async (req: any, res) => {
     try {
       await repairProfileColumns();
       const userId = req.user?.claims?.sub;
