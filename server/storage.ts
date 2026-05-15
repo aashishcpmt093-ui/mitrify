@@ -1835,7 +1835,7 @@ export class DatabaseStorage implements IStorage {
     return stats;
   }
 
-  async bulkCreatePendingProviders(records: Array<{ name: string; mobile: string; addedBy: string }>, allowDuplicate = false): Promise<{ imported: number; skipped: number; total: number }> {
+  async bulkCreatePendingProviders(records: Array<{ name: string; mobile: string; addedBy: string; serviceName?: string; address?: string; state?: string; district?: string; pinCode?: string; description?: string; approxCharge?: string; notes?: string }>, allowDuplicate = false): Promise<{ imported: number; skipped: number; total: number }> {
     const total = records.length;
 
     let pendingMobiles = new Set<string>();
@@ -1873,7 +1873,14 @@ export class DatabaseStorage implements IStorage {
         mobile: rec.mobile,
         // Pre-populate mobileNumbers array so approval always has a number.
         mobileNumbers: rec.mobile ? [rec.mobile] : [],
-        serviceName: "",
+        serviceName: rec.serviceName || "",
+        address: rec.address || "",
+        state: rec.state || "",
+        district: rec.district || "",
+        pinCode: rec.pinCode || "",
+        description: rec.description || "",
+        approxCharge: rec.approxCharge || "",
+        notes: rec.notes || "",
         addedBy: rec.addedBy,
         status: "pending" as const,
       } as any));

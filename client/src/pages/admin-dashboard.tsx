@@ -1199,6 +1199,22 @@ export default function AdminDashboardPage() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importNameCol, setImportNameCol] = useState("Name");
   const [importMobileCol, setImportMobileCol] = useState("Mobile number");
+  const [importServiceCol, setImportServiceCol] = useState("");
+  const [importAddressCol, setImportAddressCol] = useState("");
+  const [importStateCol, setImportStateCol] = useState("");
+  const [importDistrictCol, setImportDistrictCol] = useState("");
+  const [importPinCodeCol, setImportPinCodeCol] = useState("");
+  const [importDescriptionCol, setImportDescriptionCol] = useState("");
+  const [importApproxChargeCol, setImportApproxChargeCol] = useState("");
+  const [importNotesCol, setImportNotesCol] = useState("");
+  const [importDefaultServiceName, setImportDefaultServiceName] = useState("");
+  const [importDefaultAddress, setImportDefaultAddress] = useState("");
+  const [importDefaultState, setImportDefaultState] = useState("");
+  const [importDefaultDistrict, setImportDefaultDistrict] = useState("");
+  const [importDefaultPinCode, setImportDefaultPinCode] = useState("");
+  const [importDefaultDescription, setImportDefaultDescription] = useState("");
+  const [importDefaultApproxCharge, setImportDefaultApproxCharge] = useState("");
+  const [importDefaultNotes, setImportDefaultNotes] = useState("");
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number; total: number; skippedNoMobile?: number } | null>(null);
   const [importLoading, setImportLoading] = useState(false);
   const [cleanupLoading, setCleanupLoading] = useState(false);
@@ -1728,6 +1744,14 @@ export default function AdminDashboardPage() {
         const mobileGuess = headers.find((h: string) => h.toLowerCase().includes("mobile") || h.toLowerCase().includes("phone") || h.toLowerCase().includes("number")) || headers[4] || "";
         setImportNameCol(nameGuess);
         setImportMobileCol(mobileGuess);
+        setImportServiceCol(headers.find((h: string) => h.toLowerCase().includes("service") || h.toLowerCase().includes("work") || h.toLowerCase().includes("profession")) || "");
+        setImportAddressCol(headers.find((h: string) => h.toLowerCase().includes("address") || h.toLowerCase().includes("addr")) || "");
+        setImportStateCol(headers.find((h: string) => h.toLowerCase().includes("state")) || "");
+        setImportDistrictCol(headers.find((h: string) => h.toLowerCase().includes("district") || h.toLowerCase().includes("city")) || "");
+        setImportPinCodeCol(headers.find((h: string) => h.toLowerCase().includes("pincode") || h.toLowerCase().includes("pin code") || h.toLowerCase().includes("zip")) || "");
+        setImportDescriptionCol(headers.find((h: string) => h.toLowerCase().includes("description") || h.toLowerCase().includes("note")) || "");
+        setImportApproxChargeCol(headers.find((h: string) => h.toLowerCase().includes("charge") || h.toLowerCase().includes("fee") || h.toLowerCase().includes("price")) || "");
+        setImportNotesCol(headers.find((h: string) => h.toLowerCase().includes("notes") || h.toLowerCase().includes("remark")) || "");
       }
     } catch {
       setImportPreview([]);
@@ -1743,6 +1767,22 @@ export default function AdminDashboardPage() {
       formData.append("file", importFile);
       formData.append("nameCol", importNameCol);
       formData.append("mobileCol", importMobileCol);
+      formData.append("serviceCol", importServiceCol);
+      formData.append("addressCol", importAddressCol);
+      formData.append("stateCol", importStateCol);
+      formData.append("districtCol", importDistrictCol);
+      formData.append("pinCodeCol", importPinCodeCol);
+      formData.append("descriptionCol", importDescriptionCol);
+      formData.append("approxChargeCol", importApproxChargeCol);
+      formData.append("notesCol", importNotesCol);
+      formData.append("defaultServiceName", importDefaultServiceName);
+      formData.append("defaultAddress", importDefaultAddress);
+      formData.append("defaultState", importDefaultState);
+      formData.append("defaultDistrict", importDefaultDistrict);
+      formData.append("defaultPinCode", importDefaultPinCode);
+      formData.append("defaultDescription", importDefaultDescription);
+      formData.append("defaultApproxCharge", importDefaultApproxCharge);
+      formData.append("defaultNotes", importDefaultNotes);
       formData.append("allowDuplicate", String(importAllowDuplicate));
       const res = await fetch("/api/admin/bulk-import", {
         method: "POST",
@@ -3474,6 +3514,38 @@ export default function AdminDashboardPage() {
                         <Input value={importMobileCol} onChange={e => setImportMobileCol(e.target.value)} placeholder="e.g. Mobile number" className="h-9 text-sm" data-testid="input-import-mobile-col" />
                       )}
                     </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      ["Service Name", importServiceCol, setImportServiceCol, importDefaultServiceName, setImportDefaultServiceName],
+                      ["Address", importAddressCol, setImportAddressCol, importDefaultAddress, setImportDefaultAddress],
+                      ["State", importStateCol, setImportStateCol, importDefaultState, setImportDefaultState],
+                      ["District / City", importDistrictCol, setImportDistrictCol, importDefaultDistrict, setImportDefaultDistrict],
+                      ["Pin Code", importPinCodeCol, setImportPinCodeCol, importDefaultPinCode, setImportDefaultPinCode],
+                      ["Description", importDescriptionCol, setImportDescriptionCol, importDefaultDescription, setImportDefaultDescription],
+                      ["Approx Charge", importApproxChargeCol, setImportApproxChargeCol, importDefaultApproxCharge, setImportDefaultApproxCharge],
+                      ["Notes", importNotesCol, setImportNotesCol, importDefaultNotes, setImportDefaultNotes],
+                    ].map(([label, col, setCol, def, setDef]) => (
+                      <div className="space-y-1.5" key={String(label)}>
+                        <Label className="text-xs text-muted-foreground">{String(label)} <span className="text-muted-foreground/70">(optional)</span></Label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {importPreview.length > 0 ? (
+                            <Select value={String(col || "")} onValueChange={(v) => (setCol as (value: string) => void)(v)}>
+                              <SelectTrigger className="h-9 text-sm">
+                                <SelectValue placeholder="Excel column" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="">Use default / blank</SelectItem>
+                                {importPreview.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Input value={String(col || "")} onChange={e => (setCol as (value: string) => void)(e.target.value)} placeholder="Excel column" className="h-9 text-sm" />
+                          )}
+                          <Input value={String(def || "")} onChange={e => (setDef as (value: string) => void)(e.target.value)} placeholder="Default value" className="h-9 text-sm" />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

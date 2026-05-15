@@ -2762,6 +2762,22 @@ export async function registerRoutes(
       if (!req.file) return res.status(400).json({ message: "No file uploaded" });
       const nameCol = req.body.nameCol || "Name";
       const mobileCol = req.body.mobileCol || "Mobile number";
+      const serviceCol = req.body.serviceCol || "";
+      const addressCol = req.body.addressCol || "";
+      const stateCol = req.body.stateCol || "";
+      const districtCol = req.body.districtCol || "";
+      const pinCodeCol = req.body.pinCodeCol || "";
+      const descriptionCol = req.body.descriptionCol || "";
+      const approxChargeCol = req.body.approxChargeCol || "";
+      const notesCol = req.body.notesCol || "";
+      const defaultServiceName = String(req.body.defaultServiceName || "").trim();
+      const defaultAddress = String(req.body.defaultAddress || "").trim();
+      const defaultState = String(req.body.defaultState || "").trim();
+      const defaultDistrict = String(req.body.defaultDistrict || "").trim();
+      const defaultPinCode = String(req.body.defaultPinCode || "").trim();
+      const defaultDescription = String(req.body.defaultDescription || "").trim();
+      const defaultApproxCharge = String(req.body.defaultApproxCharge || "").trim();
+      const defaultNotes = String(req.body.defaultNotes || "").trim();
       const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
@@ -2769,7 +2785,7 @@ export async function registerRoutes(
       if (rows.length === 0) return res.status(400).json({ message: "File is empty or unreadable" });
       const addedBy = "bulk-import";
       const allowDuplicate = req.body.allowDuplicate === "true";
-      const records: Array<{ name: string; mobile: string; addedBy: string }> = [];
+      const records: Array<{ name: string; mobile: string; addedBy: string; serviceName?: string; address?: string; state?: string; district?: string; pinCode?: string; description?: string; approxCharge?: string; notes?: string }> = [];
       let skippedNoMobile = 0;
       for (const row of rows) {
         const rawName = String(row[nameCol] || "").trim();
@@ -2779,7 +2795,19 @@ export async function registerRoutes(
         if (rawMobile.length < 7) { skippedNoMobile++; continue; }
         const mobile = rawMobile.length === 10 ? rawMobile : rawMobile.slice(-10);
         if (mobile.length < 7) { skippedNoMobile++; continue; }
-        records.push({ name, mobile, addedBy });
+        records.push({
+          name,
+          mobile,
+          addedBy,
+          serviceName: serviceCol ? String(row[serviceCol] || "").trim() : defaultServiceName,
+          address: addressCol ? String(row[addressCol] || "").trim() : defaultAddress,
+          state: stateCol ? String(row[stateCol] || "").trim() : defaultState,
+          district: districtCol ? String(row[districtCol] || "").trim() : defaultDistrict,
+          pinCode: pinCodeCol ? String(row[pinCodeCol] || "").trim() : defaultPinCode,
+          description: descriptionCol ? String(row[descriptionCol] || "").trim() : defaultDescription,
+          approxCharge: approxChargeCol ? String(row[approxChargeCol] || "").trim() : defaultApproxCharge,
+          notes: notesCol ? String(row[notesCol] || "").trim() : defaultNotes,
+        });
       }
       if (records.length === 0) return res.status(400).json({ message: `No valid records found. ${skippedNoMobile} rows had no mobile number. Check column names.` });
       const result = await storage.bulkCreatePendingProviders(records, allowDuplicate);
