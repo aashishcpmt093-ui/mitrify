@@ -71,7 +71,6 @@ export default function ProviderGuidedSetupPage() {
   const [mode, setMode] = useState<"form" | "qa">("form");
   const [qaStep, setQaStep] = useState(0);
 
-  const [initialLoading, setInitialLoading] = useState(true);
   const [isEditMode, setIsEditMode] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -129,7 +128,6 @@ export default function ProviderGuidedSetupPage() {
           }
         }
       } catch {}
-      setInitialLoading(false);
     }
     load();
   }, []);
@@ -270,15 +268,6 @@ export default function ProviderGuidedSetupPage() {
       setSubmitting(false);
     }
   };
-
-  // ─── Loading screen ──────────────────────────────────────────────
-  if (initialLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-7 h-7 animate-spin text-primary" />
-      </div>
-    );
-  }
 
   // ─── Welcome screen after profile creation ───────────────────────
   if (submitted) {
