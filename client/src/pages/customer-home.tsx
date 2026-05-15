@@ -1879,7 +1879,9 @@ export default function CustomerHomePage() {
 
         {searching && !phoneSearching && results.length > 0 && (
           <div className="space-y-3">
-            {results.map((result) => (
+            {results
+  .filter(result => result.provider.mobileNumbers && result.provider.mobileNumbers.length > 0)
+  .map((result) => (
               <div key={result.provider.id} className="rounded-2xl border bg-card p-4 shadow-sm" data-testid={`card-provider-${result.provider.id}`}>
                 <div className="flex items-start gap-3">
                   <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center shrink-0">

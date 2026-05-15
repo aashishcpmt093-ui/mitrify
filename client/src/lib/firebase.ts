@@ -1,16 +1,22 @@
+// Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
-import { getAuth, RecaptchaVerifier, signInWithPhoneNumber, type ConfirmationResult } from "firebase/auth";
+import { getAnalytics } from "firebase/analytics";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
 
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "AIzaSyDz4zDta6PTPsQ8QlQyaQnQ0BPen8JPiSk",
-  authDomain: "mitrify-india.firebaseapp.com",
-  projectId: "mitrify-india",
-  storageBucket: "mitrify-india.firebasestorage.app",
-  messagingSenderId: "358263232922",
-  appId: "1:358263232922:web:afbea6db00d44547ce8223",
-  measurementId: "G-3P2S8XPHCS",
+  apiKey: "AIzaSyAqb1v62CsRF04e67T7DtZFGssr5KT0wYA",
+  authDomain: "mitrifyindia.firebaseapp.com",
+  projectId: "mitrifyindia",
+  storageBucket: "mitrifyindia.firebasestorage.app",
+  messagingSenderId: "100179659463",
+  appId: "1:100179659463:web:254dd7853b43e3b69b0ce2",
+  measurementId: "G-J7HV79T83H"
 };
 
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 export const firebaseAuth = getAuth(app);
 firebaseAuth.useDeviceLanguage();
