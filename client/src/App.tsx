@@ -293,10 +293,30 @@ function AuthenticatedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// Requires login only (no profile check)
+// Paths exempt from the provider-completion gate
+const PROVIDER_GATE_ALLOWLIST = new Set([
+  "/provider/complete-profile",
+  "/provider/guided-setup",
+  "/provider/setup",
+  "/customer/setup",
+]);
+
+// Requires login; also blocks incomplete providers from all pages except allowlist
 function LoggedInRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
+
+  const { data: providerStatus, isLoading: statusLoading } = useQuery({
+    queryKey: ["/api/providers/profile-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/providers/profile-status", { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: isAuthenticated,
+    staleTime: 30 * 1000,
+    retry: false,
+  });
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -304,7 +324,16 @@ function LoggedInRoute({ children }: { children: React.ReactNode }) {
     }
   }, [isLoading, isAuthenticated]);
 
-  if (isLoading) {
+  useEffect(() => {
+    if (statusLoading || !isAuthenticated) return;
+    if (providerStatus?.exists && !providerStatus?.profileComplete) {
+      if (!PROVIDER_GATE_ALLOWLIST.has(location)) {
+        setLocation("/provider/complete-profile");
+      }
+    }
+  }, [statusLoading, providerStatus, isAuthenticated, location]);
+
+  if (isLoading || (isAuthenticated && statusLoading)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="animate-pulse text-muted-foreground">Loading...</div>

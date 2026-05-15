@@ -14,14 +14,6 @@ import {
 } from "lucide-react";
 import logoImg from "@assets/772B17C5-7738-43B8-B5C0-04A7F2A6561B_1773842365564.png";
 
-const FIELD_LABELS: Record<string, string> = {
-  serviceName: "Service naam (e.g. Plumber, Electrician)",
-  mobileNumbers: "Contact mobile numbers for customers",
-  description: "Service description",
-  location: "Location / Address",
-  approxCharge: "Approx charge",
-};
-
 interface ProfileStatus {
   exists: boolean;
   profileComplete: boolean;
