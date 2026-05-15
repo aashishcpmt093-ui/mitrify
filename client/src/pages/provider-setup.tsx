@@ -272,16 +272,6 @@ export default function ProviderSetupPage() {
     }
     setOtpLoading(true);
     try {
-      // Master OTP support
-      if (otpValue.trim() === "77420") {
-        setVerifiedNumbers(prev => [...prev, newNumber.trim()]);
-        setNewNumber("");
-        setOtpValue("");
-        setOtpSent(false);
-        setShowAddNumber(false);
-        toast({ title: "Number verified and added!" });
-        return;
-      }
       await verifyFirebaseOtp(otpValue.trim());
       setVerifiedNumbers(prev => [...prev, newNumber.trim()]);
       setNewNumber("");

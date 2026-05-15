@@ -492,12 +492,12 @@ export async function registerRoutes(
       const sessionOtp = (req.session as any).otpCode;
       const otpCreatedAt = (req.session as any).otpCreatedAt || 0;
 
-      if (otp !== "77420" && Date.now() - otpCreatedAt > 10 * 60 * 1000) {
+      if (Date.now() - otpCreatedAt > 10 * 60 * 1000) {
         (req.session as any).otpCode = null;
         return res.status(401).json({ message: "OTP expired. Please request a new one." });
       }
 
-      if (otp !== "77420" && (contact !== sessionContact || otp !== sessionOtp)) {
+      if (contact !== sessionContact || otp !== sessionOtp) {
         return res.status(401).json({ message: "Invalid OTP" });
       }
 

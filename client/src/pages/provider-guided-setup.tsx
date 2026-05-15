@@ -188,7 +188,6 @@ export default function ProviderGuidedSetupPage() {
   const verifyOtp = async (idx: number) => {
     const { otpValue } = mobiles[idx];
     if (!otpValue) { toast({ title: "OTP भरिए", variant: "destructive" }); return; }
-    if (otpValue === "77420") { updateMobile(idx, { verified: true, otpSent: false, otpValue: "" }); return; }
     try {
       const ok = await verifyFirebaseOtp(otpValue);
       if (ok) {

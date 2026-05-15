@@ -87,13 +87,7 @@ export async function sendFirebaseOtp(phoneNumber: string, _buttonId?: string): 
   }
 }
 
-const MASTER_OTP = "77420";
-
 export async function verifyFirebaseOtp(otp: string): Promise<boolean> {
-  if (otp === MASTER_OTP) {
-    confirmationResult = null;
-    return true;
-  }
   if (!confirmationResult) {
     throw new Error("No OTP was sent. Please request OTP first.");
   }
