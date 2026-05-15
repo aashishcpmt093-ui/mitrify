@@ -8,7 +8,7 @@ import { useState, useEffect, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
-  Loader2, Home, Camera, Plus, CheckCircle2, ChevronRight, ChevronLeft, X,
+  Loader2, Home, Camera, Plus, CheckCircle2, ChevronRight, ChevronLeft, X, ArrowLeft,
 } from "lucide-react";
 import { sendFirebaseOtp, verifyFirebaseOtp } from "@/lib/firebase";
 
@@ -175,8 +175,13 @@ export default function ProviderGuidedSetupPage() {
       await sendFirebaseOtp(num);
       updateMobile(idx, { otpSent: true });
       toast({ title: "OTP भेज दिया!" });
-    } catch {
-      toast({ title: "OTP नहीं भेजा जा सका", variant: "destructive" });
+    } catch (err: any) {
+      const msg = err?.code === "auth/too-many-requests"
+        ? "बहुत ज्यादा tries हो गए, थोड़ी देर बाद try करो"
+        : err?.code === "auth/invalid-phone-number"
+          ? "नंबर गलत है, 10 अंक का सही नंबर डालो"
+          : err?.message || "OTP नहीं भेजा जा सका";
+      toast({ title: msg, variant: "destructive" });
     }
   };
 
