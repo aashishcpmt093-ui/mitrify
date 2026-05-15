@@ -68,8 +68,34 @@ function recordGpBulkRun(adminKey: string): void {
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
-const ADMIN_ID = "aashishcpmt09";
-const ADMIN_PASSWORD = "7742039808";
+const ADMIN_ID = process.env.ADMIN_ID || "aashishcpmt09@mitrify";
+let ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "Mitrify@8949199709";
+const ADMIN_PHONE = process.env.ADMIN_PHONE || "8949199709";
+
+// In-memory OTP brute-force store: key = contact, value = { count, blockedUntil, tier }
+const otpFailStore = new Map<string, { count: number; blockedUntil: number; tier: number }>();
+
+function checkOtpBlock(contact: string): { blocked: boolean; waitMs: number } {
+  const rec = otpFailStore.get(contact);
+  if (!rec) return { blocked: false, waitMs: 0 };
+  if (rec.blockedUntil > Date.now()) return { blocked: true, waitMs: rec.blockedUntil - Date.now() };
+  return { blocked: false, waitMs: 0 };
+}
+
+function recordOtpFailure(contact: string): void {
+  const rec = otpFailStore.get(contact) || { count: 0, blockedUntil: 0, tier: 0 };
+  rec.count += 1;
+  if (rec.count >= 3) {
+    rec.tier += 1;
+    rec.blockedUntil = Date.now() + (rec.tier === 1 ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000); // 1hr then 24hr
+    rec.count = 0;
+  }
+  otpFailStore.set(contact, rec);
+}
+
+function clearOtpFailures(contact: string): void {
+  otpFailStore.delete(contact);
+}
 
 
 function generateOtp(): string {
@@ -127,10 +153,11 @@ export async function registerRoutes(
   await setupAuth(app);
   registerAuthRoutes(app);
 
-  // Seed special promo code on startup (idempotent)
-  storage.getPromoCode("Asheesh%77420").then(existing => {
+  // Seed special promo code on startup (idempotent) — code from env or default
+  const SEED_PROMO = process.env.SEED_PROMO_CODE || "MITRIFY-ADMIN-25";
+  storage.getPromoCode(SEED_PROMO).then(existing => {
     if (!existing) {
-      storage.createPromoCode({ code: "Asheesh%77420", ownerId: null, isActive: true, type: "admin", creditAmount: 25 });
+      storage.createPromoCode({ code: SEED_PROMO, ownerId: null, isActive: true, type: "admin", creditAmount: 25 });
     }
   }).catch(() => {});
 
@@ -488,6 +515,17 @@ export async function registerRoutes(
       const contact = phone || email;
       if (!contact || !otp) return res.status(400).json({ message: "Contact and OTP required" });
 
+      // Brute-force block check
+      const blockStatus = checkOtpBlock(contact);
+      if (blockStatus.blocked) {
+        const mins = Math.ceil(blockStatus.waitMs / 60000);
+        const hrs = Math.ceil(blockStatus.waitMs / 3600000);
+        const msg = blockStatus.waitMs > 3600000
+          ? `Bahut zyada galat attempts. ${hrs} ghante baad try karo.`
+          : `3 galat OTP attempts. ${mins} minute baad try karo.`;
+        return res.status(429).json({ message: msg, blockedFor: blockStatus.waitMs });
+      }
+
       const sessionContact = (req.session as any).otpContact;
       const sessionOtp = (req.session as any).otpCode;
       const otpCreatedAt = (req.session as any).otpCreatedAt || 0;
@@ -498,8 +536,16 @@ export async function registerRoutes(
       }
 
       if (contact !== sessionContact || otp !== sessionOtp) {
+        recordOtpFailure(contact);
+        const afterFail = checkOtpBlock(contact);
+        if (afterFail.blocked) {
+          const mins = Math.ceil(afterFail.waitMs / 60000);
+          return res.status(429).json({ message: `3 galat attempts. ${mins} minute ke liye block.`, blockedFor: afterFail.waitMs });
+        }
         return res.status(401).json({ message: "Invalid OTP" });
       }
+
+      clearOtpFailures(contact);
 
       (req.session as any).otpContact = null;
       (req.session as any).otpCode = null;
@@ -733,6 +779,48 @@ export async function registerRoutes(
     return res.status(401).json({ message: "Invalid credentials" });
   });
 
+  // Admin: send OTP to admin phone for password reset
+  app.post("/api/admin/send-reset-otp", async (req, res) => {
+    try {
+      if (!gmailTransporter) {
+        return res.status(400).json({ message: "Email service not configured" });
+      }
+      const otp = generateOtp();
+      (req.session as any).adminResetOtp = otp;
+      (req.session as any).adminResetOtpAt = Date.now();
+      // Send OTP to admin email (uses GMAIL_USER as both from and to, or ADMIN_EMAIL if set)
+      const adminEmail = process.env.ADMIN_EMAIL || process.env.GMAIL_USER;
+      if (!adminEmail) return res.status(400).json({ message: "Admin email not configured" });
+      await gmailTransporter.sendMail({
+        from: `"Mitrify Admin" <${process.env.GMAIL_USER}>`,
+        to: adminEmail,
+        subject: "Mitrify Admin Password Reset OTP",
+        html: `<div style="font-family:Arial,sans-serif;max-width:400px;margin:0 auto;padding:20px;"><h2 style="color:#6366f1;">Mitrify Admin Reset</h2><p>Your password reset OTP:</p><div style="font-size:32px;font-weight:bold;letter-spacing:8px;background:#f3f4f6;padding:20px;border-radius:8px;text-align:center;">${otp}</div><p style="color:#6b7280;font-size:14px;">Expires in 10 minutes. Kisi ko share mat karo.</p></div>`,
+      });
+      res.json({ message: "OTP sent to admin email" });
+    } catch (err: any) {
+      res.status(500).json({ message: "Failed to send OTP: " + err.message });
+    }
+  });
+
+  // Admin: verify OTP and change password
+  app.post("/api/admin/reset-password", (req, res) => {
+    const { otp, newPassword } = req.body;
+    if (!otp || !newPassword) return res.status(400).json({ message: "OTP and new password required" });
+    const storedOtp = (req.session as any).adminResetOtp;
+    const otpAt = (req.session as any).adminResetOtpAt || 0;
+    if (!storedOtp) return res.status(400).json({ message: "OTP nahi mila. Pehle OTP mangao." });
+    if (Date.now() - otpAt > 10 * 60 * 1000) {
+      (req.session as any).adminResetOtp = null;
+      return res.status(401).json({ message: "OTP expired. Dobara try karo." });
+    }
+    if (otp !== storedOtp) return res.status(401).json({ message: "Galat OTP" });
+    if (newPassword.length < 8) return res.status(400).json({ message: "Password kam se kam 8 characters ka hona chahiye" });
+    ADMIN_PASSWORD = newPassword;
+    (req.session as any).adminResetOtp = null;
+    res.json({ success: true, message: "Password change ho gaya!" });
+  });
+
   app.get("/api/admin/me", (req, res) => {
     if (isAdmin(req)) {
       return res.json({ id: "admin", username: ADMIN_ID, role: "admin" });
@@ -831,7 +919,16 @@ export async function registerRoutes(
         limit ? parseInt(limit as string, 10) : 30,
         offset ? parseInt(offset as string, 10) : 0,
       );
-      res.json({ results });
+      // Strip phone numbers from results for unauthenticated (guest) users
+      const isLoggedIn = !!(req.session as any)?.localUserId || !!req.user?.claims?.sub;
+      const safeResults = isLoggedIn ? results : results.map(r => ({
+        ...r,
+        provider: { ...r.provider, mobileNumbers: [], },
+        profile: { ...r.profile, mobile: null },
+        canCall: false,
+        contactHidden: true,
+      }));
+      res.json({ results: safeResults });
     } catch (error) {
       res.status(500).json({ message: "Search failed" });
     }
