@@ -190,12 +190,6 @@ export async function registerRoutes(
         role: "provider",
         authMethod: "password",
       });
-      await ensureProviderProfile(user.userId, {
-        serviceName: username,
-        mobileNumbers: phone ? [phone] : [],
-        addedBy: "self",
-        approvedBy: "self",
-      });
 
       (req.session as any).localUserId = user.userId;
       (req.session as any).otpVerified = null;

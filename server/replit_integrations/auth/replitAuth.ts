@@ -263,10 +263,10 @@ export async function setupAuth(app: Express) {
             return res.redirect("/welcome?error=session_error");
           }
           (req.session as any).localUserId = user.localUserId;
-          let isNewUser = false;
+          let hasProviderProfile = false;
           try {
-            const existingProfile = await storage.getProfileByRole(user.localUserId, "customer");
-            isNewUser = !existingProfile;
+            const existingProfile = await storage.getProfileByRole(user.localUserId, "provider");
+            hasProviderProfile = !!existingProfile;
           } catch (e) {
             console.error("Google callback: profile check error", e);
           }
@@ -274,7 +274,7 @@ export async function setupAuth(app: Express) {
             if (saveErr) {
               console.error("Session save error:", saveErr);
             }
-            res.redirect("/provider/guided-setup");
+            res.redirect(hasProviderProfile ? "/provider/dashboard" : "/provider/guided-setup");
           });
         });
       })(req, res, next);
