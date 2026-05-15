@@ -36,6 +36,7 @@ export default function ForgotPasswordPage() {
     setOtpUnavailable(false);
     try {
       await sendFirebaseOtp(phone.trim(), "forgot-send-otp-btn");
+      setOtpSent(true);
       toast({ title: t("forgotOtpSentToast") });
     } catch (err: any) {
       const code = String(err?.code || "");

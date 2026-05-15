@@ -238,6 +238,7 @@ export default function ProviderSetupPage() {
     setOtpSending(true);
     try {
       await sendFirebaseOtp(num, "provider-add-number-btn");
+      setOtpSent(true);
       toast({ title: "OTP sent to " + num });
     } catch (err: any) {
       const code = String(err?.code || "");

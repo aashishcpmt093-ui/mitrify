@@ -54,6 +54,7 @@ export default function LoginPage() {
     setOtpUnavailable(false);
     try {
       await sendFirebaseOtp(otpContact.trim(), "login-send-otp-btn");
+      setOtpSent(true);
       toast({ title: "OTP sent to your mobile" });
     } catch (err: any) {
       const code = String(err?.code || "");

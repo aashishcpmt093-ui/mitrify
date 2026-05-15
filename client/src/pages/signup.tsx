@@ -58,6 +58,7 @@ export default function SignupPage() {
     setOtpUnavailable(false);
     try {
       await sendFirebaseOtp(phone.trim(), "signup-send-otp-btn");
+      setStep("otp");
       toast({ title: t("signupOtpSentToast") });
     } catch (err: any) {
       const code = String(err?.code || "");
