@@ -1,0 +1,29 @@
+# Render Blueprint — deploys the Mitrify app as a single web service.
+# Docs: https://render.com/docs/blueprint-spec
+#
+# Database is NOT created here on purpose: Render's free Postgres expires
+# after 30 days. Use a free Neon (neon.tech) Postgres instead and paste its
+# connection string when the blueprint asks for DATABASE_URL.
+# Full steps: see RENDER_DEPLOY.md
+
+services:
+  - type: web
+    name: mitrify
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: node dist/index.cjs
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      # Render generates a strong random value on first deploy.
+      - key: SESSION_SECRET
+        generateValue: true
+      # Paste the Neon connection string when Render prompts for this.
+      - key: DATABASE_URL
+        sync: false

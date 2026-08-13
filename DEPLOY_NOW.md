@@ -1,5 +1,9 @@
 # Mitrify — Railway Par Deploy Karne Ki Complete Guide
 
+> ⚠️ **YEH GUIDE AB USE NAHI HO RAHI** — Railway ki jagah ab **Render.com**
+> se deploy kar rahe hain (free start). Nayi guide: **`RENDER_DEPLOY.md`**
+> Yeh file sirf reference ke liye rakhi hai.
+
 > **Note:** Actual keys aur passwords ke liye `RAILWAY_ENV_VARS.txt` file dekhein
 > (yeh file gitignored hai — sirf aapke Replit mein hai, GitHub par nahi jayegi)
 
@@ -41,15 +45,22 @@
 
 ---
 
-## STEP 5: Database Schema + Data Import Karo
+## STEP 5: Purana Data Import Karo (sirf agar purana data hai)
 
-Railway PostgreSQL service click karo → **"Query"** tab kholo:
+> **Good news:** Database schema (tables) ab **automatic** ban jaata hai — app
+> start hote hi khud saare tables create kar leta hai. Koi migration SQL
+> manually chalane ki zaroorat NAHI hai.
 
-**Pehle (migrations):** `migrations/0000_same_loners.sql` ka poora content copy karke paste karo aur Run karo
+Agar aapke paas purana data hai (users, providers, etc.):
 
-**Phir (data):** `railway_data_import.sql` ka poora content copy karke paste karo aur Run karo
+Railway PostgreSQL service click karo → **"Query"** tab kholo →
+`railway_data_import.sql` ka poora content copy karke paste karo aur Run karo
 
-> Dono files is Replit project mein hain — Download/copy karke Railway mein paste karo
+> Yeh file Replit project mein hai — Download/copy karke Railway mein paste karo.
+> **Important:** Data import se PEHLE app ko ek baar deploy/start hone do
+> (taaki tables ban jaayein).
+
+Agar bilkul naya start kar rahe ho (koi purana data nahi) — yeh step **skip** karo.
 
 ---
 
