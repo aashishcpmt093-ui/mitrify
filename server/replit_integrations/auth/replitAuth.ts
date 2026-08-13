@@ -168,6 +168,14 @@ export async function setupAuth(app: Express) {
     if (process.env.RAILWAY_PUBLIC_DOMAIN) {
       allowedHosts.add(process.env.RAILWAY_PUBLIC_DOMAIN.trim());
     }
+    // Render auto-injects RENDER_EXTERNAL_HOSTNAME (e.g. mitrify.onrender.com).
+    if (process.env.RENDER_EXTERNAL_HOSTNAME) {
+      allowedHosts.add(process.env.RENDER_EXTERNAL_HOSTNAME.trim());
+    }
+    // Generic escape hatch for any other host.
+    if (process.env.PUBLIC_DOMAIN) {
+      allowedHosts.add(process.env.PUBLIC_DOMAIN.trim());
+    }
     allowedHosts.add("mitrify-production.up.railway.app");
     allowedHosts.add("www.mitrify.com");
     allowedHosts.add("mitrify.com");
@@ -211,13 +219,13 @@ export async function setupAuth(app: Express) {
     };
 
     const getCallbackURL = (hostname: string): string => {
-      if (hostname === "mitrify-production.up.railway.app") {
-        return `https://mitrify-production.up.railway.app/api/auth/google/callback`;
-      }
-      if (hostname === "mitrify.com" || hostname === "www.mitrify.com") {
+      // Any registered host (Replit, Railway, Render, PUBLIC_DOMAIN, mitrify.com)
+      // gets its own callback URL — the matching redirect URI must be added in
+      // Google Cloud Console. Unknown hosts fall back to the custom domain.
+      if (allowedHosts.has(hostname)) {
         return `https://${hostname}/api/auth/google/callback`;
       }
-      return `https://mitrify-production.up.railway.app/api/auth/google/callback`;
+      return `https://mitrify.com/api/auth/google/callback`;
     };
 
     const registeredGoogleStrategies = new Set<string>();
@@ -307,6 +315,12 @@ export async function setupAuth(app: Express) {
     const appleAllowedHosts = new Set<string>();
     if (process.env.REPLIT_DOMAINS) {
       process.env.REPLIT_DOMAINS.split(",").forEach((d) => appleAllowedHosts.add(d.trim()));
+    }
+    if (process.env.RENDER_EXTERNAL_HOSTNAME) {
+      appleAllowedHosts.add(process.env.RENDER_EXTERNAL_HOSTNAME.trim());
+    }
+    if (process.env.PUBLIC_DOMAIN) {
+      appleAllowedHosts.add(process.env.PUBLIC_DOMAIN.trim());
     }
     appleAllowedHosts.add("www.mitrify.com");
     appleAllowedHosts.add("mitrify.com");

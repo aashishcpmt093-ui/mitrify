@@ -1,5 +1,9 @@
 # Mitrify — Railway Par Deploy Karne Ki Complete Guide
 
+> ⚠️ **YEH GUIDE AB USE NAHI HO RAHI** — Railway ki jagah ab **Render.com**
+> se deploy kar rahe hain (free start). Nayi guide: **`RENDER_DEPLOY.md`**
+> Yeh file sirf reference ke liye rakhi hai.
+
 > **Note:** Actual keys aur passwords ke liye `RAILWAY_ENV_VARS.txt` file dekhein
 > (yeh file gitignored hai — sirf aapke Replit mein hai, GitHub par nahi jayegi)
 
