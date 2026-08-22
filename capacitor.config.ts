@@ -4,7 +4,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'com.navbharat.mitrify',
   appName: "mitrify",
-  webDir: 'dist',
+  webDir: 'dist/public',
   // The app's background colour, chosen in NavBharatAI's App Information form.
   android: { backgroundColor: '#6366f1' },
   plugins: { SplashScreen: { backgroundColor: '#6366f1' } },
