@@ -13,9 +13,6 @@ import { createServer } from "http";
 import { ensureSchema } from "./ensureSchema";
 
 const app = express();
-app.get("/", (req, res) => {
-  res.redirect("/customer/home");
-});
 const httpServer = createServer(app);
 
 app.use(express.json({ limit: "5mb" }));
@@ -101,6 +98,10 @@ const port = parseInt(process.env.PORT || "5000", 10);
       "[startup] FAILED before the page routes were wired — the server will listen, but pages will 404:",
       err,
     );
+    // Without a database the API cannot start, but the frontend bundle still has to be served.
+    if (process.env.NODE_ENV === "production") {
+      serveStatic(app);
+    }
   } finally {
     // The port opens LAST on purpose: a bound port is the universal signal for "ready", so it must
     // not be true until the app can actually serve a page. This is the whole fix.
