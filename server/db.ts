@@ -4,10 +4,10 @@ import * as schema from "@shared/schema";
 
 const { Pool } = pg;
 
+// Do not throw here: a missing DATABASE_URL must not stop the process from starting,
+// otherwise the platform answers 503 and the frontend cannot be served at all.
 if (!process.env.DATABASE_URL) {
-  throw new Error(
-    "DATABASE_URL must be set. Did you forget to provision a database?",
-  );
+  console.warn("DATABASE_URL is not set: database features are disabled, the frontend still runs.");
 }
 
 export const pool = new Pool({
