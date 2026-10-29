@@ -76,7 +76,7 @@ const FRIENDLY_ERRORS: Record<string, string> = {
   "auth/email-already-in-use": "This staff ID already exists. Choose another ID.",
   "auth/weak-password": "Password must be at least 6 characters.",
   "auth/operation-not-allowed": "Email/Password sign-in is not enabled in Firebase.",
-  "permission-denied": "You do not have permission for this. Check the Firestore rules and your account role.",
+  "permission-denied": "This could not be saved. Check the details and try again; staff and doctor should sign in again.",
   unavailable: "Cannot reach the server. Check the network and try again.",
 };
 
@@ -207,8 +207,17 @@ export async function listStaff(): Promise<(Profile & { id: string })[]> {
 }
 
 // by.source "patient" is the public form (no login). "staff" must be signed in as staff.
+// The public patient form must save without a sign-in even on a device where the doctor or staff
+// is signed in (same site, shared browser). It uses its own Firebase app, which never signs in, so
+// the request matches the "no sign-in" rule for patient entries.
+function publicDb() {
+  const publicApp = getApps().find((a) => a.name === "public-intake") ?? initializeApp(firebaseConfig, "public-intake");
+  return getFirestore(publicApp);
+}
+
 export async function saveIntake(input: IntakeInput, by: { source: "patient" } | { source: "staff"; uid: string }) {
-  await addDoc(collection(db, "patients"), {
+  const target = by.source === "patient" ? publicDb() : db;
+  await addDoc(collection(target, "patients"), {
     name: input.name.trim(),
     age: {
       days: Number(input.ageDays || 0),
