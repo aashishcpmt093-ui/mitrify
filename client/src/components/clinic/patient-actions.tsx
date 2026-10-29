@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { CalendarClock, MoreVertical, SkipForward, Trash2, Undo2 } from "lucide-react";
+import { CalendarClock, MoreVertical, Pencil, SkipForward, Trash2, Undo2 } from "lucide-react";
+import PatientIntakeForm from "@/components/patient-intake-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,6 +24,8 @@ import {
   friendlyError,
   scheduleRevisit,
   setQueueStatus,
+  updatePatientDetails,
+  type IntakeInput,
   type PatientRow,
 } from "@/lib/clinic";
 
@@ -36,7 +39,23 @@ function inDays(days: number): string {
 
 const QUICK_DAYS = [3, 5, 7, 14, 30];
 
-// The ⋮ menu on each patient in the doctor's list: skip (or bring back), book a revisit, delete.
+// The form starts from what is saved. Entries from before age was split into parts held years only.
+function detailsOf(p: PatientRow): IntakeInput {
+  const age = typeof p.age === "number" ? { days: 0, months: 0, years: p.age } : p.age;
+  return {
+    name: p.name,
+    ageDays: String(age.days),
+    ageMonths: String(age.months),
+    ageYears: String(age.years),
+    address: p.address,
+    parentName: p.parentName,
+    mobile: p.mobile ?? "",
+    weight: String(p.weight),
+    visitAt: p.visitAt,
+  };
+}
+
+// The ⋮ menu on each patient in the doctor's list: edit details, skip (or bring back), book a revisit, delete.
 export default function PatientActions({
   patient,
   uid,
@@ -47,6 +66,7 @@ export default function PatientActions({
   onNotice: (text: string) => void;
 }) {
   const [revisitOpen, setRevisitOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [when, setWhen] = useState(() => inDays(7));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +109,9 @@ export default function PatientActions({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+            <Pencil className="mr-2 h-4 w-4" /> Edit
+          </DropdownMenuItem>
           {patient.status === "new" && (
             <DropdownMenuItem onSelect={() => run(() => setQueueStatus(patient.id, "skipped"), `${patient.name} skipped.`)}>
               <SkipForward className="mr-2 h-4 w-4" /> Skip
@@ -114,6 +137,27 @@ export default function PatientActions({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-h-[90vh] max-w-md overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit {patient.name}</DialogTitle>
+            <DialogDescription>Correct any detail. The queue position and prescriptions stay as they are.</DialogDescription>
+          </DialogHeader>
+          {/* Remounted on each opening, so it always starts from the saved details. */}
+          {editOpen && (
+            <PatientIntakeForm
+              initial={detailsOf(patient)}
+              submitLabel="Save changes"
+              onSave={async (input) => {
+                await updatePatientDetails(patient.id, input);
+                setEditOpen(false);
+                onNotice(`${input.name.trim()}'s details updated.`);
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={revisitOpen} onOpenChange={setRevisitOpen}>
         <DialogContent className="max-w-sm">

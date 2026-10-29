@@ -472,6 +472,23 @@ export async function setQueueStatus(patientId: string, status: "new" | "skipped
   await updateDoc(doc(db, "patients", patientId), { status });
 }
 
+// The doctor corrects a registration: name, age, weight, address, parent, mobile or visit time.
+export async function updatePatientDetails(patientId: string, input: IntakeInput): Promise<void> {
+  await updateDoc(doc(db, "patients", patientId), {
+    name: input.name.trim(),
+    age: {
+      days: Number(input.ageDays || 0),
+      months: Number(input.ageMonths || 0),
+      years: Number(input.ageYears || 0),
+    },
+    address: input.address.trim(),
+    parentName: input.parentName.trim(),
+    mobile: input.mobile.replace(/\D/g, ""),
+    weight: Number(input.weight),
+    visitAt: input.visitAt,
+  });
+}
+
 export async function deletePatient(patientId: string): Promise<void> {
   await deleteDoc(doc(db, "patients", patientId));
 }
