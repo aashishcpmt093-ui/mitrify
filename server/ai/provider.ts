@@ -86,16 +86,30 @@ function toChatMessages(system: string, turns: AiTurn[]): ChatMessage[] {
   ];
 }
 
+// A slow free model must not keep the doctor waiting forever; the browser gives up a little later.
+const REQUEST_TIMEOUT_MS = 90_000;
+// Only retry an unreadable answer if the first attempt left time for a second one.
+const RETRY_WITHIN_MS = 40_000;
+
 async function complete(s: Settings, messages: ChatMessage[], jsonSchema: Record<string, unknown>): Promise<string> {
-  const res = await fetch(`${s.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${s.key}` },
-    body: JSON.stringify({
-      model: s.model,
-      messages,
-      ...(s.jsonSchema && { response_format: { type: "json_schema", json_schema: { name: "answer", schema: jsonSchema } } }),
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${s.baseUrl}/chat/completions`, {
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${s.key}` },
+      body: JSON.stringify({
+        model: s.model,
+        messages,
+        ...(s.jsonSchema && { response_format: { type: "json_schema", json_schema: { name: "answer", schema: jsonSchema } } }),
+      }),
+    });
+  } catch (err) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      throw new AiError(`${s.label} took too long to answer. Send again.`, 504);
+    }
+    throw new AiError(`Could not reach ${s.label}. Check the internet and send again.`, 502);
+  }
   if (res.status === 401 || res.status === 403) throw new AiError(`The ${s.label} key on the server is not valid.`, 500);
   if (res.status === 402) throw new AiError(`${s.label} account balance is low or negative. Add credit or check the account.`, 402);
   if (res.status === 429) {
@@ -132,9 +146,14 @@ export async function generateJson<T>(system: string, turns: AiTurn[], schema: z
     turns,
   );
 
+  const started = Date.now();
   const first = await complete(s, messages, jsonSchema);
   const parsed = parseAnswer(first, schema);
   if (parsed) return parsed;
+  if (Date.now() - started > RETRY_WITHIN_MS) {
+    console.error("[clinic-ai] unreadable answer, no time to retry", first.slice(0, 500));
+    throw new AiError("AI gave an answer that could not be read. Send again.", 502);
+  }
 
   // One retry, showing the model its own answer and what was wrong with it.
   const second = await complete(

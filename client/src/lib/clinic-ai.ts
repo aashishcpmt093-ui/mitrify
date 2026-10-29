@@ -46,17 +46,33 @@ export type ConsultRequest = {
   wantProvisional: boolean;
 };
 
+// Longer than the server's own limit, so the server's clearer message normally arrives first.
+const BROWSER_TIMEOUT_MS = 150_000;
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   const token = await auth.currentUser?.getIdToken();
   if (!token) throw new Error("Sign in again to use AI.");
-  const res = await fetch(`/api/clinic-ai/${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api/clinic-ai/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(BROWSER_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      throw new Error("AI took too long to answer. Send again.");
+    }
+    throw new Error("No connection to the server. Check the internet and send again.");
+  }
   if (res.status === 413) throw new Error("The photos are too large. Send fewer photos at a time.");
   const data = (await res.json().catch(() => ({}))) as T & { message?: string };
-  if (!res.ok) throw new Error(data.message || "AI is not available right now.");
+  if (!res.ok) {
+    // A gateway error page from the hosting has no JSON message.
+    const fallback = res.status >= 502 ? "The server took too long or is restarting. Send again." : "AI is not available right now.";
+    throw new Error(data.message || fallback);
+  }
   return data;
 }
 

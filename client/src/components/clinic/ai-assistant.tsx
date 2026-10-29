@@ -83,6 +83,7 @@ export default function AiAssistant({ context, open, onOpenChange, onApply }: Pr
   const [draft, setDraft] = useState("");
   const [images, setImages] = useState<ConsultImage[]>([]);
   const [busy, setBusy] = useState(false);
+  const [waited, setWaited] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [showCase, setShowCase] = useState(false);
   const [appliedTurns, setAppliedTurns] = useState<Set<number>>(new Set());
@@ -92,6 +93,14 @@ export default function AiAssistant({ context, open, onOpenChange, onApply }: Pr
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [entries, busy, questions]);
+
+  // Seconds waited, so a slow free model does not look like nothing is happening.
+  useEffect(() => {
+    if (!busy) return;
+    setWaited(0);
+    const timer = setInterval(() => setWaited((s) => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, [busy]);
 
   // On wider screens make room for the panel so the whole prescription stays in view beside it.
   useEffect(() => {
@@ -139,7 +148,18 @@ export default function AiAssistant({ context, open, onOpenChange, onApply }: Pr
       .filter(Boolean)
       .join("\n\n");
     const nextLog = [...caseLog, ...answered];
+    const sentImages = images;
 
+    // Show the doctor's message at once and clear the inputs; put them back if sending fails.
+    const restore = { draft, answers, images, questions };
+    setEntries((prev) => [
+      ...prev,
+      { kind: "doctor", text: message, answers: answered, images: sentImages.map((i) => i.preview) },
+    ]);
+    setDraft("");
+    setAnswers([]);
+    setImages([]);
+    setQuestions([]);
     setBusy(true);
     setError(null);
     try {
@@ -149,26 +169,24 @@ export default function AiAssistant({ context, open, onOpenChange, onApply }: Pr
         caseLog: nextLog,
         history,
         message,
-        images: images.map(({ mediaType, data }) => ({ mediaType, data })),
+        images: sentImages.map(({ mediaType, data }) => ({ mediaType, data })),
         wantProvisional,
       });
       const aiIndex = entries.length + 1;
-      setEntries((prev) => [
-        ...prev,
-        { kind: "doctor", text: message, answers: answered, images: images.map((i) => i.preview) },
-        { kind: "ai", turn },
-      ]);
+      setEntries((prev) => [...prev, { kind: "ai", turn }]);
       setHistory((prev) => [...prev, { role: "user", text: doctorText }, { role: "assistant", text: turnText(turn) }]);
       setCaseLog(nextLog);
       setCaseSummary(turn.caseSummary);
       setQuestions(turn.questions);
-      setAnswers([]);
-      setDraft("");
-      setImages([]);
       // An empty prescription is filled straight away; otherwise the doctor taps "Put in prescription".
       if (turn.provisional && !hasMedicines) apply(aiIndex, turn.provisional);
     } catch (err) {
-      // Keep everything typed so the doctor can simply try again.
+      // Take the message back out of the chat and restore what was typed, so "Send" just works again.
+      setEntries((prev) => prev.slice(0, -1));
+      setDraft(restore.draft);
+      setAnswers(restore.answers);
+      setImages(restore.images);
+      setQuestions(restore.questions);
       setError(err instanceof Error ? err.message : "AI could not answer.");
     } finally {
       setBusy(false);
@@ -332,7 +350,11 @@ export default function AiAssistant({ context, open, onOpenChange, onApply }: Pr
           </div>
         )}
 
-        {busy && <p className="text-sm text-muted-foreground">AI is thinking...</p>}
+        {busy && (
+          <p className="text-sm text-muted-foreground">
+            AI is thinking... {waited}s{waited >= 20 && " (free models can take up to a minute)"}
+          </p>
+        )}
         <div ref={bottomRef} />
       </div>
 
