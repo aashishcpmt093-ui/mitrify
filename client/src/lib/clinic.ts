@@ -60,7 +60,8 @@ export type IntakeInput = {
 export type AgeParts = { days: number; months: number; years: number };
 
 // How the patient came in. Entries made on the public patient page have none and count as "new".
-export type VisitType = "emergency" | "new" | "old";
+// "revisit" is a follow-up the doctor booked for a later date.
+export type VisitType = "emergency" | "new" | "old" | "revisit";
 
 export type PatientRow = Omit<IntakeInput, "ageDays" | "ageMonths" | "ageYears" | "weight" | "mobile"> & {
   id: string;
@@ -73,7 +74,10 @@ export type PatientRow = Omit<IntakeInput, "ageDays" | "ageMonths" | "ageYears" 
   age: AgeParts | number;
   weight: number;
   source: "patient" | "staff";
-  status: "new" | "prescribed";
+  // Who registered the visit (staff or doctor uid); null for the public patient page.
+  createdBy?: string | null;
+  // "skipped": the doctor put the patient aside (e.g. not present when called); they can go back in the queue.
+  status: "new" | "prescribed" | "skipped";
   createdAt?: Timestamp | null;
 };
 
@@ -263,6 +267,12 @@ export function todayKey(now = new Date()): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
+const tomorrowKey = () => {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return todayKey(d);
+};
+
 // Live list for the doctor. Only today's visits, or the latest ones, are downloaded, so the page stays
 // light and within the free Firestore quota however many patients build up over the years.
 export const RECENT_PATIENTS = 300;
@@ -275,7 +285,7 @@ export function subscribePatients(
   const patients = collection(db, "patients");
   const q =
     range === "today"
-      ? query(patients, where("visitAt", ">=", todayKey()))
+      ? query(patients, where("visitAt", ">=", todayKey()), where("visitAt", "<", tomorrowKey()))
       : query(patients, orderBy("createdAt", "desc"), limit(RECENT_PATIENTS));
   return onSnapshot(q, (snap) => cb(snap.docs.map(toPatient)), onError);
 }
@@ -382,6 +392,49 @@ export async function savePrescription(patient: PatientRow, content: Prescriptio
     createdAt: serverTimestamp(),
   });
   await updateDoc(doc(db, "patients", patient.id), { status: "prescribed" });
+}
+
+export async function setQueueStatus(patientId: string, status: "new" | "skipped"): Promise<void> {
+  await updateDoc(doc(db, "patients", patientId), { status });
+}
+
+export async function deletePatient(patientId: string): Promise<void> {
+  await deleteDoc(doc(db, "patients", patientId));
+}
+
+// Books a follow-up: a new visit for the same child on the chosen date and time. It appears in the
+// doctor's queue that day, with the child's earlier prescriptions in history. Age is moved on to that
+// date; weight is the last one recorded, to be updated on the day.
+export async function scheduleRevisit(patient: PatientRow, visitAt: string, uid: string): Promise<void> {
+  const age = ageNow(patient.age, patient.visitAt, new Date(visitAt));
+  await saveIntake(
+    {
+      name: patient.name,
+      ageDays: String(age.days),
+      ageMonths: String(age.months),
+      ageYears: String(age.years),
+      address: patient.address,
+      parentName: patient.parentName,
+      mobile: patient.mobile ?? "",
+      weight: String(patient.weight),
+      visitAt,
+    },
+    { source: "staff", uid, visitType: "revisit", patientKey: patientKeyOf(patient) },
+  );
+}
+
+// Everything one staff member registered between two dates ("YYYY-MM-DD", end included), oldest first.
+// Filtered by date in Firestore and by staff here, so no extra index has to be set up.
+export async function listRegistrationsBy(uid: string, from: string, to: string): Promise<PatientRow[]> {
+  const end = new Date(`${to}T00:00`);
+  end.setDate(end.getDate() + 1);
+  const snap = await getDocs(
+    query(collection(db, "patients"), where("visitAt", ">=", from), where("visitAt", "<", todayKey(end))),
+  );
+  return snap.docs
+    .map(toPatient)
+    .filter((p) => p.createdBy === uid)
+    .sort((a, b) => a.visitAt.localeCompare(b.visitAt));
 }
 
 // For a patient seen without a prescription (e.g. only advice), so the queue still moves on.

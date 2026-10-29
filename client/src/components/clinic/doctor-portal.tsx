@@ -11,9 +11,10 @@ import ComplaintsInput from "@/components/clinic/complaints-input";
 import Memories from "@/components/clinic/memories";
 import ClinicProfileForm from "@/components/clinic/clinic-profile";
 import RegisterVisit from "@/components/clinic/register-visit";
+import PatientActions from "@/components/clinic/patient-actions";
 import BackButton from "@/components/clinic/back-button";
 import { useBackStep } from "@/lib/back-step";
-import { CheckCircle2, ChevronDown, ClipboardList, Clock, Printer, Search, Settings, UserPlus } from "lucide-react";
+import { CalendarClock, CheckCircle2, ChevronDown, ClipboardList, Clock, Printer, Search, Settings, SkipForward, UserPlus } from "lucide-react";
 import AiAssistant, { AiAssistantButton } from "@/components/clinic/ai-assistant";
 import type { AiContext, Provisional } from "@/lib/clinic-ai";
 import { emptyMedicine, isFilled, itemsFromText, medicineLine, suggestDose, type MedicineItem } from "@/lib/medicines";
@@ -38,6 +39,7 @@ import {
   signIn,
   searchPatients,
   subscribePatients,
+  todayKey,
   useClinicSession,
   type DiagnosisTemplate,
   type PatientRow,
@@ -107,22 +109,28 @@ function DoctorDashboard({ uid, name }: { uid: string; name: string }) {
 }
 
 type View = "list" | "register" | "profile";
-type StatusFilter = "all" | "queue" | "seen" | "emergency";
+type StatusFilter = "all" | "queue" | "seen" | "skipped" | "emergency";
 type SortOrder = "queue" | "newest" | "oldest" | "name";
 
 const isEmergency = (p: PatientRow) => p.visitType === "emergency";
 const isSeen = (p: PatientRow) => p.status === "prescribed";
+const isSkipped = (p: PatientRow) => p.status === "skipped";
+// A revisit booked for a later day: listed (in "All days") but not yet in today's queue.
+const isUpcoming = (p: PatientRow) => p.status === "new" && p.visitAt.slice(0, 10) > todayKey();
+const isWaiting = (p: PatientRow) => p.status === "new" && !isUpcoming(p);
 
-// Queue order: emergencies waiting, then others waiting in the order they came, then those already seen.
+// Queue order: emergencies waiting, others waiting in the order they came, booked revisits,
+// then skipped and already seen (latest first).
 function queueRank(p: PatientRow) {
-  if (isSeen(p)) return 2;
-  return isEmergency(p) ? 0 : 1;
+  if (isWaiting(p)) return isEmergency(p) ? 0 : 1;
+  if (isUpcoming(p)) return 2;
+  return isSkipped(p) ? 3 : 4;
 }
-const visitTime = (p: PatientRow) => p.createdAt?.toMillis() ?? (Date.parse(p.visitAt) || 0);
+const visitTime = (p: PatientRow) => Date.parse(p.visitAt) || p.createdAt?.toMillis() || 0;
 
 const SORTERS: Record<SortOrder, (a: PatientRow, b: PatientRow) => number> = {
   queue: (a, b) =>
-    queueRank(a) - queueRank(b) || (isSeen(a) ? visitTime(b) - visitTime(a) : visitTime(a) - visitTime(b)),
+    queueRank(a) - queueRank(b) || (queueRank(a) >= 3 ? visitTime(b) - visitTime(a) : visitTime(a) - visitTime(b)),
   newest: (a, b) => visitTime(b) - visitTime(a),
   oldest: (a, b) => visitTime(a) - visitTime(b),
   name: (a, b) => a.name.localeCompare(b.name),
@@ -137,6 +145,13 @@ function PatientList({ uid }: { uid: string }) {
   const [todayOnly, setTodayOnly] = useState(true);
   const [status, setStatus] = useState<StatusFilter>("all");
   const [sort, setSort] = useState<SortOrder>("queue");
+  // Result of the last ⋮ action (skipped, revisit booked, deleted), shown for a few seconds.
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 5000);
+    return () => clearTimeout(timer);
+  }, [notice]);
   useBackStep(view !== "list", () => setView("list"));
 
   useEffect(
@@ -176,17 +191,17 @@ function PatientList({ uid }: { uid: string }) {
   }, [q]);
 
   const searched = found ?? rows;
-  const counts = {
-    all: searched.length,
-    queue: searched.filter((p) => !isSeen(p)).length,
-    seen: searched.filter(isSeen).length,
-    emergency: searched.filter((p) => isEmergency(p) && !isSeen(p)).length,
+  const matchers: Record<StatusFilter, (p: PatientRow) => boolean> = {
+    all: () => true,
+    queue: isWaiting,
+    seen: isSeen,
+    skipped: isSkipped,
+    emergency: (p) => isEmergency(p) && isWaiting(p),
   };
-  const shown = searched
-    .filter((p) =>
-      status === "queue" ? !isSeen(p) : status === "seen" ? isSeen(p) : status === "emergency" ? isEmergency(p) && !isSeen(p) : true,
-    )
-    .sort(SORTERS[sort]);
+  const counts = Object.fromEntries(
+    (Object.keys(matchers) as StatusFilter[]).map((k) => [k, searched.filter(matchers[k]).length]),
+  ) as Record<StatusFilter, number>;
+  const shown = searched.filter(matchers[status]).sort(SORTERS[sort]);
 
   if (selected) {
     return (
@@ -205,6 +220,8 @@ function PatientList({ uid }: { uid: string }) {
     { key: "all", label: "All" },
     { key: "queue", label: "In queue" },
     { key: "seen", label: "Seen" },
+    // Shown only when someone has been skipped, to keep the row short.
+    ...(counts.skipped || status === "skipped" ? [{ key: "skipped" as const, label: "Skipped" }] : []),
     { key: "emergency", label: "Emergency" },
   ];
 
@@ -278,6 +295,7 @@ function PatientList({ uid }: { uid: string }) {
         </div>
       </div>
 
+      {notice && <p className="rounded-md bg-sky-50 p-3 text-sm text-sky-900" role="status">{notice}</p>}
       {error ? (
         <p className="text-red-600">{error}</p>
       ) : shown.length === 0 ? (
@@ -295,14 +313,21 @@ function PatientList({ uid }: { uid: string }) {
       ) : (
         <ul className="flex flex-col divide-y rounded-md border">
           {shown.map((p) => (
-            <li key={p.id} className={isEmergency(p) && !isSeen(p) ? "bg-red-50" : undefined}>
+            <li
+              key={p.id}
+              className={`flex items-center pr-1 ${isEmergency(p) && isWaiting(p) ? "bg-red-50" : ""} ${isSkipped(p) ? "opacity-70" : ""}`}
+            >
               <button
                 type="button"
                 onClick={() => setSelected(p)}
-                className="flex w-full items-center gap-3 p-3 text-left hover:bg-muted sm:p-4"
+                className="flex min-w-0 flex-1 items-center gap-3 p-3 text-left hover:bg-muted sm:p-4"
               >
                 {isSeen(p) ? (
                   <CheckCircle2 className="h-6 w-6 shrink-0 text-green-600" aria-label="Seen" />
+                ) : isSkipped(p) ? (
+                  <SkipForward className="h-6 w-6 shrink-0 text-slate-400" aria-label="Skipped" />
+                ) : isUpcoming(p) ? (
+                  <CalendarClock className="h-6 w-6 shrink-0 text-sky-600" aria-label="Revisit booked" />
                 ) : (
                   <Clock className={`h-6 w-6 shrink-0 ${isEmergency(p) ? "text-red-600" : "text-amber-500"}`} aria-label="In queue" />
                 )}
@@ -314,9 +339,9 @@ function PatientList({ uid }: { uid: string }) {
                         Emergency
                       </span>
                     )}
-                    {p.visitType === "old" && (
+                    {(p.visitType === "old" || p.visitType === "revisit") && (
                       <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-indigo-800">
-                        Old
+                        {p.visitType === "old" ? "Old" : "Revisit"}
                       </span>
                     )}
                   </span>
@@ -326,12 +351,25 @@ function PatientList({ uid }: { uid: string }) {
                 </span>
                 <span
                   className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${
-                    isSeen(p) ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"
+                    isSeen(p)
+                      ? "bg-green-100 text-green-800"
+                      : isSkipped(p)
+                        ? "bg-slate-200 text-slate-700"
+                        : isUpcoming(p)
+                          ? "bg-sky-100 text-sky-800"
+                          : "bg-amber-100 text-amber-800"
                   }`}
                 >
-                  {isSeen(p) ? "✓ Seen" : "In queue"}
+                  {isSeen(p)
+                    ? "✓ Seen"
+                    : isSkipped(p)
+                      ? "Skipped"
+                      : isUpcoming(p)
+                        ? `Due ${p.visitAt.slice(8, 10)}/${p.visitAt.slice(5, 7)}`
+                        : "In queue"}
                 </span>
               </button>
+              <PatientActions patient={p} uid={uid} onNotice={setNotice} />
             </li>
           ))}
         </ul>
