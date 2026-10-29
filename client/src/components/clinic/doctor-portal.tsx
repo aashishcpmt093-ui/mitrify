@@ -8,7 +8,7 @@ import PrescriptionPad, { type PrintMode, type PrintOffset } from "@/components/
 import { Textarea } from "@/components/ui/textarea";
 import MedicineRows, { withTrailingRow } from "@/components/clinic/medicine-rows";
 import AiAssistant, { AiAssistantButton } from "@/components/clinic/ai-assistant";
-import type { AiContext, AiPrescription } from "@/lib/clinic-ai";
+import type { AiContext, Provisional } from "@/lib/clinic-ai";
 import { emptyMedicine, isFilled, itemsFromText, medicineLine, type MedicineItem } from "@/lib/medicines";
 import {
   auth,
@@ -274,17 +274,18 @@ function PrescriptionEditor({
     currentMedicines: content.items.filter(isFilled).map(medicineLine).join("\n"),
   };
 
-  const applyAiDraft = (draft: AiPrescription) => {
+  // Copies are made so later edits never change what the AI suggested.
+  const applyAiDraft = (draft: Provisional) => {
     setContent((prev) => ({
       ...prev,
       diagnosis: draft.diagnosis || prev.diagnosis,
-      items: withTrailingRow(draft.medicines.length ? draft.medicines : prev.items),
+      items: withTrailingRow(draft.medicines.length ? draft.medicines.map((m) => ({ ...m })) : prev.items),
       advice: draft.advice || prev.advice,
       investigations: draft.investigations || prev.investigations,
     }));
     setSaved(false);
     setTemplateNote(
-      `AI draft filled in. Check every medicine and dose before saving.${draft.warnings ? ` AI warnings: ${draft.warnings}` : ""}`,
+      `AI's provisional treatment is in the prescription. Check every medicine and dose before saving.${draft.redFlags ? ` Red flags: ${draft.redFlags}` : ""}`,
     );
   };
 

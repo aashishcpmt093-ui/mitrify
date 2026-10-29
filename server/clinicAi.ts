@@ -1,67 +1,96 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
-import { Router, type Request, type Response } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod/v4";
 import { FIREBASE_PROJECT_ID } from "@shared/clinic";
+import { AiError, describeAi, generateJson, type AiPart, type AiTurn } from "./ai/provider";
 
-// AI assistant for the doctor portal: a consultation chat and a structured prescription draft.
-// The Anthropic key stays on the server (ANTHROPIC_API_KEY); only signed-in doctors may call it.
-// The browser never sends the patient's name or address, only age, weight, vitals and what
-// the doctor types.
+// AI consultation for the doctor portal. The AI takes a structured history (5-50 questions over the
+// case, never repeating one), reads investigation images, and proposes a provisional diagnosis and
+// treatment that the doctor edits. Which AI answers is set on the server (see ./ai/provider.ts).
+// The browser never sends the patient's name or address.
 
-const MODEL = "claude-opus-5-5";
+const MAX_QUESTIONS = 50;
 
-const SYSTEM_PROMPT = `You are a clinical decision-support assistant for a licensed paediatrician at a small clinic in
-Budaun, Uttar Pradesh, India. Patients range from newborns to 18 years. The doctor examines the child and makes
-every decision; you help them check and think, you do not decide.
+const SYSTEM_PROMPT = `You are a clinical decision-support assistant working with a licensed paediatrician at a small
+clinic in Budaun, Uttar Pradesh, India. Patients are newborns to 18 years. The doctor examines the child and makes every
+decision; you help them take a complete history, interpret findings and plan treatment.
 
-What the doctor mostly asks for:
-- Drug interactions between the medicines on the prescription, with how serious each is and what to do.
-- Contraindications and cautions for this child (age, weight, the stated condition).
-- Indications: what each medicine is for, and whether something expected for the diagnosis is missing.
-- Dose checks against the child's weight, showing the mg/kg basis, flagging doses that look high or low.
-- Diagnosis and treatment suggestions when asked: likely diagnosis and key differentials; medicines available in
-  India as dosage form, drug (generic, brand in brackets if useful), dose as given (e.g. "5 ml"), frequency
-  (OD/BD/TDS/QID/HS/SOS/STAT) and days.
-Always mention danger signs that need referral or admission when they apply. If something important is unknown,
-say what you need. Keep answers short and practical. Reply in the language the doctor writes in (English or Hinglish).`;
+Run the consultation like a senior paediatrician taking a history:
+- Cover what matters for this complaint: onset, duration, progression, pattern and timing, aggravating and relieving
+  factors, associated symptoms, relevant systems review, past illnesses and admissions, birth and neonatal history (for
+  infants), feeding and diet, immunisation, development, drug history and allergies, similar illness in the family,
+  household or contacts, exposures and travel, and examination findings (vitals, general and systemic).
+- Ask only questions whose answer changes the diagnosis or management. Ask 2 to 5 per turn, most important first,
+  short and specific, answerable in a few words.
+- Never ask anything listed under "Questions already asked", even reworded. Use the answers given. An unanswered
+  question means the doctor did not know or skipped it; ask again only if it is critical, and say why.
+- Over the whole case ask at least 5 and at most ${MAX_QUESTIONS} questions.
 
-const ChatMessage = z.object({
-  role: z.enum(["user", "assistant"]),
-  content: z.string().min(1).max(4000),
-});
+Images (X-ray, ECG, CT, MRI, USG, lab reports, photos of skin, throat or eyes): describe the findings systematically,
+give your impression, say what a photo of a film or screen cannot show, and add the key findings to the case summary.
 
-const RequestBody = z.object({
+Give a provisional diagnosis and treatment ("provisional") when the history is enough, or straight away when the doctor
+asks for it; otherwise set "provisional" to null. It contains: the most likely diagnosis, differentials, red flags and
+referral or admission criteria, investigations only if they change management, advice for the parents, and medicines
+available in India as dosage form (short word such as Syp, Tab, Drop, Neb, Inj, Oint), drug (generic, brand in brackets
+if useful), dose as written on a prescription and calculated from the child's weight (e.g. "5 ml", "1/2"), frequency
+(OD/BD/TDS/QID/HS/SOS/STAT) and days. Show the mg/kg basis of weight-based doses in "message".
+
+When the doctor asks about the current prescription (interactions, contraindications, indications, dose checks), answer
+in "message" and ask no questions unless one is essential.
+
+Fields:
+- "message": what you say to the doctor now (findings, reasoning, answers), short and practical.
+- "questions": the new questions for this turn, or [] when none are needed.
+- "caseSummary": the updated running summary of the whole case: key positives, key negatives, image and investigation
+  findings, working diagnosis. Under 250 words.
+- "provisional": as described above, or null.
+Write "message" and "questions" in the language the doctor writes in (English or Hinglish).`;
+
+const Text = (max: number) => z.string().max(max);
+
+const ConsultRequest = z.object({
   context: z.object({
-    age: z.string().max(60),
+    age: Text(60),
     weightKg: z.number().positive().max(500),
-    vitals: z.string().max(300),
-    diagnosis: z.string().max(200),
-    currentMedicines: z.string().max(2000),
+    vitals: Text(300),
+    diagnosis: Text(200),
+    currentMedicines: Text(2000),
   }),
-  messages: z.array(ChatMessage).min(1).max(40),
+  caseSummary: Text(4000),
+  caseLog: z.array(z.object({ question: Text(500), answer: Text(1000) })).max(MAX_QUESTIONS + 10),
+  history: z.array(z.object({ role: z.enum(["user", "assistant"]), text: Text(6000) })).max(80),
+  message: Text(4000),
+  images: z
+    .array(z.object({ mediaType: z.enum(["image/jpeg", "image/png", "image/webp"]), data: z.string().max(1_500_000) }))
+    .max(4),
+  wantProvisional: z.boolean(),
 });
 
-type RequestBody = z.infer<typeof RequestBody>;
+type ConsultRequest = z.infer<typeof ConsultRequest>;
 
-const PrescriptionDraft = z.object({
-  diagnosis: z.string(),
-  medicines: z.array(
-    z.object({
-      form: z.string(),
-      name: z.string(),
-      dose: z.string(),
-      frequency: z.string(),
-      days: z.string(),
-    }),
-  ),
-  advice: z.string(),
-  investigations: z.string(),
-  warnings: z.string(),
+const Medicine = z.object({
+  form: z.string(),
+  name: z.string(),
+  dose: z.string(),
+  frequency: z.string(),
+  days: z.string(),
 });
 
-let client: Anthropic | null = null;
-const getClient = () => (client ??= new Anthropic());
+const ConsultTurn = z.object({
+  message: z.string(),
+  questions: z.array(z.string()),
+  caseSummary: z.string(),
+  provisional: z
+    .object({
+      diagnosis: z.string(),
+      differentials: z.array(z.string()),
+      redFlags: z.string(),
+      investigations: z.string(),
+      advice: z.string(),
+      medicines: z.array(Medicine),
+    })
+    .nullable(),
+});
 
 // The doctor's Firebase ID token is checked by Firestore itself: reading users/{uid} only succeeds
 // with a valid token for that uid (see firestore.rules), and the profile must say "doctor".
@@ -85,44 +114,40 @@ async function isDoctor(req: Request): Promise<boolean> {
   return doc.fields?.role?.stringValue === "doctor";
 }
 
-// The current patient context and prescription go in front of the doctor's first message, rebuilt on every
-// request so the AI always checks what is on the pad now; the system prompt stays fixed.
-function toMessages(body: RequestBody): Anthropic.Beta.BetaMessageParam[] {
+// Earlier turns go as plain text (images were already read into the case summary); the newest turn
+// carries the full case state, the doctor's message and any new images.
+function toTurns(body: ConsultRequest): AiTurn[] {
   const c = body.context;
-  const context = [
+  const asked = body.caseLog.length;
+  const state = [
     `Patient: age ${c.age}, weight ${c.weightKg} kg.`,
     c.vitals && `Vitals: ${c.vitals}.`,
     c.diagnosis && `Doctor's working diagnosis: ${c.diagnosis}.`,
     c.currentMedicines ? `Current prescription:\n${c.currentMedicines}` : "No medicines written yet.",
+    body.caseSummary && `Case summary so far:\n${body.caseSummary}`,
+    asked
+      ? `Questions already asked (${asked} of at most ${MAX_QUESTIONS}); do not ask these again:\n` +
+        body.caseLog.map((q, i) => `${i + 1}. ${q.question}\n   Answer: ${q.answer.trim() || "(not answered)"}`).join("\n")
+      : "No questions asked yet.",
+    asked >= MAX_QUESTIONS && "The question limit is reached: ask no more questions.",
+    body.wantProvisional && "The doctor wants the provisional diagnosis and treatment now.",
   ]
     .filter(Boolean)
-    .join("\n");
-  return body.messages.map((m, i) =>
-    i === 0 && m.role === "user" ? { role: "user", content: `${context}\n\n${m.content}` } : m,
-  );
-}
+    .join("\n\n");
 
-function sendError(res: Response, err: unknown) {
-  if (err instanceof Anthropic.AuthenticationError) {
-    res.status(500).json({ message: "The AI key on the server is not valid." });
-  } else if (err instanceof Anthropic.RateLimitError) {
-    res.status(429).json({ message: "AI is busy. Try again in a minute." });
-  } else if (err instanceof Anthropic.APIError) {
-    console.error("[clinic-ai] API error", err.status, err.message);
-    res.status(502).json({ message: "AI could not answer. Try again." });
-  } else {
-    console.error("[clinic-ai]", err);
-    res.status(500).json({ message: "AI could not answer. Try again." });
-  }
+  const parts: AiPart[] = [
+    { type: "text", text: `${state}\n\nDoctor: ${body.message.trim() || "(see the answers above)"}` },
+    ...body.images.map((img) => ({ type: "image" as const, mediaType: img.mediaType, data: img.data })),
+  ];
+  const earlier = body.history.map((h) => ({ role: h.role, parts: [{ type: "text" as const, text: h.text }] }));
+  // Chat APIs want the conversation to start with the doctor.
+  while (earlier.length && earlier[0].role !== "user") earlier.shift();
+  return [...earlier, { role: "user", parts }];
 }
 
 export const clinicAiRouter = Router();
 
 clinicAiRouter.use(async (req, res, next) => {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    res.status(503).json({ message: "AI is not set up yet: add ANTHROPIC_API_KEY on the server." });
-    return;
-  }
   try {
     if (await isDoctor(req)) return next();
   } catch (err) {
@@ -131,72 +156,27 @@ clinicAiRouter.use(async (req, res, next) => {
   res.status(401).json({ message: "Sign in as the doctor to use AI." });
 });
 
-clinicAiRouter.post("/chat", async (req, res) => {
-  const parsed = RequestBody.safeParse(req.body);
+clinicAiRouter.post("/consult", async (req, res) => {
+  const parsed = ConsultRequest.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ message: "Message is empty or too long." });
+    res.status(400).json({ message: "The message, answers or images are too long or too many." });
     return;
   }
   try {
-    const message = await getClient()
-      .beta.messages.stream({
-        model: MODEL,
-        max_tokens: 16000,
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
-        output_config: { effort: "medium" },
-        system: SYSTEM_PROMPT,
-        messages: toMessages(parsed.data),
-      })
-      .finalMessage();
-    if (message.stop_reason === "refusal") {
-      res.status(422).json({ message: "AI declined this request. Rephrase the clinical question." });
+    const turn = await generateJson(SYSTEM_PROMPT, toTurns(parsed.data), ConsultTurn, "consult_turn");
+    // Enforce the question limit even if the AI overshoots.
+    const room = Math.max(0, MAX_QUESTIONS - parsed.data.caseLog.length);
+    res.json({ ...turn, questions: turn.questions.slice(0, Math.min(6, room)) });
+  } catch (err) {
+    if (err instanceof AiError) {
+      res.status(err.status).json({ message: err.message });
       return;
     }
-    const reply = message.content
-      .flatMap((block) => (block.type === "text" ? [block.text] : []))
-      .join("\n")
-      .trim();
-    res.json({ reply });
-  } catch (err) {
-    sendError(res, err);
+    console.error("[clinic-ai]", err);
+    res.status(500).json({ message: "AI could not answer. Try again." });
   }
 });
 
-clinicAiRouter.post("/prescription", async (req, res) => {
-  const parsed = RequestBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ message: "Describe the case first." });
-    return;
-  }
-  try {
-    const message = await getClient()
-      .beta.messages.stream({
-        model: MODEL,
-        max_tokens: 16000,
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
-        output_config: { effort: "medium", format: betaZodOutputFormat(PrescriptionDraft) },
-        system: SYSTEM_PROMPT,
-        messages: [
-          ...toMessages(parsed.data),
-          {
-            role: "user",
-            content:
-              "Write the prescription for this consultation now. medicines: one entry per drug, form as a short " +
-              "word like Syp, Tab, Drop, Neb, Inj, Oint; dose as written on a prescription (e.g. \"5 ml\", \"1/2\"); " +
-              "frequency like OD/BD/TDS/QID/HS/SOS/STAT; days as a number, or empty. warnings: danger signs or dose " +
-              "checks the doctor must look at, or empty.",
-          },
-        ],
-      })
-      .finalMessage();
-    if (message.stop_reason === "refusal" || !message.parsed_output) {
-      res.status(422).json({ message: "AI could not write a prescription for this. Ask in the chat instead." });
-      return;
-    }
-    res.json(message.parsed_output);
-  } catch (err) {
-    sendError(res, err);
-  }
+clinicAiRouter.get("/status", (_req, res) => {
+  res.json({ ai: describeAi() });
 });
