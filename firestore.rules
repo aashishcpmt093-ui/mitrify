@@ -92,6 +92,11 @@ service cloud.firestore {
       allow read, write: if isDoctor();
     }
 
+    // Diagnosis templates (usual medicines for a diagnosis): doctors only.
+    match /templates/{id} {
+      allow read, write: if isDoctor();
+    }
+
     // Prescriptions: doctors only.
     match /prescriptions/{id} {
       allow read, create: if isDoctor();

@@ -14,14 +14,18 @@ import {
   EMPTY_VITALS,
   formatAge,
   friendlyError,
+  findTemplate,
   listDrugs,
   listPrescriptions,
   listStaff,
+  listTemplates,
   rememberDrugs,
+  saveTemplate,
   savePrescription,
   signIn,
   subscribePatients,
   useClinicSession,
+  type DiagnosisTemplate,
   type PatientRow,
   type PrescriptionContent,
   type PrescriptionRow,
@@ -180,12 +184,16 @@ function PrescriptionEditor({
   onDone: () => void;
 }) {
   const [content, setContent] = useState<PrescriptionContent>({
+    diagnosis: "",
     items: [emptyMedicine()],
     advice: "",
     investigations: "",
     vitals: EMPTY_VITALS,
   });
   const [drugs, setDrugs] = useState<RememberedDrug[]>([]);
+  const [templates, setTemplates] = useState<DiagnosisTemplate[]>([]);
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const [templateNote, setTemplateNote] = useState<string | null>(null);
   const [print, setPrint] = useState<PrintSettings>(loadPrintSettings);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -202,6 +210,9 @@ function PrescriptionEditor({
     listDrugs()
       .then(setDrugs)
       .catch(() => setDrugs([]));
+    listTemplates()
+      .then(setTemplates)
+      .catch(() => setTemplates([]));
   }, []);
 
   const edit = (next: Partial<PrescriptionContent>) => {
@@ -219,6 +230,46 @@ function PrescriptionEditor({
 
   const isEmpty =
     !content.items.some(isFilled) && content.advice.trim() === "" && content.investigations.trim() === "";
+
+  const matchedTemplate = findTemplate(templates, content.diagnosis);
+
+  // Copies are made so editing this patient's doses never changes the saved template.
+  const applyTemplate = (t: DiagnosisTemplate) => {
+    setContent((prev) => ({
+      ...prev,
+      diagnosis: t.diagnosis,
+      items: withTrailingRow(t.items.map((item) => ({ ...item }))),
+      advice: t.advice || prev.advice,
+      investigations: t.investigations || prev.investigations,
+    }));
+    setSaved(false);
+    setTemplateNote(`Loaded ${t.items.length} medicines for ${t.diagnosis}. Edit doses if needed.`);
+  };
+
+  const setDiagnosis = (diagnosis: string) => {
+    const t = findTemplate(templates, diagnosis);
+    // Fill automatically only while nothing is written yet; otherwise the doctor chooses.
+    if (t && !content.items.some(isFilled)) {
+      applyTemplate({ ...t, diagnosis });
+      return;
+    }
+    edit({ diagnosis });
+    setTemplateNote(null);
+  };
+
+  const storeTemplate = async () => {
+    setTemplateBusy(true);
+    setTemplateNote(null);
+    try {
+      await saveTemplate(content);
+      setTemplates(await listTemplates());
+      setTemplateNote(`Saved: next time type "${content.diagnosis.trim()}" to fill these medicines.`);
+    } catch (err) {
+      setTemplateNote(friendlyError(err, "Could not save the template."));
+    } finally {
+      setTemplateBusy(false);
+    }
+  };
 
   const save = async () => {
     setBusy(true);
@@ -245,6 +296,31 @@ function PrescriptionEditor({
         <p className="text-sm text-muted-foreground">
           {patient.name} · {formatAge(patient.age)} · {patient.weight} kg
         </p>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="diagnosis">Diagnosis</Label>
+          <datalist id="diagnosis-templates">
+            {templates.map((t) => (
+              <option key={t.diagnosis} value={t.diagnosis}>
+                {t.items.length} medicines
+              </option>
+            ))}
+          </datalist>
+          <Input
+            id="diagnosis"
+            list="diagnosis-templates"
+            autoComplete="off"
+            placeholder="e.g. URTI, AGE, Fever"
+            value={content.diagnosis}
+            onChange={(e) => setDiagnosis(e.target.value)}
+          />
+          {matchedTemplate && content.items.some(isFilled) && (
+            <Button type="button" variant="secondary" size="sm" className="self-start" onClick={() => applyTemplate(matchedTemplate)}>
+              Use saved medicines for {matchedTemplate.diagnosis} ({matchedTemplate.items.length})
+            </Button>
+          )}
+          {templateNote && <p className="text-sm text-muted-foreground">{templateNote}</p>}
+        </div>
 
         <div className="flex flex-col gap-2">
           <Label>Medicines</Label>
@@ -349,6 +425,14 @@ function PrescriptionEditor({
           <Button variant="outline" onClick={() => window.print()} disabled={isEmpty}>
             Print
           </Button>
+          <Button
+            variant="outline"
+            onClick={storeTemplate}
+            disabled={templateBusy || content.diagnosis.trim() === "" || !content.items.some(isFilled)}
+            title="Save these medicines for this diagnosis"
+          >
+            {templateBusy ? "Saving..." : matchedTemplate ? "Update template" : "Save as template"}
+          </Button>
           <Button variant="ghost" onClick={onDone}>
             Back
           </Button>
@@ -370,6 +454,7 @@ function PrescriptionEditor({
                   type="button"
                   onClick={() => {
                     setContent({
+                      diagnosis: h.diagnosis ?? "",
                       items: withTrailingRow(h.items?.length ? h.items : itemsFromText(h.medicines)),
                       advice: h.advice ?? "",
                       investigations: h.investigations ?? "",
@@ -382,6 +467,7 @@ function PrescriptionEditor({
                   <p className="text-muted-foreground mb-1">
                     {h.createdAt ? h.createdAt.toDate().toLocaleString("en-IN") : "Saving..."}
                   </p>
+                  {h.diagnosis && <p className="font-medium">{h.diagnosis}</p>}
                   <p className="whitespace-pre-wrap">{h.medicines}</p>
                   {h.investigations && <p className="text-muted-foreground mt-1">Investigations: {h.investigations}</p>}
                 </button>

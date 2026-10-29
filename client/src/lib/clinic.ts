@@ -236,6 +236,7 @@ export const EMPTY_VITALS: Vitals = { temp: "", pulse: "", rr: "", spo2: "" };
 
 // What the doctor writes on the pad.
 export type PrescriptionContent = {
+  diagnosis: string;
   items: MedicineItem[];
   advice: string;
   investigations: string;
@@ -247,6 +248,7 @@ export type PrescriptionRow = {
   // Printed lines, kept so older screens and history can show the prescription as text.
   medicines: string;
   // Missing on prescriptions saved before these fields existed.
+  diagnosis?: string;
   items?: MedicineItem[];
   advice?: string;
   investigations?: string;
@@ -273,13 +275,8 @@ export async function savePrescription(patient: PatientRow, content: Prescriptio
       weight: patient.weight,
       visitAt: patient.visitAt,
     },
-    items: content.items.filter(isFilled).map((item) => ({
-      form: item.form.trim(),
-      name: item.name.trim(),
-      dose: item.dose.trim(),
-      frequency: item.frequency.trim(),
-      days: item.days.trim(),
-    })),
+    diagnosis: content.diagnosis.trim(),
+    items: cleanItems(content.items),
     medicines: content.items.filter(isFilled).map(medicineLine).join("\n"),
     advice: content.advice.trim(),
     investigations: content.investigations.trim(),
@@ -294,6 +291,47 @@ export async function savePrescription(patient: PatientRow, content: Prescriptio
   });
   await updateDoc(doc(db, "patients", patient.id), { status: "prescribed" });
 }
+
+function cleanItems(items: MedicineItem[]): MedicineItem[] {
+  return items.filter(isFilled).map((item) => ({
+    form: item.form.trim(),
+    name: item.name.trim(),
+    dose: item.dose.trim(),
+    frequency: item.frequency.trim(),
+    days: item.days.trim(),
+  }));
+}
+
+// Diagnosis templates: the medicines, advice and investigations the doctor usually gives for a
+// diagnosis, so the next patient with it starts from them instead of an empty pad.
+export type DiagnosisTemplate = {
+  diagnosis: string;
+  items: MedicineItem[];
+  advice: string;
+  investigations: string;
+};
+
+const templateId = (diagnosis: string) => encodeURIComponent(diagnosis.trim().toLowerCase());
+
+export async function listTemplates(): Promise<DiagnosisTemplate[]> {
+  const snap = await getDocs(collection(db, "templates"));
+  return snap.docs
+    .map((d) => d.data() as DiagnosisTemplate)
+    .sort((a, b) => a.diagnosis.localeCompare(b.diagnosis));
+}
+
+export async function saveTemplate(content: PrescriptionContent): Promise<void> {
+  await setDoc(doc(db, "templates", templateId(content.diagnosis)), {
+    diagnosis: content.diagnosis.trim(),
+    items: cleanItems(content.items),
+    advice: content.advice.trim(),
+    investigations: content.investigations.trim(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export const findTemplate = (templates: DiagnosisTemplate[], diagnosis: string) =>
+  templates.find((t) => t.diagnosis.toLowerCase() === diagnosis.trim().toLowerCase());
 
 // Drug memory: every drug the doctor prescribes is remembered with how it was last given,
 // so it can be picked again with its form, dose and frequency filled in.
