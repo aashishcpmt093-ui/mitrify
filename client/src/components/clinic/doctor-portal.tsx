@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import LoginCard from "@/components/clinic/login-card";
+import { CLINIC_NAME } from "@shared/clinic";
 import {
   auth,
   createStaff,
@@ -167,7 +168,7 @@ function PrescriptionEditor({
     <div className="flex flex-col gap-6">
       {/* Printed header: only shows on paper. */}
       <div className="hidden print:block border-b pb-3">
-        <p className="text-xl font-semibold">Mitrify Clinic</p>
+        <p className="text-xl font-semibold">{CLINIC_NAME}</p>
         <p>Dr. {doctorName}</p>
         <p className="text-sm">Date: {new Date().toLocaleDateString("en-IN")}</p>
       </div>

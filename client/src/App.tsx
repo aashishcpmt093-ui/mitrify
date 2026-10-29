@@ -509,9 +509,10 @@ function App() {
         <ThemeProvider>
           <TooltipProvider>
             <Toaster />
-            <ServerWakingBanner />
+            {/* Clinic portals carry no main-site banner or visitor counter. */}
+            {!portal && <ServerWakingBanner />}
             {portal ? <PortalHome portal={portal} /> : <Router />}
-            <VisitorCounter />
+            {!portal && <VisitorCounter />}
           </TooltipProvider>
         </ThemeProvider>
       </LanguageProvider>

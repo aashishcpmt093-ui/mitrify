@@ -1,23 +1,15 @@
 // Subdomain portals: patients.mitrify.com, staff.mitrify.com, doctors.mitrify.com.
 // All three are served by the same build; the first label of the hostname picks the portal.
+// They show the clinic's own branding (see @shared/clinic), never Mitrify.
+import { PORTAL_KEYS } from "@shared/clinic";
+
 export const PORTALS = {
-  patients: {
-    title: "Patient Portal",
-    description: "Mitrify patients: sign in to find care and manage your details.",
-  },
-  staff: {
-    title: "Staff Portal",
-    description: "Mitrify staff: sign in to access your daily work.",
-  },
-  doctors: {
-    title: "Doctor Portal",
-    description: "Mitrify doctors: sign in to view your patients and schedule.",
-  },
-} as const;
+  patients: { title: "Patient Registration" },
+  staff: { title: "Staff" },
+  doctors: { title: "Doctor" },
+} as const satisfies Record<(typeof PORTAL_KEYS)[number], { title: string }>;
 
 export type PortalKey = keyof typeof PORTALS;
-
-export const MAIN_SITE_URL = "https://mitrify.com";
 
 const isPortal = (value: string | null): value is PortalKey => value !== null && value in PORTALS;
 
