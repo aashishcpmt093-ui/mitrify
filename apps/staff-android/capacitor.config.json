@@ -1,0 +1,12 @@
+{
+  "appId": "com.mitrify.clinic.staff",
+  "appName": "Clinic Staff",
+  "webDir": "www",
+  "server": {
+    "url": "https://mitrify.com/?portal=staff",
+    "allowNavigation": ["mitrify.com", "*.mitrify.com"]
+  },
+  "android": {
+    "backgroundColor": "#0f766e"
+  }
+}

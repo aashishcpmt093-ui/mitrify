@@ -1,0 +1,16 @@
+{
+  "name": "clinic-staff-app",
+  "private": true,
+  "description": "Android app for clinic staff: opens the staff page of the clinic portal (built on GitHub, see .github/workflows/staff-apk.yml).",
+  "scripts": {
+    "android:prepare": "cap add android && capacitor-assets generate --android --iconBackgroundColor '#0f766e' --splashBackgroundColor '#0f766e' && cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "7.6.9",
+    "@capacitor/core": "7.6.9"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "3.0.5",
+    "@capacitor/cli": "7.6.9"
+  }
+}
