@@ -4,14 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import LoginCard from "@/components/clinic/login-card";
-import { PRESCRIPTION_PAD } from "@shared/clinic";
 import PrescriptionPad, { type PrintMode, type PrintOffset } from "@/components/clinic/prescription-pad";
 import { Textarea } from "@/components/ui/textarea";
 import MedicineRows, { withTrailingRow } from "@/components/clinic/medicine-rows";
 import ComplaintsInput from "@/components/clinic/complaints-input";
 import Memories from "@/components/clinic/memories";
-import ClinicTiming from "@/components/clinic/clinic-timing";
-import { ChevronDown, ClipboardList } from "lucide-react";
+import ClinicProfileForm from "@/components/clinic/clinic-profile";
+import RegisterVisit from "@/components/clinic/register-visit";
+import { CheckCircle2, ChevronDown, ClipboardList, Clock, Search, Settings, UserPlus } from "lucide-react";
 import AiAssistant, { AiAssistantButton } from "@/components/clinic/ai-assistant";
 import type { AiContext, Provisional } from "@/lib/clinic-ai";
 import { emptyMedicine, isFilled, itemsFromText, medicineLine, suggestDose, type MedicineItem } from "@/lib/medicines";
@@ -23,7 +23,7 @@ import {
   friendlyError,
   findTemplate,
   getComplaintMemory,
-  getPadTimings,
+  useClinicProfile,
   listDrugs,
   listPrescriptions,
   listStaff,
@@ -100,10 +100,41 @@ function DoctorDashboard({ uid, name }: { uid: string; name: string }) {
   );
 }
 
+type View = "list" | "register" | "profile";
+type StatusFilter = "all" | "queue" | "seen" | "emergency";
+type SortOrder = "queue" | "newest" | "oldest" | "name";
+
+const todayKey = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const isEmergency = (p: PatientRow) => p.visitType === "emergency";
+const isSeen = (p: PatientRow) => p.status === "prescribed";
+
+// Queue order: emergencies waiting, then others waiting in the order they came, then those already seen.
+function queueRank(p: PatientRow) {
+  if (isSeen(p)) return 2;
+  return isEmergency(p) ? 0 : 1;
+}
+const visitTime = (p: PatientRow) => p.createdAt?.toMillis() ?? (Date.parse(p.visitAt) || 0);
+
+const SORTERS: Record<SortOrder, (a: PatientRow, b: PatientRow) => number> = {
+  queue: (a, b) =>
+    queueRank(a) - queueRank(b) || (isSeen(a) ? visitTime(b) - visitTime(a) : visitTime(a) - visitTime(b)),
+  newest: (a, b) => visitTime(b) - visitTime(a),
+  oldest: (a, b) => visitTime(a) - visitTime(b),
+  name: (a, b) => a.name.localeCompare(b.name),
+};
+
 function PatientList({ uid }: { uid: string }) {
   const [rows, setRows] = useState<PatientRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<PatientRow | null>(null);
+  const [view, setView] = useState<View>("list");
+  const [term, setTerm] = useState("");
+  const [todayOnly, setTodayOnly] = useState(true);
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [sort, setSort] = useState<SortOrder>("queue");
 
   useEffect(
     () =>
@@ -117,6 +148,30 @@ function PatientList({ uid }: { uid: string }) {
     [],
   );
 
+  const today = todayKey();
+  const inRange = rows.filter((p) => !todayOnly || p.visitAt.slice(0, 10) === today);
+  const q = term.trim().toLowerCase();
+  const digits = q.replace(/\D/g, "");
+  const searched = q
+    ? inRange.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          p.parentName.toLowerCase().includes(q) ||
+          (digits.length >= 3 && (p.mobile ?? "").includes(digits)),
+      )
+    : inRange;
+  const counts = {
+    all: searched.length,
+    queue: searched.filter((p) => !isSeen(p)).length,
+    seen: searched.filter(isSeen).length,
+    emergency: searched.filter((p) => isEmergency(p) && !isSeen(p)).length,
+  };
+  const shown = searched
+    .filter((p) =>
+      status === "queue" ? !isSeen(p) : status === "seen" ? isSeen(p) : status === "emergency" ? isEmergency(p) && !isSeen(p) : true,
+    )
+    .sort(SORTERS[sort]);
+
   if (selected) {
     return (
       <PrescriptionEditor
@@ -127,32 +182,140 @@ function PatientList({ uid }: { uid: string }) {
     );
   }
 
-  // The home view: patients, then the clinic timing printed on every pad.
+  if (view === "register") return <RegisterVisit uid={uid} onClose={() => setView("list")} />;
+  if (view === "profile") return <ClinicProfileForm onDone={() => setView("list")} />;
+
+  const filters: { key: StatusFilter; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "queue", label: "In queue" },
+    { key: "seen", label: "Seen" },
+    { key: "emergency", label: "Emergency" },
+  ];
+
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={() => setView("register")}>
+          <UserPlus className="mr-1.5 h-4 w-4" /> New registration
+        </Button>
+        <Button variant="outline" onClick={() => setView("profile")}>
+          <Settings className="mr-1.5 h-4 w-4" /> Edit profile
+        </Button>
+      </div>
+
+      <div className="flex flex-col gap-3 rounded-md border p-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="pl-9"
+            placeholder="Search name, parent or mobile"
+            aria-label="Search patients"
+            value={term}
+            onChange={(e) => setTerm(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {filters.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => setStatus(f.key)}
+              className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                status === f.key
+                  ? f.key === "emergency"
+                    ? "border-red-600 bg-red-600 text-white"
+                    : "border-primary bg-primary text-primary-foreground"
+                  : "hover:bg-muted"
+              }`}
+            >
+              {f.label} ({counts[f.key]})
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <div className="flex overflow-hidden rounded-md border">
+            {[true, false].map((t) => (
+              <button
+                key={String(t)}
+                type="button"
+                onClick={() => setTodayOnly(t)}
+                className={`px-3 py-1 ${todayOnly === t ? "bg-muted font-medium" : ""}`}
+              >
+                {t ? "Today" : "All days"}
+              </button>
+            ))}
+          </div>
+          <label className="flex items-center gap-1.5">
+            <span className="text-muted-foreground">Sort</span>
+            <select
+              aria-label="Sort patients"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortOrder)}
+              className="h-8 rounded-md border bg-background px-2"
+            >
+              <option value="queue">Queue order</option>
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="name">Name A–Z</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
       {error ? (
         <p className="text-red-600">{error}</p>
-      ) : rows.length === 0 ? (
-        <p className="text-muted-foreground">No patient entries yet.</p>
+      ) : shown.length === 0 ? (
+        <p className="text-muted-foreground">
+          {rows.length === 0
+            ? "No patient entries yet."
+            : todayOnly && !q && status === "all"
+              ? "No patients today yet. Tap \"All days\" to see earlier ones."
+              : "No patient matches."}
+        </p>
       ) : (
         <ul className="flex flex-col divide-y rounded-md border">
-          {rows.map((p) => (
-            <li key={p.id}>
+          {shown.map((p) => (
+            <li key={p.id} className={isEmergency(p) && !isSeen(p) ? "bg-red-50" : undefined}>
               <button
                 type="button"
                 onClick={() => setSelected(p)}
-                className="w-full flex items-center justify-between gap-4 p-4 text-left hover:bg-muted"
+                className="flex w-full items-center gap-3 p-3 text-left hover:bg-muted sm:p-4"
               >
-                <span className="font-medium">{p.name}</span>
-                <span className="text-sm text-muted-foreground">
-                  {p.visitAt.replace("T", " ")} · {p.status === "prescribed" ? "Prescribed" : "New"}
+                {isSeen(p) ? (
+                  <CheckCircle2 className="h-6 w-6 shrink-0 text-green-600" aria-label="Seen" />
+                ) : (
+                  <Clock className={`h-6 w-6 shrink-0 ${isEmergency(p) ? "text-red-600" : "text-amber-500"}`} aria-label="In queue" />
+                )}
+                <span className="flex min-w-0 flex-1 flex-col gap-1">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-medium">{p.name}</span>
+                    {isEmergency(p) && (
+                      <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                        Emergency
+                      </span>
+                    )}
+                    {p.visitType === "old" && (
+                      <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-indigo-800">
+                        Old
+                      </span>
+                    )}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {formatAge(p.age)} · {p.weight} kg · {todayOnly ? p.visitAt.slice(11, 16) : p.visitAt.replace("T", " ")}
+                  </span>
+                </span>
+                <span
+                  className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${
+                    isSeen(p) ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"
+                  }`}
+                >
+                  {isSeen(p) ? "✓ Seen" : "In queue"}
                 </span>
               </button>
             </li>
           ))}
         </ul>
       )}
-      <ClinicTiming />
     </div>
   );
 }
@@ -210,7 +373,7 @@ function PrescriptionEditor({
     vitals: EMPTY_VITALS,
   });
   const [drugs, setDrugs] = useState<RememberedDrug[]>([]);
-  const [timings, setTimings] = useState<string[]>(PRESCRIPTION_PAD.timings);
+  const profile = useClinicProfile();
   const [templates, setTemplates] = useState<DiagnosisTemplate[]>([]);
   const [complaintMemory, setComplaintMemory] = useState<string[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -224,10 +387,10 @@ function PrescriptionEditor({
   const [history, setHistory] = useState<PrescriptionRow[]>([]);
 
   useEffect(() => {
-    listPrescriptions(patient.id)
+    listPrescriptions(patient)
       .then(setHistory)
       .catch(() => setHistory([]));
-  }, [patient.id]);
+  }, [patient]);
 
   useEffect(() => {
     listDrugs()
@@ -239,11 +402,6 @@ function PrescriptionEditor({
     getComplaintMemory()
       .then(setComplaintMemory)
       .catch(() => setComplaintMemory([]));
-    getPadTimings()
-      .then((saved) => {
-        if (saved?.length) setTimings(saved);
-      })
-      .catch(() => undefined);
   }, []);
 
   const edit = (next: Partial<PrescriptionContent>) => {
@@ -350,7 +508,7 @@ function PrescriptionEditor({
       rememberDrugs(content.items)
         .then(() => listDrugs().then(setDrugs))
         .catch(() => undefined);
-      listPrescriptions(patient.id).then(setHistory).catch(() => undefined);
+      listPrescriptions(patient).then(setHistory).catch(() => undefined);
     } catch (err) {
       setError(friendlyError(err, "Could not save prescription."));
     } finally {
@@ -566,7 +724,7 @@ function PrescriptionEditor({
         <p className="text-sm font-medium">Preview</p>
       </div>
 
-      <PrescriptionPad patient={patient} content={content} mode={print.mode} offset={print.offset} timings={timings} />
+      <PrescriptionPad patient={patient} content={content} mode={print.mode} offset={print.offset} profile={profile} />
 
       {history.length > 0 && (
         <div className="flex flex-col gap-2 print:hidden">

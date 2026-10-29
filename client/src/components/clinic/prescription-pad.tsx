@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import { PRESCRIPTION_PAD } from "@shared/clinic";
+import type { ClinicProfile } from "@shared/clinic";
 import type { AgeParts, PatientRow, PrescriptionContent } from "@/lib/clinic";
 import { isFilled, type MedicineItem } from "@/lib/medicines";
 
@@ -138,8 +138,7 @@ function Rule({ top, left, right, weight }: { top: number; left: number; right: 
   return <div style={at(left, top, { width: mm(PAD_W - left - right), borderTop: `${mm(weight)} solid ${NAVY}` })} />;
 }
 
-function PadArt({ timings }: { timings: string[] }) {
-  const pad = PRESCRIPTION_PAD;
+function PadArt({ pad }: { pad: ClinicProfile }) {
   const label = (text: string, left: number, top: number) => (
     <span style={at(left, top, { fontSize: mm(2.8) })}>{text}</span>
   );
@@ -158,7 +157,7 @@ function PadArt({ timings }: { timings: string[] }) {
         {pad.addressLines.map((l) => (
           <span key={l}>{l}</span>
         ))}
-        <span className="font-bold">{pad.mobile}</span>
+        <span className="font-bold">Mob.: {pad.mobile}</span>
       </div>
 
       <Rule top={27.5} left={8} right={0} weight={1.1} />
@@ -189,7 +188,7 @@ function PadArt({ timings }: { timings: string[] }) {
         TIMING
       </span>
       <div className="text-right" style={at(60, 201.5, { width: mm(86), fontSize: mm(2.6), lineHeight: 1.3 })}>
-        {timings.map((t) => (
+        {pad.timings.map((t) => (
           <div key={t}>{t}</div>
         ))}
       </div>
@@ -202,11 +201,11 @@ type Props = {
   content: PrescriptionContent;
   mode: PrintMode;
   offset: PrintOffset;
-  // Clinic timing for the footer; the doctor can change it.
-  timings: string[];
+  // Doctor's details and clinic timing, as set in "Edit profile".
+  profile: ClinicProfile;
 };
 
-export default function PrescriptionPad({ patient, content, mode, offset, timings }: Props) {
+export default function PrescriptionPad({ patient, content, mode, offset, profile }: Props) {
   const { vitals } = content;
   const complaints = content.complaints
     .split("\n")
@@ -240,7 +239,7 @@ export default function PrescriptionPad({ patient, content, mode, offset, timing
         data-mode={mode}
         style={{ aspectRatio: "148 / 210", containerType: "inline-size" }}
       >
-        <PadArt timings={timings} />
+        <PadArt pad={profile} />
 
         {/* Printer calibration moves only what we print, never the paper pad. */}
         <div className="absolute inset-0" style={{ transform: `translate(${mm(offset.x)}, ${mm(offset.y)})` }}>

@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
-import PatientIntakeForm from "@/components/patient-intake-form";
+import RegisterVisit from "@/components/clinic/register-visit";
 import LoginCard from "@/components/clinic/login-card";
-import { auth, saveIntake, signIn, staffEmail, useClinicSession } from "@/lib/clinic";
+import { auth, signIn, staffEmail, useClinicSession } from "@/lib/clinic";
 import { signOut } from "firebase/auth";
 
 export default function StaffPortal() {
@@ -34,7 +34,9 @@ export default function StaffPortal() {
           Sign out
         </Button>
       </div>
-      <PatientIntakeForm onSave={(input) => saveIntake(input, { source: "staff", uid: session.uid })} />
+      <div className="w-full max-w-2xl">
+        <RegisterVisit uid={session.uid} />
+      </div>
     </div>
   );
 }

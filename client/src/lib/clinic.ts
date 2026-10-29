@@ -28,6 +28,7 @@ import {
 } from "firebase/firestore";
 import { firebaseConfig } from "./firebase";
 import { isFilled, medicineLine, type DrugDosing, type MedicineItem } from "./medicines";
+import { DEFAULT_PROFILE, type ClinicProfile } from "@shared/clinic";
 
 // The default app is created in ./firebase, so getApp() returns the same project.
 const app = getApp();
@@ -57,8 +58,15 @@ export type IntakeInput = {
 // Older entries saved a plain number of years.
 export type AgeParts = { days: number; months: number; years: number };
 
+// How the patient came in. Entries made on the public patient page have none and count as "new".
+export type VisitType = "emergency" | "new" | "old";
+
 export type PatientRow = Omit<IntakeInput, "ageDays" | "ageMonths" | "ageYears" | "weight" | "mobile"> & {
   id: string;
+  visitType?: VisitType;
+  // Each visit is its own entry. Repeat visits share the first visit's id here, so history follows the
+  // child across visits. Missing on first visits: the entry's own id is the key.
+  patientKey?: string;
   // Missing on patients registered before the mobile field existed.
   mobile?: string;
   age: AgeParts | number;
@@ -217,9 +225,17 @@ function publicDb() {
   return getFirestore(publicApp);
 }
 
-export async function saveIntake(input: IntakeInput, by: { source: "patient" } | { source: "staff"; uid: string }) {
+export const patientKeyOf = (p: PatientRow) => p.patientKey ?? p.id;
+
+type IntakeBy = { source: "patient" } | { source: "staff"; uid: string; visitType: VisitType; patientKey?: string };
+
+export async function saveIntake(input: IntakeInput, by: IntakeBy) {
   const target = by.source === "patient" ? publicDb() : db;
+  // The public page may only send the fields its rule lists, so visit details come from staff and doctor only.
+  const visit =
+    by.source === "staff" ? { visitType: by.visitType, ...(by.patientKey ? { patientKey: by.patientKey } : {}) } : {};
   await addDoc(collection(target, "patients"), {
+    ...visit,
     name: input.name.trim(),
     age: {
       days: Number(input.ageDays || 0),
@@ -278,17 +294,25 @@ export type PrescriptionRow = {
   createdAt?: Timestamp | null;
 };
 
-// Earlier prescriptions for one patient, newest first. Sorted here so no composite index is needed.
-export async function listPrescriptions(patientId: string): Promise<PrescriptionRow[]> {
-  const snap = await getDocs(query(collection(db, "prescriptions"), where("patientId", "==", patientId)));
-  return snap.docs
-    .map((d) => ({ id: d.id, ...(d.data() as Omit<PrescriptionRow, "id">) }))
-    .sort((a, b) => (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0));
+// Earlier prescriptions for one patient across all visits, newest first. Prescriptions saved before
+// repeat visits existed only have patientId (the first visit's id), so both fields are searched.
+// Sorted here so no composite index is needed.
+export async function listPrescriptions(patient: PatientRow): Promise<PrescriptionRow[]> {
+  const key = patientKeyOf(patient);
+  const prescriptions = collection(db, "prescriptions");
+  const [byKey, byId] = await Promise.all([
+    getDocs(query(prescriptions, where("patientKey", "==", key))),
+    getDocs(query(prescriptions, where("patientId", "==", key))),
+  ]);
+  const rows = new Map<string, PrescriptionRow>();
+  for (const d of [...byKey.docs, ...byId.docs]) rows.set(d.id, { id: d.id, ...(d.data() as Omit<PrescriptionRow, "id">) });
+  return [...rows.values()].sort((a, b) => (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0));
 }
 
 export async function savePrescription(patient: PatientRow, content: PrescriptionContent, doctorUid: string) {
   await addDoc(collection(db, "prescriptions"), {
     patientId: patient.id,
+    patientKey: patientKeyOf(patient),
     patient: {
       name: patient.name,
       age: patient.age,
@@ -454,13 +478,59 @@ export async function rememberComplaints(complaints: string[]): Promise<void> {
   await setDoc(doc(db, "settings", "memory"), { complaints: arrayUnion(...list) }, { merge: true });
 }
 
-// Pad settings the doctor can change, e.g. clinic timing. One document: settings/pad.
-export async function getPadTimings(): Promise<string[] | null> {
-  const snap = await getDoc(doc(db, "settings", "pad"));
-  const timings = snap.exists() ? (snap.data().timings as unknown) : null;
-  return Array.isArray(timings) ? timings.filter((t): t is string => typeof t === "string") : null;
+// Clinic profile: clinic name and everything printed on the pad. One document, settings/pad, which
+// anyone may read (the portals show the clinic name) and only the doctor may change.
+function profileFrom(data: Record<string, unknown> | undefined): ClinicProfile {
+  const text = (key: keyof ClinicProfile) =>
+    typeof data?.[key] === "string" && (data[key] as string).trim() ? (data[key] as string) : (DEFAULT_PROFILE[key] as string);
+  const lines = (key: "addressLines" | "timings") =>
+    Array.isArray(data?.[key]) ? (data[key] as unknown[]).filter((l): l is string => typeof l === "string") : DEFAULT_PROFILE[key];
+  return {
+    clinicName: text("clinicName"),
+    doctorName: text("doctorName"),
+    degrees: text("degrees"),
+    registration: text("registration"),
+    mobile: text("mobile"),
+    addressLines: lines("addressLines"),
+    timings: lines("timings"),
+  };
 }
 
-export async function savePadTimings(timings: string[]): Promise<void> {
-  await setDoc(doc(db, "settings", "pad"), { timings, updatedAt: serverTimestamp() }, { merge: true });
+// Live, so a change saved in "Edit profile" shows at once on the pad and the page header.
+export function useClinicProfile(): ClinicProfile {
+  const [profile, setProfile] = useState<ClinicProfile>(DEFAULT_PROFILE);
+  useEffect(
+    () =>
+      onSnapshot(
+        doc(db, "settings", "pad"),
+        (snap) => setProfile(profileFrom(snap.data())),
+        () => setProfile(DEFAULT_PROFILE),
+      ),
+    [],
+  );
+  return profile;
+}
+
+export async function saveClinicProfile(profile: ClinicProfile): Promise<void> {
+  await setDoc(doc(db, "settings", "pad"), { ...profile, updatedAt: serverTimestamp() }, { merge: true });
+}
+
+// Age today, worked out from the age given at an earlier visit, so a repeat visit starts correct.
+export function ageNow(age: AgeParts | number, visitAt: string, now = new Date()): AgeParts {
+  const parts = typeof age === "number" ? { days: 0, months: 0, years: age } : age;
+  const seen = new Date(visitAt);
+  if (Number.isNaN(seen.getTime())) return parts;
+  const birth = new Date(seen.getFullYear() - parts.years, seen.getMonth() - parts.months, seen.getDate() - parts.days);
+  let years = now.getFullYear() - birth.getFullYear();
+  let months = now.getMonth() - birth.getMonth();
+  let days = now.getDate() - birth.getDate();
+  if (days < 0) {
+    months -= 1;
+    days += new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+  }
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+  return years < 0 ? parts : { days, months, years };
 }

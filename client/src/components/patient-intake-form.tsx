@@ -31,10 +31,13 @@ const emptyForm = (): IntakeInput => ({
 
 type Props = {
   onSave: (input: IntakeInput) => Promise<void>;
+  // Details to start from, e.g. a returning patient's last visit. Visit time is always now.
+  initial?: Partial<IntakeInput>;
+  submitLabel?: string;
 };
 
-export default function PatientIntakeForm({ onSave }: Props) {
-  const [form, setForm] = useState<IntakeInput>(emptyForm);
+export default function PatientIntakeForm({ onSave, initial, submitLabel = "Submit" }: Props) {
+  const [form, setForm] = useState<IntakeInput>(() => ({ ...emptyForm(), ...initial, visitAt: nowForInput() }));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
@@ -112,7 +115,7 @@ export default function PatientIntakeForm({ onSave }: Props) {
           <Input id="visitAt" type="datetime-local" value={form.visitAt} onChange={update("visitAt")} required />
         </div>
         <Button type="submit" size="lg" disabled={busy}>
-          {busy ? "Saving..." : "Submit"}
+          {busy ? "Saving..." : submitLabel}
         </Button>
       </form>
 

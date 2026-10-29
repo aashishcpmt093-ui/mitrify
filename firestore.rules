@@ -1,6 +1,5 @@
 rules_version = '2';
 
-// Paste this into Firebase console → Firestore Database → Rules → Publish.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -28,7 +27,6 @@ service cloud.firestore {
       return isDoctor() || isStaff();
     }
 
-    // Age is { days, months, years } so newborns (0 days) up to adults fit.
     function validAge(age) {
       return age is map
         && age.keys().hasOnly(['days','months','years'])
@@ -38,9 +36,6 @@ service cloud.firestore {
         && age.years is number && age.years >= 0 && age.years <= 120;
     }
 
-    // Users: each person can read their own profile; doctors manage all profiles (staff creation).
-    // Clinic owner accounts may create their own doctor profile on first sign-in.
-    // Keep in sync with OWNER_DOCTOR_EMAILS in client/src/lib/clinic.ts.
     function isOwnerEmail() {
       return signedIn() && request.auth.token.email in ['doc.asheesh@icloud.com', 'doc.asheesh@gmail.com'];
     }
@@ -55,10 +50,6 @@ service cloud.firestore {
       allow update, delete: if isDoctor();
     }
 
-    // Patient entries.
-    // - Public form (no login) may create only a "patient" entry with status "new".
-    // - Staff may create entries tagged with their own uid.
-    // - Doctors and staff may read; only doctors may change or delete.
     match /patients/{id} {
       allow create: if (
           !signedIn()
@@ -82,28 +73,25 @@ service cloud.firestore {
           && request.resource.data.createdAt == request.time
         );
       allow read: if isStaffOrDoctor();
-      // Doctors may only change the status (to "prescribed") and nothing else.
       allow update: if isDoctor()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
       allow delete: if isDoctor();
     }
 
-    // Drug memory (names with their last form/dose/frequency): doctors only.
     match /drugs/{id} {
       allow read, write: if isDoctor();
     }
 
-    // Diagnosis templates (usual medicines for a diagnosis): doctors only.
     match /templates/{id} {
       allow read, write: if isDoctor();
     }
 
-    // Pad settings such as clinic timing: doctors only.
+    // settings/pad holds the clinic name and pad details, shown on the public patient page too.
     match /settings/{id} {
-      allow read, write: if isDoctor();
+      allow read: if id == 'pad' || isDoctor();
+      allow write: if isDoctor();
     }
 
-    // Prescriptions: doctors only.
     match /prescriptions/{id} {
       allow read, create: if isDoctor();
       allow update, delete: if false;
