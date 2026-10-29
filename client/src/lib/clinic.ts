@@ -96,6 +96,10 @@ export async function getProfile(uid: string): Promise<Profile | null> {
   return snap.exists() ? (snap.data() as Profile) : null;
 }
 
+// Clinic owner accounts: their doctor profile is created on first sign-in, so nobody has to
+// add it in the Firestore console. Keep in sync with OWNER_EMAILS in firestore.rules.
+const OWNER_DOCTOR_EMAILS = ["doc.asheesh@icloud.com", "doc.asheesh@gmail.com"];
+
 // Signs in and makes sure the account has the role this portal needs.
 export async function signIn(email: string, password: string, expected: Role): Promise<void> {
   const cred = await signInWithEmailAndPassword(auth, email, password);
@@ -104,6 +108,11 @@ export async function signIn(email: string, password: string, expected: Role): P
     profile = await getProfile(cred.user.uid);
   } catch {
     profile = null;
+  }
+  const userEmail = cred.user.email?.toLowerCase() ?? "";
+  if (!profile && expected === "doctor" && OWNER_DOCTOR_EMAILS.includes(userEmail)) {
+    profile = { role: "doctor", name: "Asheesh" };
+    await setDoc(doc(db, "users", cred.user.uid), { ...profile, createdAt: serverTimestamp() });
   }
   if (!profile) {
     const uid = cred.user.uid;
