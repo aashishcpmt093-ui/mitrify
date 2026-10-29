@@ -19,7 +19,16 @@ export type PortalKey = keyof typeof PORTALS;
 
 export const MAIN_SITE_URL = "https://mitrify.com";
 
-export function getPortal(hostname: string = window.location.hostname): PortalKey | null {
+const isPortal = (value: string | null): value is PortalKey => value !== null && value in PORTALS;
+
+// "?portal=doctors" on any host opens that portal too, so the portals work before
+// the subdomains are connected.
+export function getPortal(
+  hostname: string = window.location.hostname,
+  search: string = window.location.search,
+): PortalKey | null {
+  const fromQuery = new URLSearchParams(search).get("portal");
+  if (isPortal(fromQuery)) return fromQuery;
   const label = hostname.split(".")[0];
-  return label in PORTALS ? (label as PortalKey) : null;
+  return isPortal(label) ? label : null;
 }
