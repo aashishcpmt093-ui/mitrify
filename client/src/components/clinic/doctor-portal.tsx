@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import MedicineRows, { withTrailingRow } from "@/components/clinic/medicine-rows";
 import ComplaintsInput from "@/components/clinic/complaints-input";
 import Memories from "@/components/clinic/memories";
+import ClinicTiming from "@/components/clinic/clinic-timing";
 import { ChevronDown, ClipboardList } from "lucide-react";
 import AiAssistant, { AiAssistantButton } from "@/components/clinic/ai-assistant";
 import type { AiContext, Provisional } from "@/lib/clinic-ai";
@@ -29,7 +30,6 @@ import {
   listTemplates,
   rememberComplaints,
   rememberDrugs,
-  savePadTimings,
   saveTemplate,
   savePrescription,
   signIn,
@@ -127,31 +127,33 @@ function PatientList({ uid }: { uid: string }) {
     );
   }
 
-  if (error) {
-    return <p className="text-red-600">{error}</p>;
-  }
-
-  if (rows.length === 0) {
-    return <p className="text-muted-foreground">No patient entries yet.</p>;
-  }
-
+  // The home view: patients, then the clinic timing printed on every pad.
   return (
-    <ul className="flex flex-col divide-y rounded-md border">
-      {rows.map((p) => (
-        <li key={p.id}>
-          <button
-            type="button"
-            onClick={() => setSelected(p)}
-            className="w-full flex items-center justify-between gap-4 p-4 text-left hover:bg-muted"
-          >
-            <span className="font-medium">{p.name}</span>
-            <span className="text-sm text-muted-foreground">
-              {p.visitAt.replace("T", " ")} · {p.status === "prescribed" ? "Prescribed" : "New"}
-            </span>
-          </button>
-        </li>
-      ))}
-    </ul>
+    <div className="flex flex-col gap-6">
+      {error ? (
+        <p className="text-red-600">{error}</p>
+      ) : rows.length === 0 ? (
+        <p className="text-muted-foreground">No patient entries yet.</p>
+      ) : (
+        <ul className="flex flex-col divide-y rounded-md border">
+          {rows.map((p) => (
+            <li key={p.id}>
+              <button
+                type="button"
+                onClick={() => setSelected(p)}
+                className="w-full flex items-center justify-between gap-4 p-4 text-left hover:bg-muted"
+              >
+                <span className="font-medium">{p.name}</span>
+                <span className="text-sm text-muted-foreground">
+                  {p.visitAt.replace("T", " ")} · {p.status === "prescribed" ? "Prescribed" : "New"}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <ClinicTiming />
+    </div>
   );
 }
 
@@ -209,8 +211,6 @@ function PrescriptionEditor({
   });
   const [drugs, setDrugs] = useState<RememberedDrug[]>([]);
   const [timings, setTimings] = useState<string[]>(PRESCRIPTION_PAD.timings);
-  const [timingDraft, setTimingDraft] = useState(PRESCRIPTION_PAD.timings.join("\n"));
-  const [timingNote, setTimingNote] = useState<string | null>(null);
   const [templates, setTemplates] = useState<DiagnosisTemplate[]>([]);
   const [complaintMemory, setComplaintMemory] = useState<string[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -241,27 +241,10 @@ function PrescriptionEditor({
       .catch(() => setComplaintMemory([]));
     getPadTimings()
       .then((saved) => {
-        if (!saved?.length) return;
-        setTimings(saved);
-        setTimingDraft(saved.join("\n"));
+        if (saved?.length) setTimings(saved);
       })
       .catch(() => undefined);
   }, []);
-
-  const storeTimings = async () => {
-    const lines = timingDraft
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
-    setTimingNote(null);
-    try {
-      await savePadTimings(lines);
-      setTimings(lines);
-      setTimingNote("Timing saved. It prints on plain paper and shows in the preview.");
-    } catch (err) {
-      setTimingNote(friendlyError(err, "Could not save the timing."));
-    }
-  };
 
   const edit = (next: Partial<PrescriptionContent>) => {
     setContent((prev) => ({ ...prev, ...next }));
@@ -347,9 +330,9 @@ function PrescriptionEditor({
     try {
       await saveTemplate(content);
       setTemplates(await listTemplates());
-      setTemplateNote(`Saved: next time type "${content.diagnosis.trim()}" to fill these medicines.`);
+      setTemplateNote(`Saved to Memories. Next time pick "${content.diagnosis.trim()}" from Saved ▾ to fill everything.`);
     } catch (err) {
-      setTemplateNote(friendlyError(err, "Could not save the template."));
+      setTemplateNote(friendlyError(err, "Could not save to Memories."));
     } finally {
       setTemplateBusy(false);
     }
@@ -425,7 +408,7 @@ function PrescriptionEditor({
               <div className="absolute right-0 z-30 mt-1 w-72 max-h-72 overflow-y-auto rounded-md border bg-background shadow-lg">
                 {templates.length === 0 ? (
                   <p className="p-3 text-sm text-muted-foreground">
-                    No saved prescriptions yet. Add them in Memories, or use "Save as template" below.
+                    No saved prescriptions yet. Add them in Memories, or use "Save to Memories" below.
                   </p>
                 ) : (
                   templates.map((t) => (
@@ -508,23 +491,6 @@ function PrescriptionEditor({
           </div>
         </fieldset>
 
-        <fieldset className="flex flex-col gap-2 rounded-md border p-4">
-          <legend className="text-sm font-medium px-1">Clinic timing on the pad</legend>
-          <Textarea
-            aria-label="Clinic timing, one line each"
-            rows={2}
-            value={timingDraft}
-            onChange={(e) => setTimingDraft(e.target.value)}
-            placeholder={"Morning: 10:00 am to 1:00 pm\nEvening: 5:30 pm to 8:00 pm"}
-          />
-          <div className="flex items-center gap-3">
-            <Button type="button" variant="outline" size="sm" onClick={storeTimings}>
-              Save timing
-            </Button>
-            {timingNote && <p className="text-xs text-muted-foreground">{timingNote}</p>}
-          </div>
-        </fieldset>
-
         <fieldset className="flex flex-col gap-3 rounded-md border p-4">
           <legend className="text-sm font-medium px-1">Print settings (this device)</legend>
           <div className="flex flex-wrap gap-2">
@@ -588,9 +554,9 @@ function PrescriptionEditor({
             variant="outline"
             onClick={storeTemplate}
             disabled={templateBusy || content.diagnosis.trim() === "" || !content.items.some(isFilled)}
-            title="Save these medicines for this diagnosis"
+            title="Save this diagnosis with its medicines, tests and advice to Memories"
           >
-            {templateBusy ? "Saving..." : matchedTemplate ? "Update template" : "Save as template"}
+            {templateBusy ? "Saving..." : matchedTemplate ? "Update in Memories" : "Save to Memories"}
           </Button>
           <Button variant="ghost" onClick={onDone}>
             Back
