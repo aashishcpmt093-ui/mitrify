@@ -7,9 +7,9 @@ import LoginCard from "@/components/clinic/login-card";
 import PrescriptionPad, { type PrintMode, type PrintOffset } from "@/components/clinic/prescription-pad";
 import { Textarea } from "@/components/ui/textarea";
 import MedicineRows, { withTrailingRow } from "@/components/clinic/medicine-rows";
-import AiAssistant from "@/components/clinic/ai-assistant";
+import AiAssistant, { AiAssistantButton } from "@/components/clinic/ai-assistant";
 import type { AiContext, AiPrescription } from "@/lib/clinic-ai";
-import { emptyMedicine, isFilled, itemsFromText, medicineLine } from "@/lib/medicines";
+import { emptyMedicine, isFilled, itemsFromText, medicineLine, type MedicineItem } from "@/lib/medicines";
 import {
   auth,
   createStaff,
@@ -196,6 +196,7 @@ function PrescriptionEditor({
   const [templates, setTemplates] = useState<DiagnosisTemplate[]>([]);
   const [templateBusy, setTemplateBusy] = useState(false);
   const [templateNote, setTemplateNote] = useState<string | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
   const [print, setPrint] = useState<PrintSettings>(loadPrintSettings);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -234,6 +235,9 @@ function PrescriptionEditor({
     !content.items.some(isFilled) && content.advice.trim() === "" && content.investigations.trim() === "";
 
   const matchedTemplate = findTemplate(templates, content.diagnosis);
+  // Offer the template only when what is written differs from it.
+  const drugNames = (items: MedicineItem[]) => items.filter(isFilled).map((i) => i.name.trim().toLowerCase()).join("|");
+  const templateDiffers = !!matchedTemplate && drugNames(matchedTemplate.items) !== drugNames(content.items);
 
   // Copies are made so editing this patient's doses never changes the saved template.
   const applyTemplate = (t: DiagnosisTemplate) => {
@@ -319,6 +323,7 @@ function PrescriptionEditor({
 
   return (
     <div className="flex flex-col gap-6 print:gap-0">
+      <AiAssistant context={aiContext} open={aiOpen} onOpenChange={setAiOpen} onApply={applyAiDraft} />
       <div className="flex flex-col gap-4 print:hidden">
         <p className="text-sm text-muted-foreground">
           {patient.name} · {formatAge(patient.age)} · {patient.weight} kg
@@ -327,7 +332,7 @@ function PrescriptionEditor({
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Label htmlFor="diagnosis">Diagnosis</Label>
-            <AiAssistant context={aiContext} onApply={applyAiDraft} />
+            <AiAssistantButton onClick={() => setAiOpen(true)} />
           </div>
           <datalist id="diagnosis-templates">
             {templates.map((t) => (
@@ -344,7 +349,7 @@ function PrescriptionEditor({
             value={content.diagnosis}
             onChange={(e) => setDiagnosis(e.target.value)}
           />
-          {matchedTemplate && content.items.some(isFilled) && (
+          {matchedTemplate && templateDiffers && content.items.some(isFilled) && (
             <Button type="button" variant="secondary" size="sm" className="self-start" onClick={() => applyTemplate(matchedTemplate)}>
               Use saved medicines for {matchedTemplate.diagnosis} ({matchedTemplate.items.length})
             </Button>
