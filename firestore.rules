@@ -28,6 +28,16 @@ service cloud.firestore {
       return isDoctor() || isStaff();
     }
 
+    // Age is { days, months, years } so newborns (0 days) up to adults fit.
+    function validAge(age) {
+      return age is map
+        && age.keys().hasOnly(['days','months','years'])
+        && age.keys().hasAll(['days','months','years'])
+        && age.days is number && age.days >= 0 && age.days <= 31
+        && age.months is number && age.months >= 0 && age.months <= 11
+        && age.years is number && age.years >= 0 && age.years <= 120;
+    }
+
     // Users: each person can read their own profile; doctors manage all profiles (staff creation).
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isDoctor());
@@ -50,7 +60,7 @@ service cloud.firestore {
           && request.resource.data.address is string && request.resource.data.address.size() <= 300
           && request.resource.data.parentName is string && request.resource.data.parentName.size() <= 120
           && request.resource.data.visitAt is string && request.resource.data.visitAt.size() <= 32
-          && request.resource.data.age is number && request.resource.data.age >= 0 && request.resource.data.age <= 150
+          && validAge(request.resource.data.age)
           && request.resource.data.weight is number && request.resource.data.weight > 0 && request.resource.data.weight <= 500
         ) || (
           isStaffOrDoctor()

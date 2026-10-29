@@ -13,7 +13,9 @@ function nowForInput(): string {
 
 const emptyForm = (): IntakeInput => ({
   name: "",
-  age: "",
+  ageDays: "",
+  ageMonths: "",
+  ageYears: "",
   address: "",
   parentName: "",
   weight: "",
@@ -54,10 +56,23 @@ export default function PatientIntakeForm({ onSave }: Props) {
           <Label htmlFor="name">Patient name</Label>
           <Input id="name" value={form.name} onChange={update("name")} required />
         </div>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="age">Age</Label>
-          <Input id="age" type="number" min="0" value={form.age} onChange={update("age")} required />
-        </div>
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm font-medium mb-2">Age (leave 0 where not needed)</legend>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="ageDays">Days</Label>
+              <Input id="ageDays" type="number" inputMode="numeric" min="0" max="31" placeholder="0" value={form.ageDays} onChange={update("ageDays")} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="ageMonths">Months</Label>
+              <Input id="ageMonths" type="number" inputMode="numeric" min="0" max="11" placeholder="0" value={form.ageMonths} onChange={update("ageMonths")} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="ageYears">Years</Label>
+              <Input id="ageYears" type="number" inputMode="numeric" min="0" max="120" placeholder="0" value={form.ageYears} onChange={update("ageYears")} />
+            </div>
+          </div>
+        </fieldset>
         <div className="flex flex-col gap-2">
           <Label htmlFor="address">Address</Label>
           <Input id="address" value={form.address} onChange={update("address")} required />

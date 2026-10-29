@@ -8,6 +8,7 @@ import LoginCard from "@/components/clinic/login-card";
 import {
   auth,
   createStaff,
+  formatAge,
   friendlyError,
   listPrescriptions,
   listStaff,
@@ -173,7 +174,7 @@ function PrescriptionEditor({
 
       <div className="rounded-md border p-4 text-sm grid grid-cols-2 gap-2 print:border-0">
         <p><strong>Patient:</strong> {patient.name}</p>
-        <p><strong>Age:</strong> {patient.age}</p>
+        <p><strong>Age:</strong> {formatAge(patient.age)}</p>
         <p className="col-span-2"><strong>Address:</strong> {patient.address}</p>
         <p><strong>Mother / Father:</strong> {patient.parentName}</p>
         <p><strong>Weight:</strong> {patient.weight} kg</p>

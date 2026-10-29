@@ -38,16 +38,22 @@ export const staffEmail = (loginId: string) => `${loginId.trim().toLowerCase()}@
 
 export type IntakeInput = {
   name: string;
-  age: string;
+  ageDays: string;
+  ageMonths: string;
+  ageYears: string;
   address: string;
   parentName: string;
   weight: string;
   visitAt: string;
 };
 
-export type PatientRow = Omit<IntakeInput, "age" | "weight"> & {
+// Age is stored as days/months/years so newborns (0 days) up to adults fit.
+// Older entries saved a plain number of years.
+export type AgeParts = { days: number; months: number; years: number };
+
+export type PatientRow = Omit<IntakeInput, "ageDays" | "ageMonths" | "ageYears" | "weight"> & {
   id: string;
-  age: number;
+  age: AgeParts | number;
   weight: number;
   source: "patient" | "staff";
   status: "new" | "prescribed";
@@ -73,6 +79,16 @@ export function friendlyError(err: unknown, fallback = "Something went wrong. Tr
   const code = (err as { code?: string } | null)?.code;
   if (code && FRIENDLY_ERRORS[code]) return FRIENDLY_ERRORS[code];
   return err instanceof Error && !code ? err.message : fallback;
+}
+
+export function formatAge(age: AgeParts | number): string {
+  if (typeof age === "number") return `${age} years`;
+  const parts = [
+    age.years ? `${age.years} ${age.years === 1 ? "year" : "years"}` : "",
+    age.months ? `${age.months} ${age.months === 1 ? "month" : "months"}` : "",
+    age.days ? `${age.days} ${age.days === 1 ? "day" : "days"}` : "",
+  ].filter(Boolean);
+  return parts.length ? parts.join(" ") : "0 days";
 }
 
 export async function getProfile(uid: string): Promise<Profile | null> {
@@ -162,7 +178,11 @@ export async function listStaff(): Promise<(Profile & { id: string })[]> {
 export async function saveIntake(input: IntakeInput, by: { source: "patient" } | { source: "staff"; uid: string }) {
   await addDoc(collection(db, "patients"), {
     name: input.name.trim(),
-    age: Number(input.age),
+    age: {
+      days: Number(input.ageDays || 0),
+      months: Number(input.ageMonths || 0),
+      years: Number(input.ageYears || 0),
+    },
     address: input.address.trim(),
     parentName: input.parentName.trim(),
     weight: Number(input.weight),
