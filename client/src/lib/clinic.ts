@@ -87,6 +87,8 @@ export type PatientRow = Omit<IntakeInput, "ageDays" | "ageMonths" | "ageYears" 
   // Online registrations wait until staff (usually after taking the fee) or the doctor approves them.
   approvedBy?: string;
   approvedAt?: Timestamp | null;
+  // Fee for this visit in rupees, saved when registered or approved. Older visits have none.
+  fee?: number;
   createdAt?: Timestamp | null;
 };
 
@@ -241,7 +243,10 @@ function publicDb() {
 
 export const patientKeyOf = (p: PatientRow) => p.patientKey ?? p.id;
 
-type IntakeBy = { source: "patient" } | { source: "staff"; uid: string; visitType: VisitType; patientKey?: string };
+// fee: what this visit costs (from Edit profile), saved with it so later fee changes leave past revenue as it was.
+type IntakeBy =
+  | { source: "patient" }
+  | { source: "staff"; uid: string; visitType: VisitType; patientKey?: string; fee?: number };
 
 // Queue numbers: one counter per day (counters/YYYY-MM-DD), shared by staff registrations and online
 // approvals, so an approved online patient gets the next number after the last one handed out.
@@ -259,7 +264,13 @@ export async function saveIntake(input: IntakeInput, by: IntakeBy): Promise<numb
   const target = by.source === "patient" ? publicDb() : db;
   // The public page may only send the fields its rule lists, so visit details come from staff and doctor only.
   const visit =
-    by.source === "staff" ? { visitType: by.visitType, ...(by.patientKey ? { patientKey: by.patientKey } : {}) } : {};
+    by.source === "staff"
+      ? {
+          visitType: by.visitType,
+          ...(by.patientKey ? { patientKey: by.patientKey } : {}),
+          ...(by.fee ? { fee: by.fee } : {}),
+        }
+      : {};
   const data = {
     ...visit,
     name: input.name.trim(),
@@ -316,17 +327,25 @@ export function subscribeOnlinePending(cb: (rows: PatientRow[]) => void, onError
 
 // Approving puts the patient into today's queue with the next number. Two people approving at once
 // cannot both succeed: the second is told it was already done.
-export async function approveOnline(patientId: string, uid: string): Promise<number> {
-  return runTransaction(db, async (tx) => {
-    const ref = doc(db, "patients", patientId);
-    const snap = await tx.get(ref);
-    if (!snap.exists() || snap.data().approvedAt || snap.data().status !== "new") {
-      throw new Error("This registration was already approved or removed.");
-    }
-    const token = await takeToken(tx, todayKey());
-    tx.update(ref, { token, approvedBy: uid, approvedAt: serverTimestamp() });
-    return token;
-  });
+export async function approveOnline(patientId: string, uid: string, fee = 0): Promise<number> {
+  const approve = (withFee: boolean) =>
+    runTransaction(db, async (tx) => {
+      const ref = doc(db, "patients", patientId);
+      const snap = await tx.get(ref);
+      if (!snap.exists() || snap.data().approvedAt || snap.data().status !== "new") {
+        throw new Error("This registration was already approved or removed.");
+      }
+      const token = await takeToken(tx, todayKey());
+      tx.update(ref, { token, approvedBy: uid, approvedAt: serverTimestamp(), ...(withFee ? { fee } : {}) });
+      return token;
+    });
+  try {
+    return await approve(fee > 0);
+  } catch (err) {
+    // Until the rules allowing the fee are published, approve without it (History then uses today's fee).
+    if (fee > 0 && (err as { code?: string }).code === "permission-denied") return approve(false);
+    throw err;
+  }
 }
 
 export async function rejectOnline(patientId: string): Promise<void> {
@@ -496,7 +515,7 @@ export async function deletePatient(patientId: string): Promise<void> {
 // Books a follow-up: a new visit for the same child on the chosen date and time. It appears in the
 // doctor's queue that day, with the child's earlier prescriptions in history. Age is moved on to that
 // date; weight is the last one recorded, to be updated on the day.
-export async function scheduleRevisit(patient: PatientRow, visitAt: string, uid: string): Promise<void> {
+export async function scheduleRevisit(patient: PatientRow, visitAt: string, uid: string, fee = 0): Promise<void> {
   const age = ageNow(patient.age, patient.visitAt, new Date(visitAt));
   await saveIntake(
     {
@@ -510,7 +529,7 @@ export async function scheduleRevisit(patient: PatientRow, visitAt: string, uid:
       weight: String(patient.weight),
       visitAt,
     },
-    { source: "staff", uid, visitType: "revisit", patientKey: patientKeyOf(patient) },
+    { source: "staff", uid, visitType: "revisit", patientKey: patientKeyOf(patient), fee },
   );
 }
 
@@ -695,7 +714,7 @@ export async function rememberComplaints(complaints: string[]): Promise<void> {
 // Clinic profile: clinic name and everything printed on the pad. One document, settings/pad, which
 // anyone may read (the portals show the clinic name) and only the doctor may change.
 function profileFrom(data: Record<string, unknown> | undefined): ClinicProfile {
-  const text = (key: keyof ClinicProfile) =>
+  const text = (key: Exclude<keyof ClinicProfile, "opdFee" | "emergencyFee" | "addressLines" | "timings">) =>
     typeof data?.[key] === "string" && (data[key] as string).trim() ? (data[key] as string) : (DEFAULT_PROFILE[key] as string);
   const lines = (key: "addressLines" | "timings") =>
     Array.isArray(data?.[key]) ? (data[key] as unknown[]).filter((l): l is string => typeof l === "string") : DEFAULT_PROFILE[key];
@@ -707,8 +726,12 @@ function profileFrom(data: Record<string, unknown> | undefined): ClinicProfile {
     mobile: text("mobile"),
     addressLines: lines("addressLines"),
     timings: lines("timings"),
+    opdFee: fee(data?.opdFee),
+    emergencyFee: fee(data?.emergencyFee),
   };
 }
+
+const fee = (value: unknown) => (typeof value === "number" && value > 0 ? value : 0);
 
 // Live, so a change saved in "Edit profile" shows at once on the pad and the page header.
 export function useClinicProfile(): ClinicProfile {

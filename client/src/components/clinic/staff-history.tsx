@@ -3,6 +3,7 @@ import { FileSpreadsheet, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { feeFor } from "@shared/clinic";
 import {
   formatAge,
   friendlyError,
@@ -48,7 +49,8 @@ export default function StaffHistory({
   doctorUid?: string;
 }) {
   const everyone = !!doctorUid;
-  const { clinicName } = useClinicProfile();
+  const profile = useClinicProfile();
+  const { clinicName } = profile;
   const today = todayKey();
   const [period, setPeriod] = useState<Period>("day");
   const [day, setDay] = useState(today);
@@ -104,6 +106,15 @@ export default function StaffHistory({
     p.source === "patient" ? `Online${p.approvedBy ? ` (approved by ${nameOf(p.approvedBy)})` : ""}` : nameOf(p.createdBy);
 
   const count = (type: string) => rows.filter((p) => typeKey(p) === type).length;
+
+  // Revenue: each visit's saved fee; older visits without one use today's fee from Edit profile.
+  // Online visits are normal OPD visits.
+  const feeOf = (p: PatientRow) => p.fee ?? feeFor(p.source === "patient" ? "new" : p.visitType, profile);
+  const revenue = rows.reduce((sum, p) => sum + feeOf(p), 0);
+  const emergencyRows = rows.filter((p) => p.source !== "patient" && p.visitType === "emergency");
+  const emergencyRevenue = emergencyRows.reduce((sum, p) => sum + feeOf(p), 0);
+  const feesSet = profile.opdFee > 0 || profile.emergencyFee > 0 || rows.some((p) => p.fee);
+  const inr = (n: number) => n.toLocaleString("en-IN");
   const summary = [
     `Total ${rows.length}`,
     ...(everyone ? [`Seen ${rows.filter((p) => p.status === "prescribed").length}`] : []),
@@ -126,6 +137,7 @@ export default function StaffHistory({
       Mobile: p.mobile ?? "",
       Type: typeOf(p),
       Status: statusOf(p),
+      "Fee (Rs)": feeOf(p),
       ...(everyone ? { "Registered by": registeredBy(p), Diagnosis: diagnoses.get(p.id) ?? "" } : {}),
     }));
   const fileBase = `${everyone ? "clinic-patients" : `${staffName}-registrations`}-${range.from}${range.to !== range.from ? `-to-${range.to}` : ""}`.replace(/\s+/g, "-");
@@ -133,8 +145,15 @@ export default function StaffHistory({
   // The libraries load only when a download is tapped, so the page itself stays light.
   const downloadExcel = async () => {
     const XLSX = await import("xlsx");
-    const sheet = XLSX.utils.json_to_sheet(table());
-    sheet["!cols"] = [4, 7, 11, 7, 22, 16, 11, 20, 13, 12, 10, 24, 28].map((wch) => ({ wch }));
+    const data = table();
+    const sheet = XLSX.utils.json_to_sheet(data);
+    // Total revenue as the last row, under the Fee column (same column order as the rows above).
+    const totalRow = Object.fromEntries(Object.keys(data[0]).map((key) => [key, ""]));
+    XLSX.utils.sheet_add_json(sheet, [{ ...totalRow, Status: "Total", "Fee (Rs)": revenue }], {
+      skipHeader: true,
+      origin: -1,
+    });
+    sheet["!cols"] = [4, 7, 11, 7, 22, 16, 11, 20, 13, 12, 10, 9, 24, 28].map((wch) => ({ wch }));
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, "Registrations");
     XLSX.writeFile(book, `${fileBase}.xlsx`);
@@ -147,7 +166,11 @@ export default function StaffHistory({
     pdf.text(clinicName, 14, 15);
     pdf.setFontSize(10.5);
     pdf.text(`${everyone ? "All patients" : `Registrations by ${staffName}`}  ·  ${range.label}`, 14, 22);
-    pdf.text(summary.join("   ·   "), 14, 28);
+    pdf.text(
+      [...summary, ...(feesSet ? [`Revenue Rs. ${inr(revenue)}`] : [])].join("   ·   "),
+      14,
+      28,
+    );
     const data = table();
     autoTable(pdf, {
       startY: 33,
@@ -201,6 +224,33 @@ export default function StaffHistory({
         {!valid && <p className="text-sm text-red-600">"From" must be on or before "To".</p>}
       </div>
 
+      {/* Revenue for the chosen period, the number the doctor checks most. */}
+      {!loading && rows.length > 0 && (
+        <div className="flex flex-wrap items-end justify-between gap-3 rounded-md border bg-green-50/60 p-3">
+          {feesSet ? (
+            <>
+              <div className="flex flex-col">
+                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {everyone ? "Revenue" : "Fees collected"} · {range.label}
+                </span>
+                <span className="text-2xl font-bold tabular-nums text-green-800">₹{inr(revenue)}</span>
+              </div>
+              <span className="text-xs tabular-nums text-muted-foreground">
+                OPD {rows.length - emergencyRows.length} · ₹{inr(revenue - emergencyRevenue)}
+                <br />
+                Emergency {emergencyRows.length} · ₹{inr(emergencyRevenue)}
+              </span>
+            </>
+          ) : (
+            <span className="text-sm text-muted-foreground">
+              {everyone
+                ? "Add your OPD and emergency fees in Patients → Edit profile to see revenue here."
+                : "Fees are not set yet. The doctor can add them in Edit profile."}
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm">
           <span className="font-semibold">{range.label}</span>
@@ -251,6 +301,7 @@ export default function StaffHistory({
                   {typeOf(p)}
                 </span>
                 <span className={p.status === "prescribed" ? "text-green-700" : "text-amber-700"}>{statusOf(p)}</span>
+                {feesSet && <span className="font-medium tabular-nums">₹{inr(feeOf(p))}</span>}
               </span>
             </li>
           ))}

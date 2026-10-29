@@ -17,9 +17,14 @@ export const PRESCRIPTION_PAD = {
 };
 
 // What the doctor can change in "Edit profile": the clinic name on the portals and everything on the pad.
-export type ClinicProfile = typeof PRESCRIPTION_PAD & { clinicName: string };
+// Fees are in rupees; 0 means not set yet (History then shows no revenue).
+export type ClinicProfile = typeof PRESCRIPTION_PAD & { clinicName: string; opdFee: number; emergencyFee: number };
 
-export const DEFAULT_PROFILE: ClinicProfile = { clinicName: CLINIC_NAME, ...PRESCRIPTION_PAD };
+export const DEFAULT_PROFILE: ClinicProfile = { clinicName: CLINIC_NAME, ...PRESCRIPTION_PAD, opdFee: 0, emergencyFee: 0 };
+
+// Fee for one visit: emergency visits have their own fee, every other visit is an OPD visit.
+export const feeFor = (visitType: string | undefined, profile: Pick<ClinicProfile, "opdFee" | "emergencyFee">) =>
+  visitType === "emergency" ? profile.emergencyFee : profile.opdFee;
 
 // Firebase project the clinic portals use; the server checks doctor sign-ins against it.
 export const FIREBASE_PROJECT_ID = "mitrify-asheesh";

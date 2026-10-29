@@ -59,10 +59,13 @@ function detailsOf(p: PatientRow): IntakeInput {
 export default function PatientActions({
   patient,
   uid,
+  revisitFee,
   onNotice,
 }: {
   patient: PatientRow;
   uid: string;
+  // OPD fee from Edit profile, saved with a booked revisit.
+  revisitFee: number;
   onNotice: (text: string) => void;
 }) {
   const [revisitOpen, setRevisitOpen] = useState(false);
@@ -89,7 +92,7 @@ export default function PatientActions({
     setBusy(true);
     setError(null);
     try {
-      await scheduleRevisit(patient, when, uid);
+      await scheduleRevisit(patient, when, uid, revisitFee);
       setRevisitOpen(false);
       const [date, time] = when.split("T");
       onNotice(`Revisit booked for ${patient.name}: ${date.split("-").reverse().join("/")} at ${time}.`);

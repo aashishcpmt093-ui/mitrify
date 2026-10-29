@@ -4,12 +4,14 @@ import { Input } from "@/components/ui/input";
 import PatientIntakeForm from "@/components/patient-intake-form";
 import BackButton from "@/components/clinic/back-button";
 import { useBackStep } from "@/lib/back-step";
+import { feeFor } from "@shared/clinic";
 import {
   ageNow,
   formatAge,
   friendlyError,
   patientKeyOf,
   saveIntake,
+  useClinicProfile,
   searchPatients,
   type IntakeInput,
   type PatientRow,
@@ -71,6 +73,7 @@ export default function RegisterVisit({
 }) {
   const [type, setType] = useState<VisitType | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const profile = useClinicProfile();
   // Tapped the wrong type? Back (on screen or the phone's) returns to the three choices.
   useBackStep(type !== null, () => setType(null));
 
@@ -79,7 +82,7 @@ export default function RegisterVisit({
     visitType: VisitType,
     patientKey?: string,
   ) => {
-    const token = await saveIntake(input, { source: "staff", uid, visitType, patientKey });
+    const token = await saveIntake(input, { source: "staff", uid, visitType, patientKey, fee: feeFor(visitType, profile) });
     setNotice(
       `${input.name.trim()} has been sent to the doctor${visitType === "emergency" ? " as EMERGENCY" : ""}.` +
         (token ? ` Token number ${token}.` : ""),

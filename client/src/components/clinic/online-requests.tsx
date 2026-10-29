@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { Check, Globe, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { feeFor } from "@shared/clinic";
 import {
   approveOnline,
   formatAge,
   friendlyError,
   rejectOnline,
   subscribeOnlinePending,
+  useClinicProfile,
   type PatientRow,
 } from "@/lib/clinic";
 
@@ -44,6 +46,7 @@ export default function OnlineRequests({
   error: string | null;
   approver: "staff" | "doctor";
 }) {
+  const profile = useClinicProfile();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -51,7 +54,8 @@ export default function OnlineRequests({
     setBusyId(p.id);
     setNotice(null);
     try {
-      const token = await approveOnline(p.id, uid);
+      // Online visits are normal OPD visits.
+      const token = await approveOnline(p.id, uid, feeFor("new", profile));
       setNotice({ ok: true, text: `${p.name} approved. Token number ${token}. Now in the doctor's queue.` });
     } catch (err) {
       setNotice({ ok: false, text: friendlyError(err, "Could not approve. Try again.") });

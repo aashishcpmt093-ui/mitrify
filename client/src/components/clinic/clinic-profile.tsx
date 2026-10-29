@@ -11,16 +11,23 @@ import {
   useClinicProfile,
 } from "@/lib/clinic";
 
-type Draft = Omit<ClinicProfile, "addressLines" | "timings"> & {
+type Draft = Omit<ClinicProfile, "addressLines" | "timings" | "opdFee" | "emergencyFee"> & {
   addressLines: string;
   timings: string;
+  opdFee: string;
+  emergencyFee: string;
 };
+type TextKey = Exclude<keyof Draft, "addressLines" | "timings" | "opdFee" | "emergencyFee">;
 
 const toDraft = (p: ClinicProfile): Draft => ({
   ...p,
   addressLines: p.addressLines.join("\n"),
   timings: p.timings.join("\n"),
+  opdFee: p.opdFee ? String(p.opdFee) : "",
+  emergencyFee: p.emergencyFee ? String(p.emergencyFee) : "",
 });
+
+const rupees = (text: string) => Math.max(0, Math.round(Number(text) || 0));
 
 const lines = (text: string) =>
   text
@@ -55,6 +62,8 @@ export default function ClinicProfileForm({ onDone }: { onDone: () => void }) {
         mobile: form.mobile.trim(),
         addressLines: lines(form.addressLines),
         timings: lines(form.timings),
+        opdFee: rupees(form.opdFee),
+        emergencyFee: rupees(form.emergencyFee),
       });
       onDone();
     } catch (err) {
@@ -64,7 +73,7 @@ export default function ClinicProfileForm({ onDone }: { onDone: () => void }) {
     }
   };
 
-  const text = (key: keyof Draft, label: string, hint?: string) => (
+  const text = (key: TextKey, label: string, hint?: string) => (
     <div className="flex flex-col gap-1.5">
       <Label htmlFor={`profile-${key}`}>{label}</Label>
       <Input
@@ -122,6 +131,35 @@ export default function ClinicProfileForm({ onDone }: { onDone: () => void }) {
             }
           />
         </div>
+        <fieldset className="flex flex-col gap-2 rounded-md border p-3">
+          <legend className="px-1 text-sm font-medium">Consultation fees</legend>
+          <p className="text-xs text-muted-foreground">
+            Used to work out daily and monthly revenue in History. Each visit keeps the fee of its day, so
+            changing fees later does not change past revenue.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            {(
+              [
+                ["opdFee", "Normal OPD fee (₹)"],
+                ["emergencyFee", "Emergency fee (₹)"],
+              ] as const
+            ).map(([key, label]) => (
+              <div key={key} className="flex flex-col gap-1.5">
+                <Label htmlFor={`profile-${key}`}>{label}</Label>
+                <Input
+                  id={`profile-${key}`}
+                  type="number"
+                  inputMode="numeric"
+                  min="0"
+                  step="1"
+                  placeholder="0"
+                  value={form[key]}
+                  onChange={field(key)}
+                />
+              </div>
+            ))}
+          </div>
+        </fieldset>
         {error && <p className="text-sm text-red-600">{error}</p>}
         <div className="flex gap-2">
           <Button type="submit" disabled={busy}>

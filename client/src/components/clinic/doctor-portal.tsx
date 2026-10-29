@@ -203,6 +203,7 @@ function PatientList({ uid }: { uid: string }) {
 
   // Online registrations reach this list only after approval; rejected ones never do.
   const online = useOnlinePending();
+  const { opdFee } = useClinicProfile();
   const searched = (found ?? rows).filter((p) => !isPendingOnline(p) && p.status !== "rejected");
   const matchers: Record<StatusFilter, (p: PatientRow) => boolean> = {
     all: () => true,
@@ -401,7 +402,7 @@ function PatientList({ uid }: { uid: string }) {
                         : "In queue"}
                 </span>
               </button>
-              <PatientActions patient={p} uid={uid} onNotice={setNotice} />
+              <PatientActions patient={p} uid={uid} revisitFee={opdFee} onNotice={setNotice} />
             </li>
           ))}
         </ul>
