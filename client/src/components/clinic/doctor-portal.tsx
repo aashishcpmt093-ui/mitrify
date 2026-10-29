@@ -11,6 +11,8 @@ import ComplaintsInput from "@/components/clinic/complaints-input";
 import Memories from "@/components/clinic/memories";
 import ClinicProfileForm from "@/components/clinic/clinic-profile";
 import RegisterVisit from "@/components/clinic/register-visit";
+import BackButton from "@/components/clinic/back-button";
+import { useBackStep } from "@/lib/back-step";
 import { CheckCircle2, ChevronDown, ClipboardList, Clock, Search, Settings, UserPlus } from "lucide-react";
 import AiAssistant, { AiAssistantButton } from "@/components/clinic/ai-assistant";
 import type { AiContext, Provisional } from "@/lib/clinic-ai";
@@ -74,6 +76,8 @@ export default function DoctorPortal() {
 
 function DoctorDashboard({ uid, name }: { uid: string; name: string }) {
   const [tab, setTab] = useState<Tab>("patients");
+  // From Memories or Staff, the phone's back button returns to Patients.
+  useBackStep(tab !== "patients", () => setTab("patients"));
 
   return (
     <div className="w-full max-w-3xl flex flex-col gap-6 print:gap-0 print:max-w-none">
@@ -132,6 +136,7 @@ function PatientList({ uid }: { uid: string }) {
   const [todayOnly, setTodayOnly] = useState(true);
   const [status, setStatus] = useState<StatusFilter>("all");
   const [sort, setSort] = useState<SortOrder>("queue");
+  useBackStep(view !== "list", () => setView("list"));
 
   useEffect(
     () =>
@@ -433,6 +438,17 @@ function PrescriptionEditor({
 
   const isEmpty =
     !content.items.some(isFilled) && content.advice.trim() === "" && content.investigations.trim() === "";
+  const hasUnsaved =
+    !saved &&
+    (!isEmpty || [content.complaints, content.diagnosis, content.notes].some((t) => t.trim() !== ""));
+
+  // Opened the wrong patient? Back returns to the list. Anything written and not saved is checked first.
+  const leave = () => {
+    if (hasUnsaved && !window.confirm("This prescription is not saved. Go back and lose it?")) return false;
+    onDone();
+  };
+  useBackStep(true, leave);
+  useBackStep(aiOpen, () => setAiOpen(false));
 
   const matchedTemplate = findTemplate(templates, content.diagnosis);
   // Offer the template only when what is written differs from it.
@@ -534,10 +550,21 @@ function PrescriptionEditor({
     <div className="flex flex-col gap-6 print:gap-0">
       <AiAssistant context={aiContext} open={aiOpen} onOpenChange={setAiOpen} onApply={applyAiDraft} />
       <div className="flex flex-col gap-4 print:hidden">
-        <p className="text-sm text-muted-foreground">
-          {patient.name} · {formatAge(patient.age)} · {patient.weight} kg
-          {patient.mobile && ` · ${patient.mobile}`}
-        </p>
+        <BackButton onClick={leave} label="Back to patients" />
+        <div>
+          <p className="flex flex-wrap items-center gap-2 text-lg font-semibold">
+            {patient.name}
+            {patient.visitType === "emergency" && (
+              <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                Emergency
+              </span>
+            )}
+          </p>
+          <p className="text-sm text-muted-foreground">
+            {formatAge(patient.age)} · {patient.weight} kg
+            {patient.mobile && ` · ${patient.mobile}`}
+          </p>
+        </div>
 
         <div className="flex flex-col gap-2">
           <Label htmlFor="complaints">Complaints (one per line)</Label>
@@ -730,7 +757,7 @@ function PrescriptionEditor({
           >
             {templateBusy ? "Saving..." : matchedTemplate ? "Update in Memories" : "Save to Memories"}
           </Button>
-          <Button variant="ghost" onClick={onDone}>
+          <Button variant="ghost" onClick={leave}>
             Back
           </Button>
         </div>

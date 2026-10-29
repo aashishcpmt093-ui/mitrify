@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, History, Search, UserPlus } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import PatientIntakeForm from "@/components/patient-intake-form";
+import BackButton from "@/components/clinic/back-button";
+import { useBackStep } from "@/lib/back-step";
 import {
   ageNow,
   formatAge,
@@ -15,7 +16,13 @@ import {
   type VisitType,
 } from "@/lib/clinic";
 
-const CHOICES: { type: VisitType; title: string; detail: string; icon: typeof UserPlus; tone: string }[] = [
+const CHOICES: {
+  type: VisitType;
+  title: string;
+  detail: string;
+  icon: typeof UserPlus;
+  tone: string;
+}[] = [
   {
     type: "emergency",
     title: "Emergency",
@@ -55,20 +62,39 @@ function fromLastVisit(p: PatientRow): Partial<IntakeInput> {
 }
 
 // Registration used by staff and by the doctor: Emergency, New OPD, or an old patient sent to the doctor again.
-export default function RegisterVisit({ uid, onClose }: { uid: string; onClose?: () => void }) {
+export default function RegisterVisit({
+  uid,
+  onClose,
+}: {
+  uid: string;
+  onClose?: () => void;
+}) {
   const [type, setType] = useState<VisitType | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Tapped the wrong type? Back (on screen or the phone's) returns to the three choices.
+  useBackStep(type !== null, () => setType(null));
 
-  const register = async (input: IntakeInput, visitType: VisitType, patientKey?: string) => {
+  const register = async (
+    input: IntakeInput,
+    visitType: VisitType,
+    patientKey?: string,
+  ) => {
     await saveIntake(input, { source: "staff", uid, visitType, patientKey });
-    setNotice(`${input.name.trim()} has been sent to the doctor${visitType === "emergency" ? " as EMERGENCY" : ""}.`);
+    setNotice(
+      `${input.name.trim()} has been sent to the doctor${visitType === "emergency" ? " as EMERGENCY" : ""}.`,
+    );
     setType(null);
   };
 
   if (!type) {
     return (
       <div className="flex w-full flex-col gap-4">
-        {notice && <p className="rounded-md bg-green-50 p-3 text-sm text-green-800">✓ {notice}</p>}
+        {onClose && <BackButton onClick={onClose} label="Back to patients" />}
+        {notice && (
+          <p className="rounded-md bg-green-50 p-3 text-sm text-green-800">
+            ✓ {notice}
+          </p>
+        )}
         <p className="text-sm font-medium">Choose the type of visit</p>
         <div className="grid gap-3 sm:grid-cols-3">
           {CHOICES.map((c) => (
@@ -89,11 +115,6 @@ export default function RegisterVisit({ uid, onClose }: { uid: string; onClose?:
             </button>
           ))}
         </div>
-        {onClose && (
-          <Button variant="ghost" className="self-start" onClick={onClose}>
-            Back
-          </Button>
-        )}
       </div>
     );
   }
@@ -101,20 +122,20 @@ export default function RegisterVisit({ uid, onClose }: { uid: string; onClose?:
   const choice = CHOICES.find((c) => c.type === type)!;
   return (
     <div className="flex w-full flex-col gap-4">
-      <div className={`flex items-center justify-between gap-3 rounded-lg border-2 px-4 py-2 ${choice.tone}`}>
-        <span className="flex items-center gap-2 font-semibold">
-          <choice.icon className="h-5 w-5" /> {choice.title}
-        </span>
-        <Button variant="ghost" size="sm" onClick={() => setType(null)}>
-          Change
-        </Button>
+      <BackButton onClick={() => setType(null)} label="Back to visit type" />
+      <div
+        className={`flex items-center gap-2 rounded-lg border-2 px-4 py-2 font-semibold ${choice.tone}`}
+      >
+        <choice.icon className="h-5 w-5" /> {choice.title}
       </div>
       {type === "old" ? (
         <OldPatient onSend={(input, key) => register(input, "old", key)} />
       ) : (
         <PatientIntakeForm
           key={type}
-          submitLabel={type === "emergency" ? "Send as emergency" : "Send to doctor"}
+          submitLabel={
+            type === "emergency" ? "Send as emergency" : "Send to doctor"
+          }
           onSave={(input) => register(input, type)}
         />
       )}
@@ -122,12 +143,17 @@ export default function RegisterVisit({ uid, onClose }: { uid: string; onClose?:
   );
 }
 
-function OldPatient({ onSend }: { onSend: (input: IntakeInput, patientKey: string) => Promise<void> }) {
+function OldPatient({
+  onSend,
+}: {
+  onSend: (input: IntakeInput, patientKey: string) => Promise<void>;
+}) {
   const [rows, setRows] = useState<PatientRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [term, setTerm] = useState("");
   const [searching, setSearching] = useState(false);
   const [picked, setPicked] = useState<PatientRow | null>(null);
+  useBackStep(picked !== null, () => setPicked(null));
 
   // Searches once typing pauses, and only the matching patients are downloaded.
   useEffect(() => {
@@ -144,7 +170,11 @@ function OldPatient({ onSend }: { onSend: (input: IntakeInput, patientKey: strin
           setRows(found);
           setError(null);
         })
-        .catch((err) => current && setError(friendlyError(err, "Could not search old patients.")))
+        .catch(
+          (err) =>
+            current &&
+            setError(friendlyError(err, "Could not search old patients.")),
+        )
         .finally(() => current && setSearching(false));
     }, 400);
     return () => {
@@ -167,17 +197,16 @@ function OldPatient({ onSend }: { onSend: (input: IntakeInput, patientKey: strin
   if (picked) {
     return (
       <div className="flex flex-col gap-3">
+        <BackButton onClick={() => setPicked(null)} label="Back to search" />
         <p className="text-sm text-muted-foreground">
-          Last visit {picked.visitAt.replace("T", " ")}. Age is updated to today; check it and enter today's weight.
+          Last visit {picked.visitAt.replace("T", " ")}. Age is updated to
+          today; check it and enter today's weight.
         </p>
         <PatientIntakeForm
           initial={fromLastVisit(picked)}
           submitLabel="Send to doctor"
           onSave={(input) => onSend(input, patientKeyOf(picked))}
         />
-        <Button variant="ghost" className="self-start" onClick={() => setPicked(null)}>
-          Search again
-        </Button>
       </div>
     );
   }
@@ -196,10 +225,17 @@ function OldPatient({ onSend }: { onSend: (input: IntakeInput, patientKey: strin
         />
       </div>
       {error && <p className="text-sm text-red-600">{error}</p>}
-      {searching && <p className="text-sm text-muted-foreground">Searching...</p>}
-      {term.trim().length >= 2 && !searching && matches.length === 0 && !error && (
-        <p className="text-sm text-muted-foreground">No old patient found. Use New OPD instead.</p>
+      {searching && (
+        <p className="text-sm text-muted-foreground">Searching...</p>
       )}
+      {term.trim().length >= 2 &&
+        !searching &&
+        matches.length === 0 &&
+        !error && (
+          <p className="text-sm text-muted-foreground">
+            No old patient found. Use New OPD instead.
+          </p>
+        )}
       {matches.length > 0 && (
         <ul className="flex flex-col divide-y rounded-md border">
           {matches.map((p) => (
@@ -210,10 +246,19 @@ function OldPatient({ onSend }: { onSend: (input: IntakeInput, patientKey: strin
                 className="flex w-full flex-col gap-0.5 p-3 text-left hover:bg-muted"
               >
                 <span className="font-medium">
-                  {p.name} <span className="font-normal text-muted-foreground">· {formatAge(p.age)}</span>
+                  {p.name}{" "}
+                  <span className="font-normal text-muted-foreground">
+                    · {formatAge(p.age)}
+                  </span>
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  {[p.parentName, p.mobile, `last visit ${p.visitAt.slice(0, 10)}`].filter(Boolean).join(" · ")}
+                  {[
+                    p.parentName,
+                    p.mobile,
+                    `last visit ${p.visitAt.slice(0, 10)}`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </span>
               </button>
             </li>

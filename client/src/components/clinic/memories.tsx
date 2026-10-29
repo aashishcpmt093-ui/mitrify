@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import MedicineRows, { withTrailingRow } from "@/components/clinic/medicine-rows";
+import { useBackStep } from "@/lib/back-step";
 import {
   deleteDrug,
   deleteTemplate,
@@ -93,6 +94,7 @@ function MedicineLibrary() {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<{ form: DrugForm; previousName?: string } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  useBackStep(editing !== null, () => setEditing(null));
   const [busy, setBusy] = useState(false);
 
   const refresh = () =>
@@ -325,6 +327,7 @@ function SavedPrescriptions() {
   const [drugs, setDrugs] = useState<RememberedDrug[]>([]);
   const [editing, setEditing] = useState<{ t: DiagnosisTemplate; previous?: string } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  useBackStep(editing !== null, () => setEditing(null));
   const [busy, setBusy] = useState(false);
 
   const refresh = () =>
