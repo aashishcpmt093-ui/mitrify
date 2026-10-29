@@ -228,9 +228,23 @@ export function subscribePatients(cb: (rows: PatientRow[]) => void, onError: (er
   );
 }
 
+export type Vitals = { temp: string; pulse: string; rr: string; spo2: string };
+
+export const EMPTY_VITALS: Vitals = { temp: "", pulse: "", rr: "", spo2: "" };
+
+// What the doctor writes on the pad.
+export type PrescriptionContent = {
+  medicines: string;
+  investigations: string;
+  vitals: Vitals;
+};
+
 export type PrescriptionRow = {
   id: string;
   medicines: string;
+  // Missing on prescriptions saved before these fields existed.
+  investigations?: string;
+  vitals?: Vitals;
   createdAt?: Timestamp | null;
 };
 
@@ -242,7 +256,7 @@ export async function listPrescriptions(patientId: string): Promise<Prescription
     .sort((a, b) => (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0));
 }
 
-export async function savePrescription(patient: PatientRow, medicines: string, doctorUid: string) {
+export async function savePrescription(patient: PatientRow, content: PrescriptionContent, doctorUid: string) {
   await addDoc(collection(db, "prescriptions"), {
     patientId: patient.id,
     patient: {
@@ -253,7 +267,14 @@ export async function savePrescription(patient: PatientRow, medicines: string, d
       weight: patient.weight,
       visitAt: patient.visitAt,
     },
-    medicines: medicines.trim(),
+    medicines: content.medicines.trim(),
+    investigations: content.investigations.trim(),
+    vitals: {
+      temp: content.vitals.temp.trim(),
+      pulse: content.vitals.pulse.trim(),
+      rr: content.vitals.rr.trim(),
+      spo2: content.vitals.spo2.trim(),
+    },
     doctorUid,
     createdAt: serverTimestamp(),
   });

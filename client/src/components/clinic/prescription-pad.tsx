@@ -1,139 +1,174 @@
+import type { CSSProperties, ReactNode } from "react";
 import { PRESCRIPTION_PAD } from "@shared/clinic";
-import { formatAge, type PatientRow } from "@/lib/clinic";
+import type { AgeParts, PatientRow, PrescriptionContent } from "@/lib/clinic";
 
-// Layout copied from the doctor's paper pad (A5). Sizes use container units (cqw), so the pad
-// scales down on a phone and prints at exactly 148mm x 210mm.
+// A5 pad (148mm x 210mm) laid out in millimetres, measured from the doctor's paper pad.
+// Two layers:
+// - "art": what is already printed on the paper pad (header, rules, labels, Rx, footer)
+// - "ink": what we fill in (patient details, vitals, medicines, investigations)
+// Printing in "overlay" mode prints only the ink, onto the real pad. "full" prints both on
+// plain paper. On screen both show, scaled with container units so it fits a phone.
+
+export type PrintMode = "overlay" | "full";
+export type PrintOffset = { x: number; y: number }; // mm; + moves right / down
+
+const PAD_W = 148;
 const NAVY = "#24318f";
 
-// "2026-10-24T11:34" -> "24/10/26", as the doctor writes it on the pad.
+// Millimetres to container width units, so 148mm = 100cqw on screen and 148mm on paper.
+const mm = (n: number) => `${(n * 100) / PAD_W}cqw`;
+
+function at(left: number, top: number, extra: CSSProperties = {}): CSSProperties {
+  return { position: "absolute", left: mm(left), top: mm(top), ...extra };
+}
+
+// The age box on the pad is small: "1Y 3M", "5D", "12Y".
+function shortAge(age: AgeParts | number): string {
+  if (typeof age === "number") return `${age}Y`;
+  const parts = [age.years ? `${age.years}Y` : "", age.months ? `${age.months}M` : "", age.days ? `${age.days}D` : ""];
+  return parts.filter(Boolean).join(" ") || "0D";
+}
+
+// "2026-10-24T11:34" -> "24/10/26", as written on the pad.
 function padDate(visitAt: string): string {
-  const [date] = visitAt.split("T");
-  const [y, m, d] = date.split("-");
+  const [y, m, d] = visitAt.split("T")[0].split("-");
   return y && m && d ? `${d}/${m}/${y.slice(2)}` : visitAt;
 }
 
-function Field({ label, value, grow = false }: { label: string; value: string; grow?: boolean }) {
+function Ink({ left, top, width, size = 3.6, children, multiline = false, height }: {
+  left: number;
+  top: number;
+  width: number;
+  size?: number;
+  children: ReactNode;
+  multiline?: boolean;
+  height?: number;
+}) {
   return (
-    <div className={`flex items-end gap-[1cqw] ${grow ? "flex-1 min-w-0" : ""}`}>
-      <span className="shrink-0" style={{ fontSize: "2.6cqw" }}>{label}</span>
-      <span
-        className="flex-1 min-w-0 truncate border-b border-black/70 px-[1cqw] leading-tight"
-        style={{ fontSize: "3cqw" }}
-      >
-        {value}
-      </span>
+    <div
+      className={multiline ? "whitespace-pre-wrap overflow-hidden" : "whitespace-nowrap overflow-hidden text-ellipsis"}
+      style={at(left, top, {
+        width: mm(width),
+        height: height === undefined ? undefined : mm(height),
+        fontSize: mm(size),
+        lineHeight: multiline ? 1.55 : 1.2,
+        color: "#111",
+      })}
+    >
+      {children}
     </div>
   );
 }
 
-function DoubleRule() {
+function Rule({ top, left, right, weight }: { top: number; left: number; right: number; weight: number }) {
+  return <div style={at(left, top, { width: mm(PAD_W - left - right), borderTop: `${mm(weight)} solid ${NAVY}` })} />;
+}
+
+function PadArt() {
+  const pad = PRESCRIPTION_PAD;
+  const label = (text: string, left: number, top: number) => (
+    <span style={at(left, top, { fontSize: mm(2.8) })}>{text}</span>
+  );
+  const line = (left: number, right: number, top: number) => (
+    <div style={at(left, top, { width: mm(right - left), borderTop: `${mm(0.25)} solid #333` })} />
+  );
+
   return (
-    <div className="flex flex-col gap-[0.5cqw]">
-      <div style={{ borderTop: `0.8cqw solid ${NAVY}` }} />
-      <div style={{ borderTop: `0.25cqw solid ${NAVY}` }} />
+    <div className="pad-art">
+      <span className="font-bold" style={at(12, 8, { fontSize: mm(7.5), color: NAVY, lineHeight: 1 })}>
+        {pad.doctorName}
+      </span>
+      <span className="font-bold" style={at(23, 18.5, { fontSize: mm(2.8), color: "#333" })}>{pad.degrees}</span>
+      <span className="font-bold" style={at(23, 22.5, { fontSize: mm(2.8), color: "#333" })}>{pad.registration}</span>
+      <div className="flex flex-col" style={at(100, 6, { fontSize: mm(3), lineHeight: 1.35 })}>
+        {pad.addressLines.map((l) => (
+          <span key={l}>{l}</span>
+        ))}
+        <span className="font-bold">{pad.mobile}</span>
+      </div>
+
+      <Rule top={27.5} left={8} right={0} weight={1.1} />
+      <Rule top={29.4} left={8} right={0} weight={0.35} />
+
+      {label("Name", 6, 33)}
+      {line(15, 74, 36.6)}
+      {label("Age", 75, 33)}
+      {line(80, 94, 36.6)}
+      {label("Weight", 95, 33)}
+      {line(103.5, 120, 36.6)}
+      {label("Date", 121, 33)}
+      {line(127, 146, 36.6)}
+
+      <div
+        className="rounded-full flex items-center justify-center text-white font-bold"
+        style={at(7, 38.5, { width: mm(7), height: mm(7), background: NAVY, fontSize: mm(3.4) })}
+      >
+        R<sub style={{ fontSize: mm(2.2) }}>x</sub>
+      </div>
+
+      <Rule top={196.5} left={8} right={0} weight={1.1} />
+      <Rule top={198.4} left={8} right={0} weight={0.35} />
+      <span
+        className="rounded-full text-white font-bold"
+        style={at(64, 195, { background: NAVY, fontSize: mm(3), padding: `${mm(0.6)} ${mm(3)}` })}
+      >
+        TIMING
+      </span>
+      <span style={at(98, 202, { fontSize: mm(2.6) })}>{pad.timings.join("   ")}</span>
     </div>
   );
 }
 
 type Props = {
   patient: PatientRow;
-  medicines: string;
-  onMedicinesChange: (value: string) => void;
+  content: PrescriptionContent;
+  mode: PrintMode;
+  offset: PrintOffset;
 };
 
-export default function PrescriptionPad({ patient, medicines, onMedicinesChange }: Props) {
-  const pad = PRESCRIPTION_PAD;
+export default function PrescriptionPad({ patient, content, mode, offset }: Props) {
+  const { vitals } = content;
+  const vitalsLine = [
+    vitals.temp && `Temp ${vitals.temp}°F`,
+    vitals.pulse && `Pulse ${vitals.pulse}/min`,
+    vitals.rr && `RR ${vitals.rr}/min`,
+    vitals.spo2 && `SpO2 ${vitals.spo2}%`,
+  ]
+    .filter(Boolean)
+    .join("    ");
+  const familyLine = [patient.parentName && `Parent: ${patient.parentName}`, patient.address].filter(Boolean).join(",  ");
 
   return (
     <>
-      {/* Print only the pad, on one A5 sheet. */}
+      {/* One A5 sheet with only the pad. In overlay mode the pre-printed artwork is hidden. */}
       <style>{`
         @media print {
           @page { size: A5 portrait; margin: 0; }
           html, body { margin: 0 !important; padding: 0 !important; background: #fff !important;
                        height: 210mm !important; overflow: hidden !important; }
-          .rx-pad { width: 148mm !important; height: 210mm !important; max-width: none !important;
-                    border: 0 !important; box-shadow: none !important; margin: 0 !important;
-                    overflow: hidden !important; break-after: avoid; page-break-after: avoid; }
+          .rx-pad { width: 148mm !important; max-width: none !important; border: 0 !important;
+                    box-shadow: none !important; margin: 0 !important; break-after: avoid; }
+          .rx-pad[data-mode="overlay"] .pad-art { visibility: hidden !important; }
         }
       `}</style>
 
       <div
-        className="rx-pad w-full max-w-[148mm] mx-auto bg-white text-black shadow-md border flex flex-col"
-        style={{ aspectRatio: "148 / 210", containerType: "inline-size", padding: "5cqw 5cqw 3cqw" }}
+        className="rx-pad relative w-full max-w-[148mm] mx-auto bg-white text-black shadow-md border overflow-hidden"
+        data-mode={mode}
+        style={{ aspectRatio: "148 / 210", containerType: "inline-size" }}
       >
-        {/* Header */}
-        <div className="flex justify-between items-start">
-          <div className="flex flex-col" style={{ color: NAVY }}>
-            <span className="font-bold leading-none" style={{ fontSize: "6.4cqw" }}>{pad.doctorName}</span>
-            <span className="font-bold text-black/80" style={{ fontSize: "2.5cqw", marginTop: "2cqw", marginLeft: "8cqw" }}>
-              {pad.degrees}
-            </span>
-            <span className="font-bold text-black/80" style={{ fontSize: "2.5cqw", marginLeft: "8cqw" }}>
-              {pad.registration}
-            </span>
-          </div>
-          <div className="flex flex-col text-left" style={{ fontSize: "2.9cqw", lineHeight: 1.35 }}>
-            {pad.addressLines.map((line) => (
-              <span key={line}>{line}</span>
-            ))}
-            <span className="font-bold">{pad.mobile}</span>
-          </div>
-        </div>
+        <PadArt />
 
-        <div style={{ marginTop: "2cqw" }}>
-          <DoubleRule />
-        </div>
-
-        {/* Patient details, filled from the patient / staff form */}
-        <div className="flex flex-col" style={{ gap: "1.6cqw", marginTop: "2.5cqw" }}>
-          <Field label="Name" value={patient.name} grow />
-          <div className="flex" style={{ gap: "2cqw" }}>
-            <Field label="Age" value={formatAge(patient.age)} grow />
-            <Field label="Weight" value={`${patient.weight} kg`} />
-            <Field label="Date" value={padDate(patient.visitAt)} />
-          </div>
-          <div className="flex" style={{ gap: "2cqw" }}>
-            <Field label="Mother/Father" value={patient.parentName} grow />
-            <Field label="Address" value={patient.address} grow />
-          </div>
-        </div>
-
-        {/* Rx mark */}
-        <div
-          className="rounded-full flex items-center justify-center text-white font-bold shrink-0"
-          style={{ background: NAVY, width: "6cqw", height: "6cqw", fontSize: "3cqw", marginTop: "1.5cqw" }}
-        >
-          R<sub style={{ fontSize: "2cqw" }}>x</sub>
-        </div>
-
-        {/* Where the doctor writes: typed on screen, printed as text */}
-        <div className="flex-1 min-h-0 flex flex-col" style={{ padding: "1cqw 4cqw 0 8cqw" }}>
-          <textarea
-            value={medicines}
-            onChange={(e) => onMedicinesChange(e.target.value)}
-            placeholder="Write medicines here"
-            aria-label="Medicines"
-            className="flex-1 w-full resize-none bg-transparent outline-none border border-dashed border-black/20 rounded print:hidden"
-            style={{ fontSize: "3.2cqw", lineHeight: 1.6, padding: "1cqw" }}
-          />
-          <div className="hidden print:block whitespace-pre-wrap" style={{ fontSize: "3.2cqw", lineHeight: 1.6 }}>
-            {medicines}
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="relative" style={{ marginTop: "2cqw" }}>
-          <DoubleRule />
-          <span
-            className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 top-1/2 rounded-full text-white font-bold"
-            style={{ background: NAVY, fontSize: "2.6cqw", padding: "0.6cqw 3cqw" }}
-          >
-            TIMING
-          </span>
-        </div>
-        <div className="flex justify-end" style={{ fontSize: "2.4cqw", marginTop: "1.5cqw" }}>
-          {pad.timings.join("   ")}
+        {/* Printer calibration moves only what we print, never the paper pad. */}
+        <div className="absolute inset-0" style={{ transform: `translate(${mm(offset.x)}, ${mm(offset.y)})` }}>
+          <Ink left={16} top={32} width={57}>{patient.name}</Ink>
+          <Ink left={80.5} top={32.4} width={14} size={3.2}>{shortAge(patient.age)}</Ink>
+          <Ink left={104} top={32.4} width={16} size={3.2}>{`${patient.weight} kg`}</Ink>
+          <Ink left={127.5} top={32.4} width={19} size={3.2}>{padDate(patient.visitAt)}</Ink>
+          {familyLine && <Ink left={16} top={38.5} width={128} size={2.8}>{familyLine}</Ink>}
+          {vitalsLine && <Ink left={16} top={43} width={128} size={3}>{vitalsLine}</Ink>}
+          <Ink left={20} top={50} width={84} height={142} multiline>{content.medicines}</Ink>
+          <Ink left={108} top={50} width={37} height={90} size={3.3} multiline>{content.investigations}</Ink>
         </div>
       </div>
     </>

@@ -4,10 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import LoginCard from "@/components/clinic/login-card";
-import PrescriptionPad from "@/components/clinic/prescription-pad";
+import PrescriptionPad, { type PrintMode, type PrintOffset } from "@/components/clinic/prescription-pad";
+import { Textarea } from "@/components/ui/textarea";
 import {
   auth,
   createStaff,
+  EMPTY_VITALS,
+  formatAge,
   friendlyError,
   listPrescriptions,
   listStaff,
@@ -16,8 +19,10 @@ import {
   subscribePatients,
   useClinicSession,
   type PatientRow,
+  type PrescriptionContent,
   type PrescriptionRow,
   type Profile,
+  type Vitals,
 } from "@/lib/clinic";
 
 type Tab = "patients" | "staff";
@@ -126,6 +131,40 @@ function PatientList({ uid }: { uid: string }) {
   );
 }
 
+// Print settings belong to this device's printer, so they are kept in this browser only.
+const PRINT_SETTINGS_KEY = "rxPrintSettings";
+type PrintSettings = { mode: PrintMode; offset: PrintOffset };
+const DEFAULT_PRINT_SETTINGS: PrintSettings = { mode: "overlay", offset: { x: 0, y: 0 } };
+
+function loadPrintSettings(): PrintSettings {
+  try {
+    const raw = localStorage.getItem(PRINT_SETTINGS_KEY);
+    if (!raw) return DEFAULT_PRINT_SETTINGS;
+    const parsed = JSON.parse(raw) as Partial<PrintSettings>;
+    return {
+      mode: parsed.mode === "full" ? "full" : "overlay",
+      offset: { x: Number(parsed.offset?.x) || 0, y: Number(parsed.offset?.y) || 0 },
+    };
+  } catch {
+    return DEFAULT_PRINT_SETTINGS;
+  }
+}
+
+function storePrintSettings(settings: PrintSettings) {
+  try {
+    localStorage.setItem(PRINT_SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // Private mode or blocked storage: settings just last for this visit.
+  }
+}
+
+const VITAL_FIELDS: { key: keyof Vitals; label: string }[] = [
+  { key: "temp", label: "Temp (°F)" },
+  { key: "pulse", label: "Pulse (/min)" },
+  { key: "rr", label: "RR (/min)" },
+  { key: "spo2", label: "SpO2 (%)" },
+];
+
 function PrescriptionEditor({
   patient,
   doctorUid,
@@ -135,7 +174,12 @@ function PrescriptionEditor({
   doctorUid: string;
   onDone: () => void;
 }) {
-  const [medicines, setMedicines] = useState("");
+  const [content, setContent] = useState<PrescriptionContent>({
+    medicines: "",
+    investigations: "",
+    vitals: EMPTY_VITALS,
+  });
+  const [print, setPrint] = useState<PrintSettings>(loadPrintSettings);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,11 +191,26 @@ function PrescriptionEditor({
       .catch(() => setHistory([]));
   }, [patient.id]);
 
+  const edit = (next: Partial<PrescriptionContent>) => {
+    setContent((prev) => ({ ...prev, ...next }));
+    setSaved(false);
+  };
+
+  const updatePrint = (next: Partial<PrintSettings>) => {
+    setPrint((prev) => {
+      const merged = { ...prev, ...next };
+      storePrintSettings(merged);
+      return merged;
+    });
+  };
+
+  const isEmpty = content.medicines.trim() === "" && content.investigations.trim() === "";
+
   const save = async () => {
     setBusy(true);
     setError(null);
     try {
-      await savePrescription(patient, medicines, doctorUid);
+      await savePrescription(patient, content, doctorUid);
       // Stay on the pad so the doctor can print right after saving.
       setSaved(true);
       listPrescriptions(patient.id).then(setHistory).catch(() => undefined);
@@ -164,28 +223,118 @@ function PrescriptionEditor({
 
   return (
     <div className="flex flex-col gap-6 print:gap-0">
-      <PrescriptionPad
-        patient={patient}
-        medicines={medicines}
-        onMedicinesChange={(value) => {
-          setMedicines(value);
-          setSaved(false);
-        }}
-      />
+      <div className="flex flex-col gap-4 print:hidden">
+        <p className="text-sm text-muted-foreground">
+          {patient.name} · {formatAge(patient.age)} · {patient.weight} kg
+        </p>
 
-      {error && <p className="text-sm text-red-600 print:hidden">{error}</p>}
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="medicines">Medicines</Label>
+          <Textarea
+            id="medicines"
+            rows={7}
+            value={content.medicines}
+            onChange={(e) => edit({ medicines: e.target.value })}
+            placeholder="One medicine per line, e.g. Syp Paracetamol 5ml TDS"
+          />
+        </div>
 
-      <div className="flex flex-wrap gap-3 print:hidden">
-        <Button onClick={save} disabled={busy || saved || medicines.trim() === ""}>
-          {busy ? "Saving..." : saved ? "Saved" : "Save prescription"}
-        </Button>
-        <Button variant="outline" onClick={() => window.print()} disabled={medicines.trim() === ""}>
-          Print
-        </Button>
-        <Button variant="ghost" onClick={onDone}>
-          Back
-        </Button>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="investigations">Investigations</Label>
+          <Textarea
+            id="investigations"
+            rows={3}
+            value={content.investigations}
+            onChange={(e) => edit({ investigations: e.target.value })}
+            placeholder="e.g. CBC, CRP"
+          />
+        </div>
+
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm font-medium mb-2">Vitals</legend>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {VITAL_FIELDS.map(({ key, label }) => (
+              <div key={key} className="flex flex-col gap-1">
+                <Label htmlFor={`vital-${key}`}>{label}</Label>
+                <Input
+                  id={`vital-${key}`}
+                  inputMode="decimal"
+                  value={content.vitals[key]}
+                  onChange={(e) => edit({ vitals: { ...content.vitals, [key]: e.target.value } })}
+                />
+              </div>
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset className="flex flex-col gap-3 rounded-md border p-4">
+          <legend className="text-sm font-medium px-1">Print settings (this device)</legend>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant={print.mode === "overlay" ? "default" : "outline"}
+              onClick={() => updatePrint({ mode: "overlay" })}
+            >
+              On my printed pad
+            </Button>
+            <Button
+              type="button"
+              variant={print.mode === "full" ? "default" : "outline"}
+              onClick={() => updatePrint({ mode: "full" })}
+            >
+              On plain paper
+            </Button>
+          </div>
+          {print.mode === "overlay" && (
+            <>
+              <p className="text-xs text-muted-foreground">
+                Put the pad in the printer, choose paper size A5 and scale "Actual size / 100%". If the text lands
+                off the lines, move it here and print again.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="offset-x">Move right (mm), minus = left</Label>
+                  <Input
+                    id="offset-x"
+                    type="number"
+                    step="0.5"
+                    value={print.offset.x}
+                    onChange={(e) => updatePrint({ offset: { ...print.offset, x: Number(e.target.value) || 0 } })}
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="offset-y">Move down (mm), minus = up</Label>
+                  <Input
+                    id="offset-y"
+                    type="number"
+                    step="0.5"
+                    value={print.offset.y}
+                    onChange={(e) => updatePrint({ offset: { ...print.offset, y: Number(e.target.value) || 0 } })}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+        </fieldset>
+
+        {error && <p className="text-sm text-red-600">{error}</p>}
+
+        <div className="flex flex-wrap gap-3">
+          <Button onClick={save} disabled={busy || saved || isEmpty}>
+            {busy ? "Saving..." : saved ? "Saved" : "Save prescription"}
+          </Button>
+          <Button variant="outline" onClick={() => window.print()} disabled={isEmpty}>
+            Print
+          </Button>
+          <Button variant="ghost" onClick={onDone}>
+            Back
+          </Button>
+        </div>
+
+        <p className="text-sm font-medium">Preview</p>
       </div>
+
+      <PrescriptionPad patient={patient} content={content} mode={print.mode} offset={print.offset} />
 
       {history.length > 0 && (
         <div className="flex flex-col gap-2 print:hidden">
@@ -197,7 +346,11 @@ function PrescriptionEditor({
                 <button
                   type="button"
                   onClick={() => {
-                    setMedicines(h.medicines);
+                    setContent({
+                      medicines: h.medicines,
+                      investigations: h.investigations ?? "",
+                      vitals: h.vitals ?? EMPTY_VITALS,
+                    });
                     setSaved(true);
                   }}
                   className="w-full p-3 text-sm text-left hover:bg-muted"
@@ -206,6 +359,7 @@ function PrescriptionEditor({
                     {h.createdAt ? h.createdAt.toDate().toLocaleString("en-IN") : "Saving..."}
                   </p>
                   <p className="whitespace-pre-wrap">{h.medicines}</p>
+                  {h.investigations && <p className="text-muted-foreground mt-1">Investigations: {h.investigations}</p>}
                 </button>
               </li>
             ))}
