@@ -7,13 +7,13 @@ import {
 } from "firebase/auth";
 
 export const firebaseConfig = {
-  apiKey: "AIzaSyAqb1v62CsRF04e67T7DtZFGssr5KT0wYA",
-  authDomain: "mitrifyindia.firebaseapp.com",
-  projectId: "mitrifyindia",
-  storageBucket: "mitrifyindia.firebasestorage.app",
-  messagingSenderId: "100179659463",
-  appId: "1:100179659463:web:254dd7853b43e3b69b0ce2",
-  measurementId: "G-J7HV79T83H",
+  apiKey: "AIzaSyDQRN5ZyvGNvz-rGHIclIz-DJBAtUaqnGI",
+  authDomain: "mitrify-asheesh.firebaseapp.com",
+  projectId: "mitrify-asheesh",
+  storageBucket: "mitrify-asheesh.firebasestorage.app",
+  messagingSenderId: "253107408502",
+  appId: "1:253107408502:web:8dbebd88f6d9b47b295957",
+  measurementId: "G-0BCNW2LHMK",
 };
 
 const app = initializeApp(firebaseConfig);
