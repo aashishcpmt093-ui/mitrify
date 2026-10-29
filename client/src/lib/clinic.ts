@@ -89,6 +89,8 @@ export type PatientRow = Omit<IntakeInput, "ageDays" | "ageMonths" | "ageYears" 
   approvedAt?: Timestamp | null;
   // Fee for this visit in rupees, saved when registered or approved. Older visits have none.
   fee?: number;
+  // false for an old patient or revisit seen without a fee; missing means paid.
+  paid?: boolean;
   createdAt?: Timestamp | null;
 };
 
@@ -246,7 +248,7 @@ export const patientKeyOf = (p: PatientRow) => p.patientKey ?? p.id;
 // fee: what this visit costs (from Edit profile), saved with it so later fee changes leave past revenue as it was.
 type IntakeBy =
   | { source: "patient" }
-  | { source: "staff"; uid: string; visitType: VisitType; patientKey?: string; fee?: number };
+  | { source: "staff"; uid: string; visitType: VisitType; patientKey?: string; fee?: number; paid?: boolean };
 
 // Queue numbers: one counter per day (counters/YYYY-MM-DD), shared by staff registrations and online
 // approvals, so an approved online patient gets the next number after the last one handed out.
@@ -268,7 +270,8 @@ export async function saveIntake(input: IntakeInput, by: IntakeBy): Promise<numb
       ? {
           visitType: by.visitType,
           ...(by.patientKey ? { patientKey: by.patientKey } : {}),
-          ...(by.fee ? { fee: by.fee } : {}),
+          // Old patients and revisits can be marked unpaid (e.g. a free follow-up): they count ₹0.
+          ...(by.paid === false ? { fee: 0, paid: false } : by.fee ? { fee: by.fee } : {}),
         }
       : {};
   const data = {
@@ -508,6 +511,11 @@ export async function updatePatientDetails(patientId: string, input: IntakeInput
   });
 }
 
+// The doctor changes an old patient's or revisit's payment, e.g. a booked revisit paid on the day.
+export async function setPaid(patientId: string, paid: boolean, fee: number): Promise<void> {
+  await updateDoc(doc(db, "patients", patientId), { paid, fee: paid ? fee : 0 });
+}
+
 export async function deletePatient(patientId: string): Promise<void> {
   await deleteDoc(doc(db, "patients", patientId));
 }
@@ -515,7 +523,13 @@ export async function deletePatient(patientId: string): Promise<void> {
 // Books a follow-up: a new visit for the same child on the chosen date and time. It appears in the
 // doctor's queue that day, with the child's earlier prescriptions in history. Age is moved on to that
 // date; weight is the last one recorded, to be updated on the day.
-export async function scheduleRevisit(patient: PatientRow, visitAt: string, uid: string, fee = 0): Promise<void> {
+export async function scheduleRevisit(
+  patient: PatientRow,
+  visitAt: string,
+  uid: string,
+  fee = 0,
+  paid = true,
+): Promise<void> {
   const age = ageNow(patient.age, patient.visitAt, new Date(visitAt));
   await saveIntake(
     {
@@ -529,7 +543,7 @@ export async function scheduleRevisit(patient: PatientRow, visitAt: string, uid:
       weight: String(patient.weight),
       visitAt,
     },
-    { source: "staff", uid, visitType: "revisit", patientKey: patientKeyOf(patient), fee },
+    { source: "staff", uid, visitType: "revisit", patientKey: patientKeyOf(patient), fee, paid },
   );
 }
 

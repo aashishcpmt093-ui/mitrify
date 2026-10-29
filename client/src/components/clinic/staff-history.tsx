@@ -109,7 +109,10 @@ export default function StaffHistory({
 
   // Revenue: each visit's saved fee; older visits without one use today's fee from Edit profile.
   // Online visits are normal OPD visits.
-  const feeOf = (p: PatientRow) => p.fee ?? feeFor(p.source === "patient" ? "new" : p.visitType, profile);
+  // Old patients and revisits marked unpaid count ₹0.
+  const feeOf = (p: PatientRow) =>
+    p.paid === false ? 0 : (p.fee ?? feeFor(p.source === "patient" ? "new" : p.visitType, profile));
+  const unpaidCount = rows.filter((p) => p.paid === false).length;
   const revenue = rows.reduce((sum, p) => sum + feeOf(p), 0);
   const emergencyRows = rows.filter((p) => p.source !== "patient" && p.visitType === "emergency");
   const emergencyRevenue = emergencyRows.reduce((sum, p) => sum + feeOf(p), 0);
@@ -137,6 +140,7 @@ export default function StaffHistory({
       Mobile: p.mobile ?? "",
       Type: typeOf(p),
       Status: statusOf(p),
+      Payment: p.paid === false ? "Unpaid" : "Paid",
       "Fee (Rs)": feeOf(p),
       ...(everyone ? { "Registered by": registeredBy(p), Diagnosis: diagnoses.get(p.id) ?? "" } : {}),
     }));
@@ -153,7 +157,7 @@ export default function StaffHistory({
       skipHeader: true,
       origin: -1,
     });
-    sheet["!cols"] = [4, 7, 11, 7, 22, 16, 11, 20, 13, 12, 10, 9, 24, 28].map((wch) => ({ wch }));
+    sheet["!cols"] = [4, 7, 11, 7, 22, 16, 11, 20, 13, 12, 10, 9, 9, 24, 28].map((wch) => ({ wch }));
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, "Registrations");
     XLSX.writeFile(book, `${fileBase}.xlsx`);
@@ -239,6 +243,12 @@ export default function StaffHistory({
                 OPD {rows.length - emergencyRows.length} · ₹{inr(revenue - emergencyRevenue)}
                 <br />
                 Emergency {emergencyRows.length} · ₹{inr(emergencyRevenue)}
+                {unpaidCount > 0 && (
+                  <>
+                    <br />
+                    Unpaid / free {unpaidCount} · ₹0
+                  </>
+                )}
               </span>
             </>
           ) : (
@@ -301,7 +311,11 @@ export default function StaffHistory({
                   {typeOf(p)}
                 </span>
                 <span className={p.status === "prescribed" ? "text-green-700" : "text-amber-700"}>{statusOf(p)}</span>
-                {feesSet && <span className="font-medium tabular-nums">₹{inr(feeOf(p))}</span>}
+                {p.paid === false ? (
+                  <span className="rounded bg-slate-200 px-1.5 font-medium text-slate-700">Unpaid</span>
+                ) : (
+                  feesSet && <span className="font-medium tabular-nums">₹{inr(feeOf(p))}</span>
+                )}
               </span>
             </li>
           ))}

@@ -377,6 +377,11 @@ function PatientList({ uid }: { uid: string }) {
                         {p.visitType === "old" ? "Old" : "Revisit"}
                       </span>
                     )}
+                    {p.paid === false && (
+                      <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-700">
+                        Unpaid
+                      </span>
+                    )}
                   </span>
                   <span className="truncate text-xs text-muted-foreground">
                     {formatAge(p.age)} · {p.weight} kg · {todayOnly && !found ? p.visitAt.slice(11, 16) : p.visitAt.replace("T", " ")}

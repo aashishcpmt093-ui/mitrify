@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { CalendarClock, MoreVertical, Pencil, SkipForward, Trash2, Undo2 } from "lucide-react";
+import { BadgeIndianRupee, CalendarClock, MoreVertical, Pencil, SkipForward, Trash2, Undo2 } from "lucide-react";
+import PaidToggle from "@/components/clinic/paid-toggle";
 import PatientIntakeForm from "@/components/patient-intake-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +24,7 @@ import {
   deletePatient,
   friendlyError,
   scheduleRevisit,
+  setPaid,
   setQueueStatus,
   updatePatientDetails,
   type IntakeInput,
@@ -72,6 +74,9 @@ export default function PatientActions({
   const [editOpen, setEditOpen] = useState(false);
   const [when, setWhen] = useState(() => inDays(7));
   const [busy, setBusy] = useState(false);
+  const [revisitPaid, setRevisitPaid] = useState(true);
+  // Only old patients and revisits can be free; their payment can also be changed later from here.
+  const canBeFree = patient.visitType === "old" || patient.visitType === "revisit";
   const [error, setError] = useState<string | null>(null);
 
   const run = async (action: () => Promise<void>, done: string) => {
@@ -92,7 +97,7 @@ export default function PatientActions({
     setBusy(true);
     setError(null);
     try {
-      await scheduleRevisit(patient, when, uid, revisitFee);
+      await scheduleRevisit(patient, when, uid, revisitFee, revisitPaid);
       setRevisitOpen(false);
       const [date, time] = when.split("T");
       onNotice(`Revisit booked for ${patient.name}: ${date.split("-").reverse().join("/")} at ${time}.`);
@@ -128,12 +133,26 @@ export default function PatientActions({
           <DropdownMenuItem
             onSelect={() => {
               setWhen(inDays(7));
+              setRevisitPaid(true);
               setError(null);
               setRevisitOpen(true);
             }}
           >
             <CalendarClock className="mr-2 h-4 w-4" /> Revisit
           </DropdownMenuItem>
+          {canBeFree && (
+            <DropdownMenuItem
+              onSelect={() => {
+                const nowPaid = patient.paid === false;
+                void run(
+                  () => setPaid(patient.id, nowPaid, revisitFee),
+                  `${patient.name} marked ${nowPaid ? "paid" : "unpaid"}.`,
+                );
+              }}
+            >
+              <BadgeIndianRupee className="mr-2 h-4 w-4" /> {patient.paid === false ? "Mark paid" : "Mark unpaid"}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={remove} className="text-red-600 focus:text-red-700">
             <Trash2 className="mr-2 h-4 w-4" /> Delete
@@ -193,6 +212,7 @@ export default function PatientActions({
               onChange={(e) => setWhen(e.target.value)}
             />
           </div>
+          <PaidToggle paid={revisitPaid} fee={revisitFee} onChange={setRevisitPaid} />
           {error && <p className="text-sm text-red-600">{error}</p>}
           <DialogFooter className="gap-2">
             <Button variant="ghost" onClick={() => setRevisitOpen(false)} disabled={busy}>

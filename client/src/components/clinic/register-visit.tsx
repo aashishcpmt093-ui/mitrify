@@ -3,6 +3,7 @@ import { AlertTriangle, History, Search, UserPlus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import PatientIntakeForm from "@/components/patient-intake-form";
 import BackButton from "@/components/clinic/back-button";
+import PaidToggle from "@/components/clinic/paid-toggle";
 import { useBackStep } from "@/lib/back-step";
 import { feeFor } from "@shared/clinic";
 import {
@@ -81,8 +82,9 @@ export default function RegisterVisit({
     input: IntakeInput,
     visitType: VisitType,
     patientKey?: string,
+    paid?: boolean,
   ) => {
-    const token = await saveIntake(input, { source: "staff", uid, visitType, patientKey, fee: feeFor(visitType, profile) });
+    const token = await saveIntake(input, { source: "staff", uid, visitType, patientKey, fee: feeFor(visitType, profile), paid });
     setNotice(
       `${input.name.trim()} has been sent to the doctor${visitType === "emergency" ? " as EMERGENCY" : ""}.` +
         (token ? ` Token number ${token}.` : ""),
@@ -133,7 +135,10 @@ export default function RegisterVisit({
         <choice.icon className="h-5 w-5" /> {choice.title}
       </div>
       {type === "old" ? (
-        <OldPatient onSend={(input, key) => register(input, "old", key)} />
+        <OldPatient
+          fee={profile.opdFee}
+          onSend={(input, key, paid) => register(input, "old", key, paid)}
+        />
       ) : (
         <PatientIntakeForm
           key={type}
@@ -147,16 +152,16 @@ export default function RegisterVisit({
   );
 }
 
-function OldPatient({
-  onSend,
-}: {
-  onSend: (input: IntakeInput, patientKey: string) => Promise<void>;
+function OldPatient({ onSend, fee }: {
+  onSend: (input: IntakeInput, patientKey: string, paid: boolean) => Promise<void>;
+  fee: number;
 }) {
   const [rows, setRows] = useState<PatientRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [term, setTerm] = useState("");
   const [searching, setSearching] = useState(false);
   const [picked, setPicked] = useState<PatientRow | null>(null);
+  const [paid, setPaid] = useState(true);
   useBackStep(picked !== null, () => setPicked(null));
 
   // Searches once typing pauses, and only the matching patients are downloaded.
@@ -206,10 +211,11 @@ function OldPatient({
           Last visit {picked.visitAt.replace("T", " ")}. Age is updated to
           today; check it and enter today's weight.
         </p>
+        <PaidToggle paid={paid} fee={fee} onChange={setPaid} />
         <PatientIntakeForm
           initial={fromLastVisit(picked)}
           submitLabel="Send to doctor"
-          onSave={(input) => onSend(input, patientKeyOf(picked))}
+          onSave={(input) => onSend(input, patientKeyOf(picked), paid)}
         />
       </div>
     );
@@ -246,7 +252,10 @@ function OldPatient({
             <li key={p.id}>
               <button
                 type="button"
-                onClick={() => setPicked(p)}
+                onClick={() => {
+                  setPicked(p);
+                  setPaid(true);
+                }}
                 className="flex w-full flex-col gap-0.5 p-3 text-left hover:bg-muted"
               >
                 <span className="font-medium">

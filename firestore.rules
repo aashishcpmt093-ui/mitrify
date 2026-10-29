@@ -82,11 +82,12 @@ service cloud.firestore {
           && request.resource.data.createdAt == request.time
         );
       allow read: if isStaffOrDoctor();
-      // Doctors may change the status (seen, skipped, back in queue) and correct the patient's details.
+      // Doctors may change the status (seen, skipped, back in queue), correct the patient's details and
+      // mark an old patient or revisit paid or unpaid.
       // Staff and doctors may approve or reject online registrations: status, token number, who approved and fee.
       allow update: if (isDoctor()
           && request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['status', 'name', 'age', 'address', 'parentName', 'mobile', 'weight', 'visitAt'])
+               .hasOnly(['status', 'name', 'age', 'address', 'parentName', 'mobile', 'weight', 'visitAt', 'paid', 'fee'])
           && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['age'])
                || validAge(request.resource.data.age))
           && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['weight'])
