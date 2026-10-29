@@ -384,6 +384,11 @@ export async function savePrescription(patient: PatientRow, content: Prescriptio
   await updateDoc(doc(db, "patients", patient.id), { status: "prescribed" });
 }
 
+// For a patient seen without a prescription (e.g. only advice), so the queue still moves on.
+export async function markSeen(patientId: string): Promise<void> {
+  await updateDoc(doc(db, "patients", patientId), { status: "prescribed" });
+}
+
 function cleanItems(items: MedicineItem[]): MedicineItem[] {
   return items.filter(isFilled).map((item) => ({
     form: item.form.trim(),

@@ -13,7 +13,7 @@ import ClinicProfileForm from "@/components/clinic/clinic-profile";
 import RegisterVisit from "@/components/clinic/register-visit";
 import BackButton from "@/components/clinic/back-button";
 import { useBackStep } from "@/lib/back-step";
-import { CheckCircle2, ChevronDown, ClipboardList, Clock, Search, Settings, UserPlus } from "lucide-react";
+import { CheckCircle2, ChevronDown, ClipboardList, Clock, Printer, Search, Settings, UserPlus } from "lucide-react";
 import AiAssistant, { AiAssistantButton } from "@/components/clinic/ai-assistant";
 import type { AiContext, Provisional } from "@/lib/clinic-ai";
 import { emptyMedicine, isFilled, itemsFromText, medicineLine, suggestDose, type MedicineItem } from "@/lib/medicines";
@@ -30,6 +30,7 @@ import {
   listPrescriptions,
   listStaff,
   listTemplates,
+  markSeen,
   rememberComplaints,
   rememberDrugs,
   saveTemplate,
@@ -540,9 +541,29 @@ function PrescriptionEditor({
         .catch(() => undefined);
       listPrescriptions(patient).then(setHistory).catch(() => undefined);
     } catch (err) {
-      setError(friendlyError(err, "Could not save prescription."));
+      setError(friendlyError(err, "Could not save prescription. It was not marked Seen; press Save prescription to try again."));
     } finally {
       setBusy(false);
+    }
+  };
+
+  // One tap: the prescription is saved (which marks the patient Seen) and the print dialog opens.
+  // Printing starts in the same tap, because phones block a print dialog opened after waiting.
+  const printAndSave = () => {
+    if (!saved && !busy) void save();
+    window.print();
+  };
+
+  const [marking, setMarking] = useState(false);
+  const seenWithoutPrescription = async () => {
+    setMarking(true);
+    setError(null);
+    try {
+      await markSeen(patient.id);
+      onDone();
+    } catch (err) {
+      setError(friendlyError(err, "Could not mark as seen."));
+      setMarking(false);
     }
   };
 
@@ -746,8 +767,8 @@ function PrescriptionEditor({
           <Button onClick={save} disabled={busy || saved || isEmpty}>
             {busy ? "Saving..." : saved ? "Saved" : "Save prescription"}
           </Button>
-          <Button variant="outline" onClick={() => window.print()} disabled={isEmpty}>
-            Print
+          <Button variant="outline" onClick={printAndSave} disabled={isEmpty}>
+            <Printer className="mr-1.5 h-4 w-4" /> Print
           </Button>
           <Button
             variant="outline"
@@ -757,10 +778,19 @@ function PrescriptionEditor({
           >
             {templateBusy ? "Saving..." : matchedTemplate ? "Update in Memories" : "Save to Memories"}
           </Button>
+          {patient.status !== "prescribed" && !saved && (
+            <Button variant="ghost" onClick={seenWithoutPrescription} disabled={marking || busy}>
+              <CheckCircle2 className="mr-1.5 h-4 w-4 text-green-600" />
+              {marking ? "Marking..." : "Mark as seen (no prescription)"}
+            </Button>
+          )}
           <Button variant="ghost" onClick={leave}>
             Back
           </Button>
         </div>
+        <p className="text-xs text-muted-foreground">
+          Print also saves the prescription and marks the patient ✓ Seen in the queue.
+        </p>
 
         <p className="text-sm font-medium">Preview</p>
       </div>
