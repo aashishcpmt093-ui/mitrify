@@ -45,6 +45,8 @@ export type IntakeInput = {
   ageYears: string;
   address: string;
   parentName: string;
+  // Kept for the clinic's records only; never printed on the pad.
+  mobile: string;
   weight: string;
   visitAt: string;
 };
@@ -53,8 +55,10 @@ export type IntakeInput = {
 // Older entries saved a plain number of years.
 export type AgeParts = { days: number; months: number; years: number };
 
-export type PatientRow = Omit<IntakeInput, "ageDays" | "ageMonths" | "ageYears" | "weight"> & {
+export type PatientRow = Omit<IntakeInput, "ageDays" | "ageMonths" | "ageYears" | "weight" | "mobile"> & {
   id: string;
+  // Missing on patients registered before the mobile field existed.
+  mobile?: string;
   age: AgeParts | number;
   weight: number;
   source: "patient" | "staff";
@@ -213,6 +217,7 @@ export async function saveIntake(input: IntakeInput, by: { source: "patient" } |
     },
     address: input.address.trim(),
     parentName: input.parentName.trim(),
+    mobile: input.mobile.replace(/\D/g, ""),
     weight: Number(input.weight),
     visitAt: input.visitAt,
     source: by.source,
@@ -239,6 +244,8 @@ export type PrescriptionContent = {
   diagnosis: string;
   items: MedicineItem[];
   advice: string;
+  // Anything else for the pad, e.g. a referral.
+  notes: string;
   investigations: string;
   vitals: Vitals;
 };
@@ -251,6 +258,7 @@ export type PrescriptionRow = {
   diagnosis?: string;
   items?: MedicineItem[];
   advice?: string;
+  notes?: string;
   investigations?: string;
   vitals?: Vitals;
   createdAt?: Timestamp | null;
@@ -272,6 +280,7 @@ export async function savePrescription(patient: PatientRow, content: Prescriptio
       age: patient.age,
       address: patient.address,
       parentName: patient.parentName,
+      mobile: patient.mobile ?? "",
       weight: patient.weight,
       visitAt: patient.visitAt,
     },
@@ -279,6 +288,7 @@ export async function savePrescription(patient: PatientRow, content: Prescriptio
     items: cleanItems(content.items),
     medicines: content.items.filter(isFilled).map(medicineLine).join("\n"),
     advice: content.advice.trim(),
+    notes: content.notes.trim(),
     investigations: content.investigations.trim(),
     vitals: {
       temp: content.vitals.temp.trim(),
@@ -365,4 +375,15 @@ export async function rememberDrugs(items: MedicineItem[]): Promise<void> {
       ),
     ),
   );
+}
+
+// Pad settings the doctor can change, e.g. clinic timing. One document: settings/pad.
+export async function getPadTimings(): Promise<string[] | null> {
+  const snap = await getDoc(doc(db, "settings", "pad"));
+  const timings = snap.exists() ? (snap.data().timings as unknown) : null;
+  return Array.isArray(timings) ? timings.filter((t): t is string => typeof t === "string") : null;
+}
+
+export async function savePadTimings(timings: string[]): Promise<void> {
+  await setDoc(doc(db, "settings", "pad"), { timings, updatedAt: serverTimestamp() }, { merge: true });
 }

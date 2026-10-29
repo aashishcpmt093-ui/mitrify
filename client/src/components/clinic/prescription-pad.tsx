@@ -61,11 +61,12 @@ function Ink({ left, top, width, size = 3.6, children, multiline = false, height
   );
 }
 
-// Medicines in columns (drug | dose | frequency | days) under the Rx mark, advice below them.
-function MedicineBlock({ items, advice }: { items: MedicineItem[]; advice: string }) {
+// Medicines in columns (drug | dose | frequency | days) under the Rx mark; advice and notes below them.
+// Ends left of the investigations column on the right edge.
+function MedicineBlock({ items, advice, notes }: { items: MedicineItem[]; advice: string; notes: string }) {
   const size = mm(3.4);
   return (
-    <div className="flex flex-col" style={at(20, 54, { width: mm(84), height: mm(138), overflow: "hidden", color: "#111" })}>
+    <div className="flex flex-col" style={at(20, 54, { width: mm(100), height: mm(138), overflow: "hidden", color: "#111" })}>
       {items.map((item, i) => (
         <div key={i} className="grid" style={{ gridTemplateColumns: "40fr 20fr 12fr 9fr", columnGap: mm(1.5), fontSize: size, lineHeight: 1.65 }}>
           <span className="overflow-hidden text-ellipsis whitespace-nowrap">
@@ -83,6 +84,31 @@ function MedicineBlock({ items, advice }: { items: MedicineItem[]; advice: strin
           {advice.trim()}
         </div>
       )}
+      {notes.trim() && (
+        <div className="whitespace-pre-wrap" style={{ fontSize: mm(3.1), lineHeight: 1.5, marginTop: mm(2) }}>
+          <span className="font-semibold">Note: </span>
+          {notes.trim()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Investigations as a vertical list on the right edge; "CBC, CRP" or one per line both work.
+function InvestigationList({ text }: { text: string }) {
+  const items = text
+    .split(/[\n,;]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  if (!items.length) return null;
+  return (
+    <div className="flex flex-col" style={at(122, 54, { width: mm(24), height: mm(90), overflow: "hidden", color: "#111" })}>
+      {items.map((item, i) => (
+        // Hanging bullet, so a long test that wraps still reads as one item.
+        <span key={i} style={{ fontSize: mm(3), lineHeight: 1.4, paddingLeft: mm(2.4), textIndent: mm(-2.4), overflowWrap: "anywhere" }}>
+          • {item}
+        </span>
+      ))}
     </div>
   );
 }
@@ -91,7 +117,7 @@ function Rule({ top, left, right, weight }: { top: number; left: number; right: 
   return <div style={at(left, top, { width: mm(PAD_W - left - right), borderTop: `${mm(weight)} solid ${NAVY}` })} />;
 }
 
-function PadArt() {
+function PadArt({ timings }: { timings: string[] }) {
   const pad = PRESCRIPTION_PAD;
   const label = (text: string, left: number, top: number) => (
     <span style={at(left, top, { fontSize: mm(2.8) })}>{text}</span>
@@ -141,7 +167,11 @@ function PadArt() {
       >
         TIMING
       </span>
-      <span style={at(98, 202, { fontSize: mm(2.6) })}>{pad.timings.join("   ")}</span>
+      <div className="text-right" style={at(60, 201.5, { width: mm(86), fontSize: mm(2.6), lineHeight: 1.3 })}>
+        {timings.map((t) => (
+          <div key={t}>{t}</div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -151,9 +181,11 @@ type Props = {
   content: PrescriptionContent;
   mode: PrintMode;
   offset: PrintOffset;
+  // Clinic timing for the footer; the doctor can change it.
+  timings: string[];
 };
 
-export default function PrescriptionPad({ patient, content, mode, offset }: Props) {
+export default function PrescriptionPad({ patient, content, mode, offset, timings }: Props) {
   const { vitals } = content;
   const vitalsLine = [
     vitals.temp && `Temp ${vitals.temp}°F`,
@@ -163,7 +195,6 @@ export default function PrescriptionPad({ patient, content, mode, offset }: Prop
   ]
     .filter(Boolean)
     .join("    ");
-  const familyLine = [patient.parentName && `Parent: ${patient.parentName}`, patient.address].filter(Boolean).join(",  ");
 
   return (
     <>
@@ -184,7 +215,7 @@ export default function PrescriptionPad({ patient, content, mode, offset }: Prop
         data-mode={mode}
         style={{ aspectRatio: "148 / 210", containerType: "inline-size" }}
       >
-        <PadArt />
+        <PadArt timings={timings} />
 
         {/* Printer calibration moves only what we print, never the paper pad. */}
         <div className="absolute inset-0" style={{ transform: `translate(${mm(offset.x)}, ${mm(offset.y)})` }}>
@@ -192,15 +223,18 @@ export default function PrescriptionPad({ patient, content, mode, offset }: Prop
           <Ink left={80.5} top={32.4} width={14} size={3.2}>{shortAge(patient.age)}</Ink>
           <Ink left={104} top={32.4} width={16} size={3.2}>{`${patient.weight} kg`}</Ink>
           <Ink left={127.5} top={32.4} width={19} size={3.2}>{padDate(patient.visitAt)}</Ink>
-          {familyLine && <Ink left={16} top={38.5} width={128} size={2.8}>{familyLine}</Ink>}
-          {vitalsLine && <Ink left={16} top={43} width={128} size={3}>{vitalsLine}</Ink>}
+          {/* Parent's name, address and mobile stay in the records only. */}
+          {vitalsLine && <Ink left={16} top={38} width={128} size={3}>{vitalsLine}</Ink>}
           {content.diagnosis.trim() && (
-            <div className="font-bold underline" style={at(20, 47.5, { fontSize: mm(3.6), color: "#111" })}>
+            <div
+              className="font-bold underline text-center"
+              style={at(20, 43.5, { width: mm(100), fontSize: mm(4), color: "#111", overflowWrap: "anywhere" })}
+            >
               {content.diagnosis.trim()}
             </div>
           )}
-          <MedicineBlock items={content.items.filter(isFilled)} advice={content.advice} />
-          <Ink left={108} top={54} width={37} height={90} size={3.3} multiline>{content.investigations}</Ink>
+          <MedicineBlock items={content.items.filter(isFilled)} advice={content.advice} notes={content.notes} />
+          <InvestigationList text={content.investigations} />
         </div>
       </div>
     </>

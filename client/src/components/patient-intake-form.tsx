@@ -11,6 +11,12 @@ function nowForInput(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// Keeps the 10-digit number when "+91 98765 43210" or "098765..." is typed or pasted.
+function tenDigits(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
 const emptyForm = (): IntakeInput => ({
   name: "",
   ageDays: "",
@@ -18,6 +24,7 @@ const emptyForm = (): IntakeInput => ({
   ageYears: "",
   address: "",
   parentName: "",
+  mobile: "",
   weight: "",
   visitAt: nowForInput(),
 });
@@ -80,6 +87,21 @@ export default function PatientIntakeForm({ onSave }: Props) {
         <div className="flex flex-col gap-2">
           <Label htmlFor="parentName">Mother / Father name</Label>
           <Input id="parentName" value={form.parentName} onChange={update("parentName")} required />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="mobile">Mobile number</Label>
+          <Input
+            id="mobile"
+            type="tel"
+            inputMode="numeric"
+            autoComplete="tel"
+            placeholder="10 digit mobile number"
+            pattern="[0-9]{10}"
+            title="Enter a 10 digit mobile number"
+            value={form.mobile}
+            onChange={(e) => setForm((prev) => ({ ...prev, mobile: tenDigits(e.target.value) }))}
+            required
+          />
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="weight">Weight (kg)</Label>

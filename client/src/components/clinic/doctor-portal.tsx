@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import LoginCard from "@/components/clinic/login-card";
+import { PRESCRIPTION_PAD } from "@shared/clinic";
 import PrescriptionPad, { type PrintMode, type PrintOffset } from "@/components/clinic/prescription-pad";
 import { Textarea } from "@/components/ui/textarea";
 import MedicineRows, { withTrailingRow } from "@/components/clinic/medicine-rows";
@@ -17,11 +18,13 @@ import {
   formatAge,
   friendlyError,
   findTemplate,
+  getPadTimings,
   listDrugs,
   listPrescriptions,
   listStaff,
   listTemplates,
   rememberDrugs,
+  savePadTimings,
   saveTemplate,
   savePrescription,
   signIn,
@@ -189,10 +192,14 @@ function PrescriptionEditor({
     diagnosis: "",
     items: [emptyMedicine()],
     advice: "",
+    notes: "",
     investigations: "",
     vitals: EMPTY_VITALS,
   });
   const [drugs, setDrugs] = useState<RememberedDrug[]>([]);
+  const [timings, setTimings] = useState<string[]>(PRESCRIPTION_PAD.timings);
+  const [timingDraft, setTimingDraft] = useState(PRESCRIPTION_PAD.timings.join("\n"));
+  const [timingNote, setTimingNote] = useState<string | null>(null);
   const [templates, setTemplates] = useState<DiagnosisTemplate[]>([]);
   const [templateBusy, setTemplateBusy] = useState(false);
   const [templateNote, setTemplateNote] = useState<string | null>(null);
@@ -216,7 +223,29 @@ function PrescriptionEditor({
     listTemplates()
       .then(setTemplates)
       .catch(() => setTemplates([]));
+    getPadTimings()
+      .then((saved) => {
+        if (!saved?.length) return;
+        setTimings(saved);
+        setTimingDraft(saved.join("\n"));
+      })
+      .catch(() => undefined);
   }, []);
+
+  const storeTimings = async () => {
+    const lines = timingDraft
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    setTimingNote(null);
+    try {
+      await savePadTimings(lines);
+      setTimings(lines);
+      setTimingNote("Timing saved. It prints on plain paper and shows in the preview.");
+    } catch (err) {
+      setTimingNote(friendlyError(err, "Could not save the timing."));
+    }
+  };
 
   const edit = (next: Partial<PrescriptionContent>) => {
     setContent((prev) => ({ ...prev, ...next }));
@@ -328,6 +357,7 @@ function PrescriptionEditor({
       <div className="flex flex-col gap-4 print:hidden">
         <p className="text-sm text-muted-foreground">
           {patient.name} · {formatAge(patient.age)} · {patient.weight} kg
+          {patient.mobile && ` · ${patient.mobile}`}
         </p>
 
         <div className="flex flex-col gap-2">
@@ -375,6 +405,17 @@ function PrescriptionEditor({
         </div>
 
         <div className="flex flex-col gap-2">
+          <Label htmlFor="notes">Extra notes (optional)</Label>
+          <Textarea
+            id="notes"
+            rows={2}
+            value={content.notes}
+            onChange={(e) => edit({ notes: e.target.value })}
+            placeholder="e.g. Refer to district hospital paediatric ward"
+          />
+        </div>
+
+        <div className="flex flex-col gap-2">
           <Label htmlFor="investigations">Investigations</Label>
           <Textarea
             id="investigations"
@@ -399,6 +440,23 @@ function PrescriptionEditor({
                 />
               </div>
             ))}
+          </div>
+        </fieldset>
+
+        <fieldset className="flex flex-col gap-2 rounded-md border p-4">
+          <legend className="text-sm font-medium px-1">Clinic timing on the pad</legend>
+          <Textarea
+            aria-label="Clinic timing, one line each"
+            rows={2}
+            value={timingDraft}
+            onChange={(e) => setTimingDraft(e.target.value)}
+            placeholder={"Morning: 10:00 am to 1:00 pm\nEvening: 5:30 pm to 8:00 pm"}
+          />
+          <div className="flex items-center gap-3">
+            <Button type="button" variant="outline" size="sm" onClick={storeTimings}>
+              Save timing
+            </Button>
+            {timingNote && <p className="text-xs text-muted-foreground">{timingNote}</p>}
           </div>
         </fieldset>
 
@@ -477,7 +535,7 @@ function PrescriptionEditor({
         <p className="text-sm font-medium">Preview</p>
       </div>
 
-      <PrescriptionPad patient={patient} content={content} mode={print.mode} offset={print.offset} />
+      <PrescriptionPad patient={patient} content={content} mode={print.mode} offset={print.offset} timings={timings} />
 
       {history.length > 0 && (
         <div className="flex flex-col gap-2 print:hidden">
@@ -493,6 +551,7 @@ function PrescriptionEditor({
                       diagnosis: h.diagnosis ?? "",
                       items: withTrailingRow(h.items?.length ? h.items : itemsFromText(h.medicines)),
                       advice: h.advice ?? "",
+                      notes: h.notes ?? "",
                       investigations: h.investigations ?? "",
                       vitals: h.vitals ?? EMPTY_VITALS,
                     });

@@ -66,7 +66,8 @@ service cloud.firestore {
           && request.resource.data.createdBy == null
           && request.resource.data.status == 'new'
           && request.resource.data.createdAt == request.time
-          && request.resource.data.keys().hasOnly(['name','age','address','parentName','weight','visitAt','source','createdBy','status','createdAt'])
+          && request.resource.data.keys().hasOnly(['name','age','address','parentName','mobile','weight','visitAt','source','createdBy','status','createdAt'])
+          && request.resource.data.mobile is string && request.resource.data.mobile.matches('^[0-9]{10}$')
           && request.resource.data.name is string && request.resource.data.name.size() <= 120
           && request.resource.data.address is string && request.resource.data.address.size() <= 300
           && request.resource.data.parentName is string && request.resource.data.parentName.size() <= 120
@@ -94,6 +95,11 @@ service cloud.firestore {
 
     // Diagnosis templates (usual medicines for a diagnosis): doctors only.
     match /templates/{id} {
+      allow read, write: if isDoctor();
+    }
+
+    // Pad settings such as clinic timing: doctors only.
+    match /settings/{id} {
       allow read, write: if isDoctor();
     }
 
