@@ -5,7 +5,7 @@ import { AiError, describeAi, generateJson, type AiPart, type AiTurn } from "./a
 
 // AI consultation for the doctor portal. The AI takes a structured history (5-50 questions over the
 // case, never repeating one), reads investigation images, and proposes a provisional diagnosis and
-// treatment that the doctor edits. Which AI answers is set on the server (see ./ai/provider.ts).
+// treatment that the doctor edits. The AI runs through OpenRouter (see ./ai/provider.ts).
 // The browser never sends the patient's name or address.
 
 const MAX_QUESTIONS = 50;
@@ -163,7 +163,7 @@ clinicAiRouter.post("/consult", async (req, res) => {
     return;
   }
   try {
-    const turn = await generateJson(SYSTEM_PROMPT, toTurns(parsed.data), ConsultTurn, "consult_turn");
+    const turn = await generateJson(SYSTEM_PROMPT, toTurns(parsed.data), ConsultTurn);
     // Enforce the question limit even if the AI overshoots.
     const room = Math.max(0, MAX_QUESTIONS - parsed.data.caseLog.length);
     res.json({ ...turn, questions: turn.questions.slice(0, Math.min(6, room)) });
