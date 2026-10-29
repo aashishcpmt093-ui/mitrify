@@ -1,5 +1,7 @@
 import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
+import { getPortal } from "./lib/portal";
+import PortalHome from "./pages/portal-home";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -500,6 +502,7 @@ function Router() {
 }
 
 function App() {
+  const portal = getPortal();
   return (
     <QueryClientProvider client={queryClient}>
       <LanguageProvider>
@@ -507,7 +510,7 @@ function App() {
           <TooltipProvider>
             <Toaster />
             <ServerWakingBanner />
-            <Router />
+            {portal ? <PortalHome portal={portal} /> : <Router />}
             <VisitorCounter />
           </TooltipProvider>
         </ThemeProvider>
