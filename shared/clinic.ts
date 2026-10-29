@@ -14,3 +14,6 @@ export const PRESCRIPTION_PAD = {
   mobile: "Mob.: 8949199709",
   timings: ["Evening: 5:30 pm to 8:00 pm"],
 };
+
+// Firebase project the clinic portals use; the server checks doctor sign-ins against it.
+export const FIREBASE_PROJECT_ID = "mitrify-asheesh";

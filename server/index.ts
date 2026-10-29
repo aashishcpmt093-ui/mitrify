@@ -11,6 +11,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { ensureSchema } from "./ensureSchema";
+import { clinicAiRouter } from "./clinicAi";
 
 const app = express();
 const httpServer = createServer(app);
@@ -32,6 +33,9 @@ export function log(message: string, source = "express") {
 app.get("/health", (_req, res) => {
   res.status(200).json({ status: "ok" });
 });
+
+// Doctor's AI assistant. Mounted before the database-backed routes so it works without a database.
+app.use("/api/clinic-ai", clinicAiRouter);
 
 app.use((req, res, next) => {
   const start = Date.now();

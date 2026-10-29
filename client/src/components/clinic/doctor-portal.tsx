@@ -7,7 +7,9 @@ import LoginCard from "@/components/clinic/login-card";
 import PrescriptionPad, { type PrintMode, type PrintOffset } from "@/components/clinic/prescription-pad";
 import { Textarea } from "@/components/ui/textarea";
 import MedicineRows, { withTrailingRow } from "@/components/clinic/medicine-rows";
-import { emptyMedicine, isFilled, itemsFromText } from "@/lib/medicines";
+import AiAssistant from "@/components/clinic/ai-assistant";
+import type { AiContext, AiPrescription } from "@/lib/clinic-ai";
+import { emptyMedicine, isFilled, itemsFromText, medicineLine } from "@/lib/medicines";
 import {
   auth,
   createStaff,
@@ -257,6 +259,31 @@ function PrescriptionEditor({
     setTemplateNote(null);
   };
 
+  // What the AI may see: no name or address.
+  const aiContext: AiContext = {
+    age: formatAge(patient.age),
+    weightKg: patient.weight,
+    vitals: VITAL_FIELDS.filter(({ key }) => content.vitals[key].trim())
+      .map(({ key, label }) => `${label} ${content.vitals[key].trim()}`)
+      .join(", "),
+    diagnosis: content.diagnosis.trim(),
+    currentMedicines: content.items.filter(isFilled).map(medicineLine).join("\n"),
+  };
+
+  const applyAiDraft = (draft: AiPrescription) => {
+    setContent((prev) => ({
+      ...prev,
+      diagnosis: draft.diagnosis || prev.diagnosis,
+      items: withTrailingRow(draft.medicines.length ? draft.medicines : prev.items),
+      advice: draft.advice || prev.advice,
+      investigations: draft.investigations || prev.investigations,
+    }));
+    setSaved(false);
+    setTemplateNote(
+      `AI draft filled in. Check every medicine and dose before saving.${draft.warnings ? ` AI warnings: ${draft.warnings}` : ""}`,
+    );
+  };
+
   const storeTemplate = async () => {
     setTemplateBusy(true);
     setTemplateNote(null);
@@ -298,7 +325,10 @@ function PrescriptionEditor({
         </p>
 
         <div className="flex flex-col gap-2">
-          <Label htmlFor="diagnosis">Diagnosis</Label>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Label htmlFor="diagnosis">Diagnosis</Label>
+            <AiAssistant context={aiContext} onApply={applyAiDraft} />
+          </div>
           <datalist id="diagnosis-templates">
             {templates.map((t) => (
               <option key={t.diagnosis} value={t.diagnosis}>

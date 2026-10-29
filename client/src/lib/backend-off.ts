@@ -12,6 +12,8 @@ if (!BACKEND_ENABLED && typeof window !== "undefined") {
     const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     try {
       const url = new URL(raw, window.location.origin);
+      // The clinic AI route runs on the server without the database, so it is allowed through.
+      if (url.pathname.startsWith("/api/clinic-ai/")) return false;
       return url.origin === window.location.origin && (url.pathname.startsWith("/api/") || url.pathname === "/health");
     } catch {
       return false;
