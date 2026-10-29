@@ -6,7 +6,7 @@ import {
   type ConfirmationResult,
 } from "firebase/auth";
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyAqb1v62CsRF04e67T7DtZFGssr5KT0wYA",
   authDomain: "mitrifyindia.firebaseapp.com",
   projectId: "mitrifyindia",
