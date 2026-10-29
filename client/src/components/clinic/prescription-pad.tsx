@@ -66,7 +66,7 @@ function Ink({ left, top, width, size = 3.6, children, multiline = false, height
 function MedicineBlock({ items, advice, notes }: { items: MedicineItem[]; advice: string; notes: string }) {
   const size = mm(3.4);
   return (
-    <div className="flex flex-col" style={at(20, 54, { width: mm(100), height: mm(138), overflow: "hidden", color: "#111" })}>
+    <div className="flex flex-col" style={at(20, 54, { width: mm(95), height: mm(138), overflow: "hidden", color: "#111" })}>
       {items.map((item, i) => (
         <div key={i} className="grid" style={{ gridTemplateColumns: "40fr 20fr 12fr 9fr", columnGap: mm(1.5), fontSize: size, lineHeight: 1.65 }}>
           <span className="overflow-hidden text-ellipsis whitespace-nowrap">
@@ -94,7 +94,10 @@ function MedicineBlock({ items, advice, notes }: { items: MedicineItem[]; advice
   );
 }
 
-// Investigations as a vertical list on the right edge; "CBC, CRP" or one per line both work.
+// Investigations sit apart from the medicines: their own column on the right edge behind a
+// divider, with a heading, in a different typeface and colour. "CBC, CRP" or one per line both work.
+const INVESTIGATION_COLOR = "#8b1a1a";
+
 function InvestigationList({ text }: { text: string }) {
   const items = text
     .split(/[\n,;]+/)
@@ -102,10 +105,28 @@ function InvestigationList({ text }: { text: string }) {
     .filter(Boolean);
   if (!items.length) return null;
   return (
-    <div className="flex flex-col" style={at(122, 54, { width: mm(24), height: mm(90), overflow: "hidden", color: "#111" })}>
+    <div
+      className="flex flex-col"
+      style={at(119, 52, {
+        width: mm(27),
+        height: mm(100),
+        overflow: "hidden",
+        color: INVESTIGATION_COLOR,
+        borderLeft: `${mm(0.35)} solid ${INVESTIGATION_COLOR}`,
+        paddingLeft: mm(2.2),
+        fontFamily: 'Georgia, "Times New Roman", serif',
+      })}
+    >
+      <span className="font-bold uppercase" style={{ fontSize: mm(2.4), letterSpacing: mm(0.15), marginBottom: mm(1.2) }}>
+        Investigations
+      </span>
       {items.map((item, i) => (
         // Hanging bullet, so a long test that wraps still reads as one item.
-        <span key={i} style={{ fontSize: mm(3), lineHeight: 1.4, paddingLeft: mm(2.4), textIndent: mm(-2.4), overflowWrap: "anywhere" }}>
+        <span
+          key={i}
+          className="italic"
+          style={{ fontSize: mm(3.1), lineHeight: 1.45, paddingLeft: mm(2.4), textIndent: mm(-2.4), overflowWrap: "anywhere" }}
+        >
           • {item}
         </span>
       ))}
@@ -228,7 +249,7 @@ export default function PrescriptionPad({ patient, content, mode, offset, timing
           {content.diagnosis.trim() && (
             <div
               className="font-bold underline text-center"
-              style={at(20, 43.5, { width: mm(100), fontSize: mm(4), color: "#111", overflowWrap: "anywhere" })}
+              style={at(20, 43.5, { width: mm(95), fontSize: mm(4), color: "#111", overflowWrap: "anywhere" })}
             >
               {content.diagnosis.trim()}
             </div>
