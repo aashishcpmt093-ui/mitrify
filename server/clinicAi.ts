@@ -5,7 +5,7 @@ import { AiError, describeAi, generateJson, type AiPart, type AiTurn } from "./a
 
 // AI consultation for the doctor portal. The AI takes a structured history (5-50 questions over the
 // case, never repeating one), reads investigation images, and proposes a provisional diagnosis and
-// treatment that the doctor edits. The AI runs through OpenRouter (see ./ai/provider.ts).
+// treatment that the doctor edits. The AI runs through OpenRouter or Grok (see ./ai/provider.ts).
 // The browser never sends the patient's name or address.
 
 const MAX_QUESTIONS = 50;
