@@ -3,13 +3,11 @@ import { signOut } from "firebase/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import LoginCard from "@/components/clinic/login-card";
-import { CLINIC_NAME } from "@shared/clinic";
+import PrescriptionPad from "@/components/clinic/prescription-pad";
 import {
   auth,
   createStaff,
-  formatAge,
   friendlyError,
   listPrescriptions,
   listStaff,
@@ -53,7 +51,7 @@ function DoctorDashboard({ uid, name }: { uid: string; name: string }) {
   const [tab, setTab] = useState<Tab>("patients");
 
   return (
-    <div className="w-full max-w-3xl flex flex-col gap-6">
+    <div className="w-full max-w-3xl flex flex-col gap-6 print:gap-0 print:max-w-none">
       <div className="flex items-center justify-between print:hidden">
         <h1 className="text-2xl font-semibold">Dr. {name}</h1>
         <Button variant="outline" size="sm" onClick={() => signOut(auth)}>
@@ -68,12 +66,12 @@ function DoctorDashboard({ uid, name }: { uid: string; name: string }) {
           Staff
         </Button>
       </div>
-      {tab === "patients" ? <PatientList uid={uid} doctorName={name} /> : <StaffManager />}
+      {tab === "patients" ? <PatientList uid={uid} /> : <StaffManager />}
     </div>
   );
 }
 
-function PatientList({ uid, doctorName }: { uid: string; doctorName: string }) {
+function PatientList({ uid }: { uid: string }) {
   const [rows, setRows] = useState<PatientRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<PatientRow | null>(null);
@@ -95,7 +93,6 @@ function PatientList({ uid, doctorName }: { uid: string; doctorName: string }) {
       <PrescriptionEditor
         patient={selected}
         doctorUid={uid}
-        doctorName={doctorName}
         onDone={() => setSelected(null)}
       />
     );
@@ -132,15 +129,14 @@ function PatientList({ uid, doctorName }: { uid: string; doctorName: string }) {
 function PrescriptionEditor({
   patient,
   doctorUid,
-  doctorName,
   onDone,
 }: {
   patient: PatientRow;
   doctorUid: string;
-  doctorName: string;
   onDone: () => void;
 }) {
   const [medicines, setMedicines] = useState("");
+  const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<PrescriptionRow[]>([]);
@@ -156,7 +152,9 @@ function PrescriptionEditor({
     setError(null);
     try {
       await savePrescription(patient, medicines, doctorUid);
-      onDone();
+      // Stay on the pad so the doctor can print right after saving.
+      setSaved(true);
+      listPrescriptions(patient.id).then(setHistory).catch(() => undefined);
     } catch (err) {
       setError(friendlyError(err, "Could not save prescription."));
     } finally {
@@ -165,42 +163,23 @@ function PrescriptionEditor({
   };
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Printed header: only shows on paper. */}
-      <div className="hidden print:block border-b pb-3">
-        <p className="text-xl font-semibold">{CLINIC_NAME}</p>
-        <p>Dr. {doctorName}</p>
-        <p className="text-sm">Date: {new Date().toLocaleDateString("en-IN")}</p>
-      </div>
-
-      <div className="rounded-md border p-4 text-sm grid grid-cols-2 gap-2 print:border-0">
-        <p><strong>Patient:</strong> {patient.name}</p>
-        <p><strong>Age:</strong> {formatAge(patient.age)}</p>
-        <p className="col-span-2"><strong>Address:</strong> {patient.address}</p>
-        <p><strong>Mother / Father:</strong> {patient.parentName}</p>
-        <p><strong>Weight:</strong> {patient.weight} kg</p>
-        <p className="col-span-2"><strong>Date and time:</strong> {patient.visitAt.replace("T", " ")}</p>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="medicines">Prescription (medicines)</Label>
-        <Textarea
-          id="medicines"
-          rows={10}
-          value={medicines}
-          onChange={(e) => setMedicines(e.target.value)}
-          placeholder="Write medicines, dose and duration"
-          className="print:border-0"
-        />
-      </div>
+    <div className="flex flex-col gap-6 print:gap-0">
+      <PrescriptionPad
+        patient={patient}
+        medicines={medicines}
+        onMedicinesChange={(value) => {
+          setMedicines(value);
+          setSaved(false);
+        }}
+      />
 
       {error && <p className="text-sm text-red-600 print:hidden">{error}</p>}
 
-      <div className="flex gap-3 print:hidden">
-        <Button onClick={save} disabled={busy || medicines.trim() === ""}>
-          {busy ? "Saving..." : "Save prescription"}
+      <div className="flex flex-wrap gap-3 print:hidden">
+        <Button onClick={save} disabled={busy || saved || medicines.trim() === ""}>
+          {busy ? "Saving..." : saved ? "Saved" : "Save prescription"}
         </Button>
-        <Button variant="outline" onClick={() => window.print()}>
+        <Button variant="outline" onClick={() => window.print()} disabled={medicines.trim() === ""}>
           Print
         </Button>
         <Button variant="ghost" onClick={onDone}>
@@ -213,11 +192,21 @@ function PrescriptionEditor({
           <h2 className="text-lg font-medium">Earlier prescriptions</h2>
           <ul className="flex flex-col divide-y rounded-md border">
             {history.map((h) => (
-              <li key={h.id} className="p-3 text-sm">
-                <p className="text-muted-foreground mb-1">
-                  {h.createdAt ? h.createdAt.toDate().toLocaleString("en-IN") : "Saving..."}
-                </p>
-                <p className="whitespace-pre-wrap">{h.medicines}</p>
+              <li key={h.id}>
+                {/* Tap to put an earlier prescription back on the pad, e.g. to reprint it. */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMedicines(h.medicines);
+                    setSaved(true);
+                  }}
+                  className="w-full p-3 text-sm text-left hover:bg-muted"
+                >
+                  <p className="text-muted-foreground mb-1">
+                    {h.createdAt ? h.createdAt.toDate().toLocaleString("en-IN") : "Saving..."}
+                  </p>
+                  <p className="whitespace-pre-wrap">{h.medicines}</p>
+                </button>
               </li>
             ))}
           </ul>

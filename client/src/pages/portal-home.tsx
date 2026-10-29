@@ -22,7 +22,7 @@ export default function PortalHome({ portal }: { portal: PortalKey }) {
   }, [title]);
 
   return (
-    <div className="min-h-screen flex flex-col items-center gap-6 p-6 bg-background text-foreground">
+    <div className="min-h-screen flex flex-col items-center gap-6 p-6 bg-background text-foreground print:block print:p-0 print:min-h-0 print:bg-white">
       <div className="flex flex-col items-center gap-2 print:hidden">
         <ClinicLogo />
         <p className="text-lg font-semibold text-teal-700">{CLINIC_NAME}</p>
