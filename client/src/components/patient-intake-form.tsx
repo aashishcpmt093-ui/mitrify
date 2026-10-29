@@ -50,6 +50,14 @@ export default function PatientIntakeForm({
   const update = (key: keyof IntakeInput) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((prev) => ({ ...prev, [key]: e.target.value }));
 
+  // Starts a new patient on a shared phone. Asks first if something was typed, so nothing is lost by accident.
+  const hasDetails = Object.entries(form).some(([key, value]) => key !== "visitAt" && value !== "");
+  const clearForm = () => {
+    if (hasDetails && !window.confirm("Clear everything and start a new patient?")) return;
+    setForm(emptyForm());
+    setMessage(null);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -70,32 +78,32 @@ export default function PatientIntakeForm({
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
           <Label htmlFor="name">Patient name</Label>
-          <Input id="name" value={form.name} onChange={update("name")} required />
+          <Input id="name" name="childName" autoComplete="section-child name" value={form.name} onChange={update("name")} required />
         </div>
         <fieldset className="flex flex-col gap-2">
           <legend className="text-sm font-medium mb-2">Age (leave 0 where not needed)</legend>
           <div className="grid grid-cols-3 gap-3">
             <div className="flex flex-col gap-1">
               <Label htmlFor="ageDays">Days</Label>
-              <Input id="ageDays" type="number" inputMode="numeric" min="0" max="31" placeholder="0" value={form.ageDays} onChange={update("ageDays")} />
+              <Input id="ageDays" name="ageDays" autoComplete="off" type="number" inputMode="numeric" min="0" max="31" placeholder="0" value={form.ageDays} onChange={update("ageDays")} />
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor="ageMonths">Months</Label>
-              <Input id="ageMonths" type="number" inputMode="numeric" min="0" max="11" placeholder="0" value={form.ageMonths} onChange={update("ageMonths")} />
+              <Input id="ageMonths" name="ageMonths" autoComplete="off" type="number" inputMode="numeric" min="0" max="11" placeholder="0" value={form.ageMonths} onChange={update("ageMonths")} />
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor="ageYears">Years</Label>
-              <Input id="ageYears" type="number" inputMode="numeric" min="0" max="120" placeholder="0" value={form.ageYears} onChange={update("ageYears")} />
+              <Input id="ageYears" name="ageYears" autoComplete="off" type="number" inputMode="numeric" min="0" max="120" placeholder="0" value={form.ageYears} onChange={update("ageYears")} />
             </div>
           </div>
         </fieldset>
         <div className="flex flex-col gap-2">
           <Label htmlFor="address">Address</Label>
-          <Input id="address" value={form.address} onChange={update("address")} required />
+          <Input id="address" name="address" autoComplete="section-child street-address" value={form.address} onChange={update("address")} required />
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="parentName">Mother / Father name</Label>
-          <Input id="parentName" value={form.parentName} onChange={update("parentName")} required />
+          <Input id="parentName" name="parentName" autoComplete="section-parent name" value={form.parentName} onChange={update("parentName")} required />
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="mobile">Mobile number</Label>
@@ -103,7 +111,8 @@ export default function PatientIntakeForm({
             id="mobile"
             type="tel"
             inputMode="numeric"
-            autoComplete="tel"
+            name="mobile"
+            autoComplete="section-parent tel-national"
             placeholder="10 digit mobile number"
             pattern="[0-9]{10}"
             title="Enter a 10 digit mobile number"
@@ -114,15 +123,21 @@ export default function PatientIntakeForm({
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="weight">Weight (kg)</Label>
-          <Input id="weight" type="number" min="0" step="0.1" value={form.weight} onChange={update("weight")} required />
+          <Input id="weight" name="weight" type="number" min="0" step="0.1" autoComplete="off" value={form.weight} onChange={update("weight")} required />
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="visitAt">Date and time</Label>
-          <Input id="visitAt" type="datetime-local" value={form.visitAt} onChange={update("visitAt")} required />
+          <Input id="visitAt" name="visitAt" type="datetime-local" autoComplete="off" value={form.visitAt} onChange={update("visitAt")} required />
         </div>
         <Button type="submit" size="lg" disabled={busy}>
           {busy ? "Saving..." : submitLabel}
         </Button>
+        {/* Not shown when editing or redoing a visit, where the details are meant to stay. */}
+        {!initial && (
+          <Button type="button" variant="outline" size="lg" onClick={clearForm} disabled={busy || !hasDetails}>
+            Clear / new patient
+          </Button>
+        )}
       </form>
 
       {message && (
