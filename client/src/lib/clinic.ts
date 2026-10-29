@@ -100,6 +100,14 @@ export async function getProfile(uid: string): Promise<Profile | null> {
 // add it in the Firestore console. Keep in sync with OWNER_EMAILS in firestore.rules.
 const OWNER_DOCTOR_EMAILS = ["doc.asheesh@icloud.com", "doc.asheesh@gmail.com"];
 
+// Writes the owner's doctor profile when it is missing; returns null for any other account.
+async function createOwnerProfile(uid: string, email: string | null): Promise<Profile | null> {
+  if (!OWNER_DOCTOR_EMAILS.includes(email?.toLowerCase() ?? "")) return null;
+  const profile: Profile = { role: "doctor", name: "Asheesh" };
+  await setDoc(doc(db, "users", uid), { ...profile, createdAt: serverTimestamp() });
+  return profile;
+}
+
 // Signs in and makes sure the account has the role this portal needs.
 export async function signIn(email: string, password: string, expected: Role): Promise<void> {
   const cred = await signInWithEmailAndPassword(auth, email, password);
@@ -109,10 +117,8 @@ export async function signIn(email: string, password: string, expected: Role): P
   } catch {
     profile = null;
   }
-  const userEmail = cred.user.email?.toLowerCase() ?? "";
-  if (!profile && expected === "doctor" && OWNER_DOCTOR_EMAILS.includes(userEmail)) {
-    profile = { role: "doctor", name: "Asheesh" };
-    await setDoc(doc(db, "users", cred.user.uid), { ...profile, createdAt: serverTimestamp() });
+  if (!profile && expected === "doctor") {
+    profile = await createOwnerProfile(cred.user.uid, cred.user.email);
   }
   if (!profile) {
     const uid = cred.user.uid;
@@ -147,6 +153,8 @@ export function useClinicSession(expected: Role): Session {
       let profile: Profile | null = null;
       try {
         profile = await getProfile(user.uid);
+        // Covers an owner who was already signed in before the profile existed.
+        if (!profile && expected === "doctor") profile = await createOwnerProfile(user.uid, user.email);
       } catch {
         // A failed profile read must not leave the page stuck on "Loading".
         profile = null;
