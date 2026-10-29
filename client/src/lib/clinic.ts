@@ -17,6 +17,8 @@ import {
   onSnapshot,
   orderBy,
   query,
+  arrayUnion,
+  deleteDoc,
   increment,
   serverTimestamp,
   setDoc,
@@ -25,7 +27,7 @@ import {
   type Timestamp,
 } from "firebase/firestore";
 import { firebaseConfig } from "./firebase";
-import { isFilled, medicineLine, type MedicineItem } from "./medicines";
+import { isFilled, medicineLine, type DrugDosing, type MedicineItem } from "./medicines";
 
 // The default app is created in ./firebase, so getApp() returns the same project.
 const app = getApp();
@@ -250,6 +252,8 @@ export const EMPTY_VITALS: Vitals = { temp: "", pulse: "", rr: "", spo2: "" };
 
 // What the doctor writes on the pad.
 export type PrescriptionContent = {
+  // Presenting complaints, one per line.
+  complaints: string;
   diagnosis: string;
   items: MedicineItem[];
   advice: string;
@@ -264,6 +268,7 @@ export type PrescriptionRow = {
   // Printed lines, kept so older screens and history can show the prescription as text.
   medicines: string;
   // Missing on prescriptions saved before these fields existed.
+  complaints?: string;
   diagnosis?: string;
   items?: MedicineItem[];
   advice?: string;
@@ -293,6 +298,7 @@ export async function savePrescription(patient: PatientRow, content: Prescriptio
       weight: patient.weight,
       visitAt: patient.visitAt,
     },
+    complaints: content.complaints.trim(),
     diagnosis: content.diagnosis.trim(),
     items: cleanItems(content.items),
     medicines: content.items.filter(isFilled).map(medicineLine).join("\n"),
@@ -349,12 +355,31 @@ export async function saveTemplate(content: PrescriptionContent): Promise<void> 
   });
 }
 
+// Saved prescriptions edited in Memories. Renaming moves the record to its new name.
+export async function saveTemplateRecord(t: DiagnosisTemplate, previousDiagnosis?: string): Promise<void> {
+  await setDoc(doc(db, "templates", templateId(t.diagnosis)), {
+    diagnosis: t.diagnosis.trim(),
+    items: cleanItems(t.items),
+    advice: t.advice.trim(),
+    investigations: t.investigations.trim(),
+    updatedAt: serverTimestamp(),
+  });
+  if (previousDiagnosis && templateId(previousDiagnosis) !== templateId(t.diagnosis)) {
+    await deleteDoc(doc(db, "templates", templateId(previousDiagnosis)));
+  }
+}
+
+export async function deleteTemplate(diagnosis: string): Promise<void> {
+  await deleteDoc(doc(db, "templates", templateId(diagnosis)));
+}
+
 export const findTemplate = (templates: DiagnosisTemplate[], diagnosis: string) =>
   templates.find((t) => t.diagnosis.toLowerCase() === diagnosis.trim().toLowerCase());
 
 // Drug memory: every drug the doctor prescribes is remembered with how it was last given,
 // so it can be picked again with its form, dose and frequency filled in.
-export type RememberedDrug = Omit<MedicineItem, "name"> & { name: string; count: number };
+// Drugs added or edited in Memories also carry how they are dosed by weight (DrugDosing).
+export type RememberedDrug = Omit<MedicineItem, "name"> & DrugDosing & { name: string; count: number };
 
 // Firestore IDs cannot contain "/", so the lower-cased name is URL-encoded.
 const drugId = (name: string) => encodeURIComponent(name.trim().toLowerCase());
@@ -384,6 +409,49 @@ export async function rememberDrugs(items: MedicineItem[]): Promise<void> {
       ),
     ),
   );
+}
+
+// A medicine saved from Memories with its weight-based dosing. Firestore keeps no undefined, so
+// blank numbers are stored as null. Renaming moves the record to its new name.
+export async function saveLibraryDrug(drug: Omit<RememberedDrug, "count">, previousName?: string): Promise<void> {
+  const num = (n: number | null | undefined) => (typeof n === "number" && Number.isFinite(n) && n > 0 ? n : null);
+  await setDoc(
+    doc(db, "drugs", drugId(drug.name)),
+    {
+      name: drug.name.trim(),
+      form: drug.form.trim(),
+      dose: drug.dose.trim(),
+      frequency: drug.frequency.trim(),
+      days: drug.days.trim(),
+      strengthMg: num(drug.strengthMg),
+      strengthMl: num(drug.strengthMl),
+      mgPerKg: num(drug.mgPerKg),
+      maxMg: num(drug.maxMg),
+      inLibrary: true,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+  if (previousName && drugId(previousName) !== drugId(drug.name)) {
+    await deleteDoc(doc(db, "drugs", drugId(previousName)));
+  }
+}
+
+export async function deleteDrug(name: string): Promise<void> {
+  await deleteDoc(doc(db, "drugs", drugId(name)));
+}
+
+// Complaints typed before are offered again. One document: settings/memory.
+export async function getComplaintMemory(): Promise<string[]> {
+  const snap = await getDoc(doc(db, "settings", "memory"));
+  const list = snap.exists() ? (snap.data().complaints as unknown) : null;
+  return Array.isArray(list) ? list.filter((c): c is string => typeof c === "string") : [];
+}
+
+export async function rememberComplaints(complaints: string[]): Promise<void> {
+  const list = complaints.map((c) => c.trim()).filter(Boolean);
+  if (!list.length) return;
+  await setDoc(doc(db, "settings", "memory"), { complaints: arrayUnion(...list) }, { merge: true });
 }
 
 // Pad settings the doctor can change, e.g. clinic timing. One document: settings/pad.

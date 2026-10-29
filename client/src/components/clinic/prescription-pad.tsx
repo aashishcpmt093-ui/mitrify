@@ -61,12 +61,12 @@ function Ink({ left, top, width, size = 3.6, children, multiline = false, height
   );
 }
 
-// Medicines in columns (drug | dose | frequency | days) under the Rx mark; advice and notes below them.
-// Ends left of the investigations column on the right edge.
+// Medicines in columns (drug | dose | frequency | days); advice and notes below them.
+// Placed inside the body column, so it moves down when there are many complaints.
 function MedicineBlock({ items, advice, notes }: { items: MedicineItem[]; advice: string; notes: string }) {
   const size = mm(3.4);
   return (
-    <div className="flex flex-col" style={at(20, 54, { width: mm(95), height: mm(138), overflow: "hidden", color: "#111" })}>
+    <div className="flex flex-col" style={{ paddingLeft: mm(4) }}>
       {items.map((item, i) => (
         <div key={i} className="grid" style={{ gridTemplateColumns: "40fr 20fr 12fr 9fr", columnGap: mm(1.5), fontSize: size, lineHeight: 1.65 }}>
           <span className="overflow-hidden text-ellipsis whitespace-nowrap">
@@ -208,6 +208,10 @@ type Props = {
 
 export default function PrescriptionPad({ patient, content, mode, offset, timings }: Props) {
   const { vitals } = content;
+  const complaints = content.complaints
+    .split("\n")
+    .map((c) => c.trim())
+    .filter(Boolean);
   const vitalsLine = [
     vitals.temp && `Temp ${vitals.temp}°F`,
     vitals.pulse && `Pulse ${vitals.pulse}/min`,
@@ -245,16 +249,36 @@ export default function PrescriptionPad({ patient, content, mode, offset, timing
           <Ink left={104} top={32.4} width={16} size={3.2}>{`${patient.weight} kg`}</Ink>
           <Ink left={127.5} top={32.4} width={19} size={3.2}>{padDate(patient.visitAt)}</Ink>
           {/* Parent's name, address and mobile stay in the records only. */}
-          {vitalsLine && <Ink left={16} top={38} width={128} size={3}>{vitalsLine}</Ink>}
-          {content.diagnosis.trim() && (
-            <div
-              className="font-bold underline text-center"
-              style={at(20, 43.5, { width: mm(95), fontSize: mm(4), color: "#111", overflowWrap: "anywhere" })}
-            >
-              {content.diagnosis.trim()}
-            </div>
-          )}
-          <MedicineBlock items={content.items.filter(isFilled)} advice={content.advice} notes={content.notes} />
+          {/* Body column: vitals, complaints, diagnosis, medicines, advice and notes flow one under the
+              other, so more complaints simply push the rest down. Investigations stay on the right. */}
+          <div
+            className="flex flex-col"
+            style={at(16, 37.5, { width: mm(100), height: mm(156), overflow: "hidden", color: "#111" })}
+          >
+            {vitalsLine && <div style={{ fontSize: mm(3), lineHeight: 1.3 }}>{vitalsLine}</div>}
+            {complaints.length > 0 && (
+              <div style={{ marginTop: mm(1.5), paddingLeft: mm(4), fontSize: mm(3.2), lineHeight: 1.45 }}>
+                <span className="font-semibold" style={{ fontSize: mm(2.8) }}>
+                  C/O
+                </span>
+                {complaints.map((c, i) => (
+                  <div key={i} style={{ paddingLeft: mm(2.4), textIndent: mm(-2.4) }}>
+                    • {c}
+                  </div>
+                ))}
+              </div>
+            )}
+            {content.diagnosis.trim() && (
+              <div
+                className="font-bold underline text-center"
+                style={{ marginTop: mm(2.5), marginBottom: mm(3), fontSize: mm(4), overflowWrap: "anywhere" }}
+              >
+                {content.diagnosis.trim()}
+              </div>
+            )}
+            {!content.diagnosis.trim() && <div style={{ height: mm(4) }} />}
+            <MedicineBlock items={content.items.filter(isFilled)} advice={content.advice} notes={content.notes} />
+          </div>
           <InvestigationList text={content.investigations} />
         </div>
       </div>

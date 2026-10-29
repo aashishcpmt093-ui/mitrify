@@ -83,3 +83,71 @@ export function itemsFromText(text: string): MedicineItem[] {
     .filter(Boolean)
     .map((line) => ({ ...emptyMedicine(), name: line }));
 }
+
+// ---- Weight-based dosing from the doctor's medicine memory -------------------------------------
+
+// Forms dosed by volume: the dose is shown in ml. Everything else is shown in mg.
+export const LIQUID_FORMS = new Set(["Syp", "Susp", "Drop", "Gargle"]);
+
+// How the doctor gives a drug, saved in Memories. Strength is what is printed on the bottle,
+// e.g. 120 mg in 5 ml; tablets and capsules only need the mg per kg.
+export type DrugDosing = {
+  strengthMg?: number | null;
+  strengthMl?: number | null;
+  mgPerKg?: number | null; // per dose
+  maxMg?: number | null; // per dose
+};
+
+const round = (value: number, step: number) => Math.round(value / step) * step;
+const trim = (n: number) => String(Number(n.toFixed(2)));
+
+// Dose for this child's weight, or null when the memory has no mg/kg or the weight is unknown.
+export function suggestDose(
+  form: string,
+  dosing: DrugDosing,
+  weightKg: number,
+): { dose: string; explain: string } | null {
+  if (!dosing.mgPerKg || !weightKg) return null;
+  const raw = dosing.mgPerKg * weightKg;
+  const capped = dosing.maxMg ? Math.min(raw, dosing.maxMg) : raw;
+  const basis = `${trim(dosing.mgPerKg)} mg/kg × ${trim(weightKg)} kg = ${trim(raw)} mg${capped < raw ? `, capped at ${trim(capped)} mg` : ""}`;
+
+  if (LIQUID_FORMS.has(form) && dosing.strengthMg && dosing.strengthMl) {
+    const ml = capped / (dosing.strengthMg / dosing.strengthMl);
+    // Drops are measured to 0.1 ml; syrups to 0.5 ml, but never rounded down to nothing.
+    const step = form === "Drop" ? 0.1 : 0.5;
+    const shown = Math.max(step, round(ml, step));
+    return {
+      dose: `${trim(shown)} ml`,
+      explain: `${basis} → ${trim(ml)} ml of ${trim(dosing.strengthMg)} mg/${trim(dosing.strengthMl)} ml`,
+    };
+  }
+  const mg = capped >= 10 ? round(capped, 5) : round(capped, 0.5);
+  return { dose: `${trim(mg)} mg`, explain: basis };
+}
+
+// ---- Built-in suggestions so typing works from the first day ------------------------------------
+
+// Common paediatric generics in India (names only; doses always come from the doctor).
+export const COMMON_DRUGS = [
+  "Paracetamol", "Ibuprofen", "Mefenamic acid", "Amoxicillin", "Amoxicillin + Clavulanic acid", "Azithromycin",
+  "Cefixime", "Cefpodoxime", "Cefuroxime", "Cephalexin", "Cefadroxil", "Ofloxacin", "Ciprofloxacin", "Metronidazole",
+  "Nitazoxanide", "Albendazole", "Ivermectin", "Cetirizine", "Levocetirizine", "Fexofenadine", "Chlorpheniramine",
+  "Montelukast", "Montelukast + Levocetirizine", "Salbutamol", "Levosalbutamol", "Ipratropium", "Budesonide",
+  "Fluticasone", "Prednisolone", "Dexamethasone", "Ambroxol", "Dextromethorphan", "Guaifenesin", "Ondansetron",
+  "Domperidone", "ORS", "Zinc", "Racecadotril", "Lactulose", "Polyethylene glycol", "Probiotic (Saccharomyces)",
+  "Ranitidine", "Famotidine", "Omeprazole", "Pantoprazole", "Rabeprazole", "Simethicone", "Dicyclomine",
+  "Drotaverine", "Iron (Ferrous)", "Folic acid", "Vitamin D3", "Calcium", "Multivitamin", "Vitamin A", "Vitamin C",
+  "B-complex", "Saline nasal drops", "Oxymetazoline", "Xylometazoline", "Hypertonic saline 3%", "Normal saline",
+  "Mupirocin", "Fusidic acid", "Clotrimazole", "Permethrin", "Calamine", "Hydrocortisone", "Betamethasone",
+  "Ciprofloxacin eye drops", "Moxifloxacin eye drops", "Tobramycin", "Chloramphenicol", "Fluconazole", "Nystatin",
+  "Acyclovir", "Oseltamivir", "Phenobarbitone", "Levetiracetam", "Sodium valproate", "Diazepam", "Midazolam",
+];
+
+// Common presenting complaints, offered while typing in the complaints box.
+export const COMMON_COMPLAINTS = [
+  "Fever", "Cough", "Cold / running nose", "Sore throat", "Fast breathing", "Wheezing", "Vomiting", "Loose motions",
+  "Pain abdomen", "Constipation", "Not feeding well", "Poor weight gain", "Rash", "Itching", "Ear pain",
+  "Ear discharge", "Eye redness", "Headache", "Body ache", "Seizure", "Lethargy", "Excessive crying",
+  "Burning micturition", "Jaundice", "Bleeding", "Swelling", "Joint pain", "Belching / gas",
+];

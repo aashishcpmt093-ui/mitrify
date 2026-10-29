@@ -1,12 +1,23 @@
 import { X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import type { RememberedDrug } from "@/lib/clinic";
-import { FORMS, FREQUENCIES, doseSuggestions, emptyMedicine, isFilled, type MedicineItem } from "@/lib/medicines";
+import {
+  COMMON_DRUGS,
+  FORMS,
+  FREQUENCIES,
+  doseSuggestions,
+  emptyMedicine,
+  isFilled,
+  suggestDose,
+  type MedicineItem,
+} from "@/lib/medicines";
 
 type Props = {
   items: MedicineItem[];
   onChange: (items: MedicineItem[]) => void;
   drugs: RememberedDrug[];
+  // The child's weight, for doses from mg/kg saved in Memories. Omit where there is no patient.
+  weightKg?: number;
 };
 
 // There is always one empty row at the end, so the next medicine can be typed straight away.
@@ -21,25 +32,33 @@ const selectClass =
 // Mobile: form + drug on one line, dose + frequency + days below. Desktop: all on one line.
 const rowGrid = "grid grid-cols-6 md:grid-cols-[6.5rem_minmax(0,1fr)_8.5rem_6rem_4.5rem_2.25rem] gap-2 items-center";
 
-export default function MedicineRows({ items, onChange, drugs }: Props) {
+export default function MedicineRows({ items, onChange, drugs, weightKg = 0 }: Props) {
+  const findDrug = (name: string) => drugs.find((d) => d.name.toLowerCase() === name.trim().toLowerCase());
   const update = (index: number, patch: Partial<MedicineItem>) => {
     onChange(withTrailingRow(items.map((item, i) => (i === index ? { ...item, ...patch } : item))));
   };
 
-  // Picking a remembered drug fills in how it was given last time, without overwriting what is typed.
+  // Picking a remembered drug fills in how it is given, without overwriting what is typed. A drug with
+  // mg/kg in Memories gets its dose worked out from this child's weight instead of the last dose.
   const setName = (index: number, name: string) => {
-    const known = drugs.find((d) => d.name.toLowerCase() === name.trim().toLowerCase());
+    const known = findDrug(name);
     const item = items[index];
+    const form = item.form || known?.form || "";
+    const byWeight = known ? suggestDose(form, known, weightKg) : null;
     update(index, {
       name,
       ...(known && {
-        form: item.form || known.form,
-        dose: item.dose || known.dose,
+        form,
+        dose: item.dose || byWeight?.dose || known.dose,
         frequency: item.frequency || known.frequency,
         days: item.days || known.days,
       }),
     });
   };
+
+  // Built-in names fill the gaps until the doctor's own drugs are remembered.
+  const ownNames = new Set(drugs.map((d) => d.name.toLowerCase()));
+  const builtIn = COMMON_DRUGS.filter((n) => !ownNames.has(n.toLowerCase()));
 
   const remove = (index: number) => onChange(withTrailingRow(items.filter((_, i) => i !== index)));
 
@@ -48,8 +67,11 @@ export default function MedicineRows({ items, onChange, drugs }: Props) {
       <datalist id="drug-memory">
         {drugs.map((d) => (
           <option key={d.name} value={d.name}>
-            {[d.form, d.dose, d.frequency].filter(Boolean).join(" ")}
+            {[d.form, d.mgPerKg ? `${d.mgPerKg} mg/kg` : d.dose, d.frequency].filter(Boolean).join(" ")}
           </option>
+        ))}
+        {builtIn.map((n) => (
+          <option key={n} value={n} />
         ))}
       </datalist>
       <datalist id="frequency-list">
@@ -71,8 +93,11 @@ export default function MedicineRows({ items, onChange, drugs }: Props) {
 
       {items.map((item, index) => {
         const last = index === items.length - 1;
+        const known = isFilled(item) ? findDrug(item.name) : undefined;
+        const byWeight = known ? suggestDose(item.form || known.form, known, weightKg) : null;
         return (
-          <div key={index} className={`${rowGrid} border-b pb-3 md:border-0 md:pb-0`}>
+          <div key={index} className="flex flex-col gap-1 border-b pb-3 md:border-0 md:pb-0">
+          <div className={rowGrid}>
             <select
               aria-label="Form"
               className={`${selectClass} col-span-2 md:col-span-1`}
@@ -147,6 +172,19 @@ export default function MedicineRows({ items, onChange, drugs }: Props) {
             >
               <X className="h-4 w-4" />
             </button>
+          </div>
+          {byWeight && (
+            <p className="text-xs text-muted-foreground flex flex-wrap items-center gap-2">
+              <span>
+                By weight: <strong>{byWeight.dose}</strong> ({byWeight.explain})
+              </span>
+              {item.dose.trim() !== byWeight.dose && (
+                <button type="button" className="underline" onClick={() => update(index, { dose: byWeight.dose })}>
+                  Use {byWeight.dose}
+                </button>
+              )}
+            </p>
+          )}
           </div>
         );
       })}

@@ -8,9 +8,12 @@ import { PRESCRIPTION_PAD } from "@shared/clinic";
 import PrescriptionPad, { type PrintMode, type PrintOffset } from "@/components/clinic/prescription-pad";
 import { Textarea } from "@/components/ui/textarea";
 import MedicineRows, { withTrailingRow } from "@/components/clinic/medicine-rows";
+import ComplaintsInput from "@/components/clinic/complaints-input";
+import Memories from "@/components/clinic/memories";
+import { ChevronDown, ClipboardList } from "lucide-react";
 import AiAssistant, { AiAssistantButton } from "@/components/clinic/ai-assistant";
 import type { AiContext, Provisional } from "@/lib/clinic-ai";
-import { emptyMedicine, isFilled, itemsFromText, medicineLine, type MedicineItem } from "@/lib/medicines";
+import { emptyMedicine, isFilled, itemsFromText, medicineLine, suggestDose, type MedicineItem } from "@/lib/medicines";
 import {
   auth,
   createStaff,
@@ -18,11 +21,13 @@ import {
   formatAge,
   friendlyError,
   findTemplate,
+  getComplaintMemory,
   getPadTimings,
   listDrugs,
   listPrescriptions,
   listStaff,
   listTemplates,
+  rememberComplaints,
   rememberDrugs,
   savePadTimings,
   saveTemplate,
@@ -39,7 +44,7 @@ import {
   type Vitals,
 } from "@/lib/clinic";
 
-type Tab = "patients" | "staff";
+type Tab = "patients" | "memories" | "staff";
 
 export default function DoctorPortal() {
   const session = useClinicSession("doctor");
@@ -81,11 +86,16 @@ function DoctorDashboard({ uid, name }: { uid: string; name: string }) {
         <Button variant={tab === "patients" ? "default" : "outline"} onClick={() => setTab("patients")}>
           Patients
         </Button>
+        <Button variant={tab === "memories" ? "default" : "outline"} onClick={() => setTab("memories")}>
+          Memories
+        </Button>
         <Button variant={tab === "staff" ? "default" : "outline"} onClick={() => setTab("staff")}>
           Staff
         </Button>
       </div>
-      {tab === "patients" ? <PatientList uid={uid} /> : <StaffManager />}
+      {tab === "patients" && <PatientList uid={uid} />}
+      {tab === "memories" && <Memories />}
+      {tab === "staff" && <StaffManager />}
     </div>
   );
 }
@@ -189,6 +199,7 @@ function PrescriptionEditor({
   onDone: () => void;
 }) {
   const [content, setContent] = useState<PrescriptionContent>({
+    complaints: "",
     diagnosis: "",
     items: [emptyMedicine()],
     advice: "",
@@ -201,6 +212,8 @@ function PrescriptionEditor({
   const [timingDraft, setTimingDraft] = useState(PRESCRIPTION_PAD.timings.join("\n"));
   const [timingNote, setTimingNote] = useState<string | null>(null);
   const [templates, setTemplates] = useState<DiagnosisTemplate[]>([]);
+  const [complaintMemory, setComplaintMemory] = useState<string[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [templateBusy, setTemplateBusy] = useState(false);
   const [templateNote, setTemplateNote] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
@@ -223,6 +236,9 @@ function PrescriptionEditor({
     listTemplates()
       .then(setTemplates)
       .catch(() => setTemplates([]));
+    getComplaintMemory()
+      .then(setComplaintMemory)
+      .catch(() => setComplaintMemory([]));
     getPadTimings()
       .then((saved) => {
         if (!saved?.length) return;
@@ -268,12 +284,19 @@ function PrescriptionEditor({
   const drugNames = (items: MedicineItem[]) => items.filter(isFilled).map((i) => i.name.trim().toLowerCase()).join("|");
   const templateDiffers = !!matchedTemplate && drugNames(matchedTemplate.items) !== drugNames(content.items);
 
-  // Copies are made so editing this patient's doses never changes the saved template.
+  // Copies are made so editing this patient's doses never changes the saved template. Medicines with
+  // mg/kg in Memories get their dose worked out for this child's weight.
   const applyTemplate = (t: DiagnosisTemplate) => {
+    const forThisChild = t.items.map((item) => {
+      const known = drugs.find((d) => d.name.toLowerCase() === item.name.trim().toLowerCase());
+      const byWeight = known ? suggestDose(item.form || known.form, known, patient.weight) : null;
+      return { ...item, dose: byWeight?.dose ?? item.dose };
+    });
+    setPickerOpen(false);
     setContent((prev) => ({
       ...prev,
       diagnosis: t.diagnosis,
-      items: withTrailingRow(t.items.map((item) => ({ ...item }))),
+      items: withTrailingRow(forThisChild),
       advice: t.advice || prev.advice,
       investigations: t.investigations || prev.investigations,
     }));
@@ -339,7 +362,8 @@ function PrescriptionEditor({
       await savePrescription(patient, content, doctorUid);
       // Stay on the pad so the doctor can print right after saving.
       setSaved(true);
-      // Remembering drugs must never block the prescription itself.
+      // Remembering drugs and complaints must never block the prescription itself.
+      rememberComplaints(content.complaints.split("\n")).catch(() => undefined);
       rememberDrugs(content.items)
         .then(() => listDrugs().then(setDrugs))
         .catch(() => undefined);
@@ -361,6 +385,11 @@ function PrescriptionEditor({
         </p>
 
         <div className="flex flex-col gap-2">
+          <Label htmlFor="complaints">Complaints (one per line)</Label>
+          <ComplaintsInput value={content.complaints} onChange={(complaints) => edit({ complaints })} remembered={complaintMemory} />
+        </div>
+
+        <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Label htmlFor="diagnosis">Diagnosis</Label>
             <AiAssistantButton onClick={() => setAiOpen(true)} />
@@ -372,14 +401,50 @@ function PrescriptionEditor({
               </option>
             ))}
           </datalist>
-          <Input
-            id="diagnosis"
-            list="diagnosis-templates"
-            autoComplete="off"
-            placeholder="e.g. URTI, AGE, Fever"
-            value={content.diagnosis}
-            onChange={(e) => setDiagnosis(e.target.value)}
-          />
+          {/* The button inside the box opens the saved prescriptions from Memories. */}
+          <div className="relative">
+            <Input
+              id="diagnosis"
+              list="diagnosis-templates"
+              autoComplete="off"
+              placeholder="e.g. URTI, AGE, Fever"
+              className="pr-28"
+              value={content.diagnosis}
+              onChange={(e) => setDiagnosis(e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={() => setPickerOpen((v) => !v)}
+              className="absolute right-1 top-1 bottom-1 flex items-center gap-1 rounded px-2 text-xs font-medium bg-muted hover:bg-muted/70"
+              aria-expanded={pickerOpen}
+            >
+              <ClipboardList className="h-3.5 w-3.5" /> Saved
+              <ChevronDown className="h-3 w-3" />
+            </button>
+            {pickerOpen && (
+              <div className="absolute right-0 z-30 mt-1 w-72 max-h-72 overflow-y-auto rounded-md border bg-background shadow-lg">
+                {templates.length === 0 ? (
+                  <p className="p-3 text-sm text-muted-foreground">
+                    No saved prescriptions yet. Add them in Memories, or use "Save as template" below.
+                  </p>
+                ) : (
+                  templates.map((t) => (
+                    <button
+                      key={t.diagnosis}
+                      type="button"
+                      onClick={() => applyTemplate(t)}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-muted border-b last:border-0"
+                    >
+                      <span className="font-medium">{t.diagnosis}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {t.items.map((i) => i.name).join(", ")}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
           {matchedTemplate && templateDiffers && content.items.some(isFilled) && (
             <Button type="button" variant="secondary" size="sm" className="self-start" onClick={() => applyTemplate(matchedTemplate)}>
               Use saved medicines for {matchedTemplate.diagnosis} ({matchedTemplate.items.length})
@@ -390,7 +455,7 @@ function PrescriptionEditor({
 
         <div className="flex flex-col gap-2">
           <Label>Medicines</Label>
-          <MedicineRows items={content.items} onChange={(items) => edit({ items })} drugs={drugs} />
+          <MedicineRows items={content.items} onChange={(items) => edit({ items })} drugs={drugs} weightKg={patient.weight} />
         </div>
 
         <div className="flex flex-col gap-2">
@@ -548,6 +613,7 @@ function PrescriptionEditor({
                   type="button"
                   onClick={() => {
                     setContent({
+                      complaints: h.complaints ?? "",
                       diagnosis: h.diagnosis ?? "",
                       items: withTrailingRow(h.items?.length ? h.items : itemsFromText(h.medicines)),
                       advice: h.advice ?? "",
