@@ -1,7 +1,5 @@
 import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
-import { getPortal } from "./lib/portal";
-import PortalHome from "./pages/portal-home";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -502,17 +500,15 @@ function Router() {
 }
 
 function App() {
-  const portal = getPortal();
   return (
     <QueryClientProvider client={queryClient}>
       <LanguageProvider>
         <ThemeProvider>
           <TooltipProvider>
             <Toaster />
-            {/* Clinic portals carry no main-site banner or visitor counter. */}
-            {!portal && <ServerWakingBanner />}
-            {portal ? <PortalHome portal={portal} /> : <Router />}
-            {!portal && <VisitorCounter />}
+            <ServerWakingBanner />
+            <Router />
+            <VisitorCounter />
           </TooltipProvider>
         </ThemeProvider>
       </LanguageProvider>

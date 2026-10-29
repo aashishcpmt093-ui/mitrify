@@ -33,6 +33,7 @@ import {
   saveTemplate,
   savePrescription,
   signIn,
+  searchPatients,
   subscribePatients,
   useClinicSession,
   type DiagnosisTemplate,
@@ -104,10 +105,6 @@ type View = "list" | "register" | "profile";
 type StatusFilter = "all" | "queue" | "seen" | "emergency";
 type SortOrder = "queue" | "newest" | "oldest" | "name";
 
-const todayKey = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
 const isEmergency = (p: PatientRow) => p.visitType === "emergency";
 const isSeen = (p: PatientRow) => p.status === "prescribed";
 
@@ -139,27 +136,40 @@ function PatientList({ uid }: { uid: string }) {
   useEffect(
     () =>
       subscribePatients(
+        todayOnly ? "today" : "recent",
         (next) => {
           setRows(next);
           setError(null);
         },
         (err) => setError(friendlyError(err, "Could not load patients.")),
       ),
-    [],
+    [todayOnly],
   );
 
-  const today = todayKey();
-  const inRange = rows.filter((p) => !todayOnly || p.visitAt.slice(0, 10) === today);
-  const q = term.trim().toLowerCase();
-  const digits = q.replace(/\D/g, "");
-  const searched = q
-    ? inRange.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.parentName.toLowerCase().includes(q) ||
-          (digits.length >= 3 && (p.mobile ?? "").includes(digits)),
-      )
-    : inRange;
+  // Typing searches every visit ever saved (by name or mobile), downloading only the matches.
+  const q = term.trim();
+  const [found, setFound] = useState<PatientRow[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  useEffect(() => {
+    if (q.length < 2) {
+      setFound(null);
+      return;
+    }
+    let current = true;
+    setSearching(true);
+    const timer = setTimeout(() => {
+      searchPatients(q)
+        .then((rows) => current && setFound(rows))
+        .catch((err) => current && setError(friendlyError(err, "Could not search patients.")))
+        .finally(() => current && setSearching(false));
+    }, 400);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [q]);
+
+  const searched = found ?? rows;
   const counts = {
     all: searched.length,
     queue: searched.filter((p) => !isSeen(p)).length,
@@ -208,7 +218,7 @@ function PatientList({ uid }: { uid: string }) {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             className="pl-9"
-            placeholder="Search name, parent or mobile"
+            placeholder="Search name or mobile"
             aria-label="Search patients"
             value={term}
             onChange={(e) => setTerm(e.target.value)}
@@ -266,11 +276,15 @@ function PatientList({ uid }: { uid: string }) {
         <p className="text-red-600">{error}</p>
       ) : shown.length === 0 ? (
         <p className="text-muted-foreground">
-          {rows.length === 0
-            ? "No patient entries yet."
-            : todayOnly && !q && status === "all"
-              ? "No patients today yet. Tap \"All days\" to see earlier ones."
-              : "No patient matches."}
+          {searching
+            ? "Searching..."
+            : q
+              ? "No patient matches."
+              : todayOnly && status === "all"
+                ? "No patients today yet. Tap \"All days\" to see earlier ones."
+                : rows.length === 0
+                  ? "No patient entries yet."
+                  : "No patient matches."}
         </p>
       ) : (
         <ul className="flex flex-col divide-y rounded-md border">
@@ -301,7 +315,7 @@ function PatientList({ uid }: { uid: string }) {
                     )}
                   </span>
                   <span className="truncate text-xs text-muted-foreground">
-                    {formatAge(p.age)} · {p.weight} kg · {todayOnly ? p.visitAt.slice(11, 16) : p.visitAt.replace("T", " ")}
+                    {formatAge(p.age)} · {p.weight} kg · {todayOnly && !found ? p.visitAt.slice(11, 16) : p.visitAt.replace("T", " ")}
                   </span>
                 </span>
                 <span

@@ -9,7 +9,7 @@ import {
   friendlyError,
   patientKeyOf,
   saveIntake,
-  subscribePatients,
+  searchPatients,
   type IntakeInput,
   type PatientRow,
   type VisitType,
@@ -126,41 +126,43 @@ function OldPatient({ onSend }: { onSend: (input: IntakeInput, patientKey: strin
   const [rows, setRows] = useState<PatientRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [term, setTerm] = useState("");
+  const [searching, setSearching] = useState(false);
   const [picked, setPicked] = useState<PatientRow | null>(null);
 
-  useEffect(
-    () =>
-      subscribePatients(
-        (next) => {
-          setRows(next);
+  // Searches once typing pauses, and only the matching patients are downloaded.
+  useEffect(() => {
+    if (term.trim().length < 2) {
+      setRows([]);
+      return;
+    }
+    let current = true;
+    setSearching(true);
+    const timer = setTimeout(() => {
+      searchPatients(term)
+        .then((found) => {
+          if (!current) return;
+          setRows(found);
           setError(null);
-        },
-        (err) => setError(friendlyError(err, "Could not load old patients.")),
-      ),
-    [],
-  );
+        })
+        .catch((err) => current && setError(friendlyError(err, "Could not search old patients.")))
+        .finally(() => current && setSearching(false));
+    }, 400);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [term]);
 
-  // One line per child: their latest visit (rows arrive newest first).
+  // One line per child: their latest visit (results arrive newest first).
   const matches = useMemo(() => {
-    const q = term.trim().toLowerCase();
-    const digits = q.replace(/\D/g, "");
-    if (q.length < 2) return [];
     const seen = new Set<string>();
-    return rows
-      .filter((p) => {
-        const key = patientKeyOf(p);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.parentName.toLowerCase().includes(q) ||
-          (digits.length >= 3 && (p.mobile ?? "").includes(digits)),
-      )
-      .slice(0, 20);
-  }, [rows, term]);
+    return rows.filter((p) => {
+      const key = patientKeyOf(p);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [rows]);
 
   if (picked) {
     return (
@@ -187,14 +189,15 @@ function OldPatient({ onSend }: { onSend: (input: IntakeInput, patientKey: strin
         <Input
           autoFocus
           className="pl-9"
-          placeholder="Type name or mobile number"
+          placeholder="Type name or mobile number (first letters)"
           aria-label="Search old patient"
           value={term}
           onChange={(e) => setTerm(e.target.value)}
         />
       </div>
       {error && <p className="text-sm text-red-600">{error}</p>}
-      {term.trim().length >= 2 && matches.length === 0 && !error && (
+      {searching && <p className="text-sm text-muted-foreground">Searching...</p>}
+      {term.trim().length >= 2 && !searching && matches.length === 0 && !error && (
         <p className="text-sm text-muted-foreground">No old patient found. Use New OPD instead.</p>
       )}
       {matches.length > 0 && (

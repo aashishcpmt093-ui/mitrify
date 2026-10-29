@@ -20,6 +20,7 @@ import {
   arrayUnion,
   deleteDoc,
   increment,
+  limit,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -254,12 +255,54 @@ export async function saveIntake(input: IntakeInput, by: IntakeBy) {
   });
 }
 
-export function subscribePatients(cb: (rows: PatientRow[]) => void, onError: (err: unknown) => void) {
-  return onSnapshot(
-    query(collection(db, "patients"), orderBy("createdAt", "desc")),
-    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PatientRow, "id">) }))),
-    onError,
-  );
+const toPatient = (d: { id: string; data: () => unknown }) => ({ id: d.id, ...(d.data() as Omit<PatientRow, "id">) });
+
+// Today's date as visits store it ("YYYY-MM-DD"), in the clinic's local time.
+export function todayKey(now = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+// Live list for the doctor. Only today's visits, or the latest ones, are downloaded, so the page stays
+// light and within the free Firestore quota however many patients build up over the years.
+export const RECENT_PATIENTS = 300;
+
+export function subscribePatients(
+  range: "today" | "recent",
+  cb: (rows: PatientRow[]) => void,
+  onError: (err: unknown) => void,
+) {
+  const patients = collection(db, "patients");
+  const q =
+    range === "today"
+      ? query(patients, where("visitAt", ">=", todayKey()))
+      : query(patients, orderBy("createdAt", "desc"), limit(RECENT_PATIENTS));
+  return onSnapshot(q, (snap) => cb(snap.docs.map(toPatient)), onError);
+}
+
+// Finds patients across all visits by the start of their name or mobile number, downloading only the
+// matches. Names are stored as typed, so the common ways of capitalising them are each tried.
+export async function searchPatients(term: string): Promise<PatientRow[]> {
+  const text = term.trim().replace(/\s+/g, " ");
+  const digits = text.replace(/\D/g, "");
+  const patients = collection(db, "patients");
+  const prefix = (field: string, value: string, max: number) =>
+    query(patients, where(field, ">=", value), where(field, "<=", value + "\uf8ff"), limit(max));
+
+  let queries;
+  if (digits.length >= 3 && digits.length === text.replace(/[\s+-]/g, "").length) {
+    queries = [prefix("mobile", digits.length > 10 ? digits.slice(-10) : digits, 30)];
+  } else {
+    if (text.length < 2) return [];
+    const lower = text.toLowerCase();
+    const title = lower.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+    const variants = new Set([text, lower, lower[0].toUpperCase() + lower.slice(1), title, text.toUpperCase()]);
+    queries = [...variants].map((v) => prefix("name", v, 15));
+  }
+  const snaps = await Promise.all(queries.map((q) => getDocs(q)));
+  const rows = new Map<string, PatientRow>();
+  for (const snap of snaps) for (const d of snap.docs) rows.set(d.id, toPatient(d));
+  return [...rows.values()].sort((a, b) => b.visitAt.localeCompare(a.visitAt));
 }
 
 export type Vitals = { temp: string; pulse: string; rr: string; spo2: string };

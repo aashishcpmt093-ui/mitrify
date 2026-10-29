@@ -1,10 +1,12 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import PatientIntakeForm from "@/components/patient-intake-form";
-import StaffPortal from "@/components/clinic/staff-portal";
-import DoctorPortal from "@/components/clinic/doctor-portal";
 import ClinicLogo from "@/components/clinic/clinic-logo";
 import { saveIntake, useClinicProfile } from "@/lib/clinic";
 import { PORTALS, type PortalKey } from "@/lib/portal";
+
+// The patient page stays small; staff and doctor code loads only on those pages.
+const StaffPortal = lazy(() => import("@/components/clinic/staff-portal"));
+const DoctorPortal = lazy(() => import("@/components/clinic/doctor-portal"));
 
 export default function PortalHome({ portal }: { portal: PortalKey }) {
   const { title } = PORTALS[portal];
@@ -32,8 +34,10 @@ export default function PortalHome({ portal }: { portal: PortalKey }) {
       {portal === "patients" && (
         <PatientIntakeForm onSave={(input) => saveIntake(input, { source: "patient" })} />
       )}
-      {portal === "staff" && <StaffPortal />}
-      {portal === "doctors" && <DoctorPortal />}
+      <Suspense fallback={<p className="text-muted-foreground">Loading...</p>}>
+        {portal === "staff" && <StaffPortal />}
+        {portal === "doctors" && <DoctorPortal />}
+      </Suspense>
     </div>
   );
 }
