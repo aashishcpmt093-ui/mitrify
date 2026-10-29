@@ -54,7 +54,7 @@ export default function LoginCard({ identifierLabel, identifierType, onSignIn, w
         <Label htmlFor="password">Password</Label>
         <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
       </div>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-red-600 [overflow-wrap:anywhere] select-text">{error}</p>}
       <Button type="submit" size="lg" disabled={busy}>
         {busy ? "Signing in..." : "Sign in"}
       </Button>

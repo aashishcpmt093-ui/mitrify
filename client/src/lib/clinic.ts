@@ -105,9 +105,18 @@ export async function signIn(email: string, password: string, expected: Role): P
   } catch {
     profile = null;
   }
-  if (!profile || profile.role !== expected) {
+  if (!profile) {
+    const uid = cred.user.uid;
     await signOut(auth);
-    throw new Error("This account does not have access to this portal.");
+    // The password was right but the Firestore profile is missing; say exactly what to create.
+    throw new Error(
+      `Password is correct, but this account has no profile yet. In Firestore, create collection "users", ` +
+        `document ID ${uid}, with fields role = "${expected}" and name = (the person's name).`,
+    );
+  }
+  if (profile.role !== expected) {
+    await signOut(auth);
+    throw new Error(`This account is set up as "${profile.role}", not "${expected}", so it cannot use this portal.`);
   }
 }
 
