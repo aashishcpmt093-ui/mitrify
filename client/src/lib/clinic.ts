@@ -17,6 +17,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  increment,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -24,6 +25,7 @@ import {
   type Timestamp,
 } from "firebase/firestore";
 import { firebaseConfig } from "./firebase";
+import { isFilled, medicineLine, type MedicineItem } from "./medicines";
 
 // The default app is created in ./firebase, so getApp() returns the same project.
 const app = getApp();
@@ -234,15 +236,19 @@ export const EMPTY_VITALS: Vitals = { temp: "", pulse: "", rr: "", spo2: "" };
 
 // What the doctor writes on the pad.
 export type PrescriptionContent = {
-  medicines: string;
+  items: MedicineItem[];
+  advice: string;
   investigations: string;
   vitals: Vitals;
 };
 
 export type PrescriptionRow = {
   id: string;
+  // Printed lines, kept so older screens and history can show the prescription as text.
   medicines: string;
   // Missing on prescriptions saved before these fields existed.
+  items?: MedicineItem[];
+  advice?: string;
   investigations?: string;
   vitals?: Vitals;
   createdAt?: Timestamp | null;
@@ -267,7 +273,15 @@ export async function savePrescription(patient: PatientRow, content: Prescriptio
       weight: patient.weight,
       visitAt: patient.visitAt,
     },
-    medicines: content.medicines.trim(),
+    items: content.items.filter(isFilled).map((item) => ({
+      form: item.form.trim(),
+      name: item.name.trim(),
+      dose: item.dose.trim(),
+      frequency: item.frequency.trim(),
+      days: item.days.trim(),
+    })),
+    medicines: content.items.filter(isFilled).map(medicineLine).join("\n"),
+    advice: content.advice.trim(),
     investigations: content.investigations.trim(),
     vitals: {
       temp: content.vitals.temp.trim(),
@@ -279,4 +293,38 @@ export async function savePrescription(patient: PatientRow, content: Prescriptio
     createdAt: serverTimestamp(),
   });
   await updateDoc(doc(db, "patients", patient.id), { status: "prescribed" });
+}
+
+// Drug memory: every drug the doctor prescribes is remembered with how it was last given,
+// so it can be picked again with its form, dose and frequency filled in.
+export type RememberedDrug = Omit<MedicineItem, "name"> & { name: string; count: number };
+
+// Firestore IDs cannot contain "/", so the lower-cased name is URL-encoded.
+const drugId = (name: string) => encodeURIComponent(name.trim().toLowerCase());
+
+export async function listDrugs(): Promise<RememberedDrug[]> {
+  const snap = await getDocs(collection(db, "drugs"));
+  return snap.docs
+    .map((d) => d.data() as RememberedDrug)
+    .sort((a, b) => (b.count ?? 0) - (a.count ?? 0));
+}
+
+export async function rememberDrugs(items: MedicineItem[]): Promise<void> {
+  await Promise.all(
+    items.filter(isFilled).map((item) =>
+      setDoc(
+        doc(db, "drugs", drugId(item.name)),
+        {
+          name: item.name.trim(),
+          form: item.form.trim(),
+          dose: item.dose.trim(),
+          frequency: item.frequency.trim(),
+          days: item.days.trim(),
+          count: increment(1),
+          lastUsed: serverTimestamp(),
+        },
+        { merge: true },
+      ),
+    ),
+  );
 }

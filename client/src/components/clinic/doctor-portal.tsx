@@ -6,14 +6,18 @@ import { Label } from "@/components/ui/label";
 import LoginCard from "@/components/clinic/login-card";
 import PrescriptionPad, { type PrintMode, type PrintOffset } from "@/components/clinic/prescription-pad";
 import { Textarea } from "@/components/ui/textarea";
+import MedicineRows, { withTrailingRow } from "@/components/clinic/medicine-rows";
+import { emptyMedicine, isFilled, itemsFromText } from "@/lib/medicines";
 import {
   auth,
   createStaff,
   EMPTY_VITALS,
   formatAge,
   friendlyError,
+  listDrugs,
   listPrescriptions,
   listStaff,
+  rememberDrugs,
   savePrescription,
   signIn,
   subscribePatients,
@@ -22,6 +26,7 @@ import {
   type PrescriptionContent,
   type PrescriptionRow,
   type Profile,
+  type RememberedDrug,
   type Vitals,
 } from "@/lib/clinic";
 
@@ -175,10 +180,12 @@ function PrescriptionEditor({
   onDone: () => void;
 }) {
   const [content, setContent] = useState<PrescriptionContent>({
-    medicines: "",
+    items: [emptyMedicine()],
+    advice: "",
     investigations: "",
     vitals: EMPTY_VITALS,
   });
+  const [drugs, setDrugs] = useState<RememberedDrug[]>([]);
   const [print, setPrint] = useState<PrintSettings>(loadPrintSettings);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -190,6 +197,12 @@ function PrescriptionEditor({
       .then(setHistory)
       .catch(() => setHistory([]));
   }, [patient.id]);
+
+  useEffect(() => {
+    listDrugs()
+      .then(setDrugs)
+      .catch(() => setDrugs([]));
+  }, []);
 
   const edit = (next: Partial<PrescriptionContent>) => {
     setContent((prev) => ({ ...prev, ...next }));
@@ -204,7 +217,8 @@ function PrescriptionEditor({
     });
   };
 
-  const isEmpty = content.medicines.trim() === "" && content.investigations.trim() === "";
+  const isEmpty =
+    !content.items.some(isFilled) && content.advice.trim() === "" && content.investigations.trim() === "";
 
   const save = async () => {
     setBusy(true);
@@ -213,6 +227,10 @@ function PrescriptionEditor({
       await savePrescription(patient, content, doctorUid);
       // Stay on the pad so the doctor can print right after saving.
       setSaved(true);
+      // Remembering drugs must never block the prescription itself.
+      rememberDrugs(content.items)
+        .then(() => listDrugs().then(setDrugs))
+        .catch(() => undefined);
       listPrescriptions(patient.id).then(setHistory).catch(() => undefined);
     } catch (err) {
       setError(friendlyError(err, "Could not save prescription."));
@@ -229,13 +247,18 @@ function PrescriptionEditor({
         </p>
 
         <div className="flex flex-col gap-2">
-          <Label htmlFor="medicines">Medicines</Label>
+          <Label>Medicines</Label>
+          <MedicineRows items={content.items} onChange={(items) => edit({ items })} drugs={drugs} />
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="advice">Advice</Label>
           <Textarea
-            id="medicines"
-            rows={7}
-            value={content.medicines}
-            onChange={(e) => edit({ medicines: e.target.value })}
-            placeholder="One medicine per line, e.g. Syp Paracetamol 5ml TDS"
+            id="advice"
+            rows={2}
+            value={content.advice}
+            onChange={(e) => edit({ advice: e.target.value })}
+            placeholder="e.g. Plenty of fluids. Review after 3 days."
           />
         </div>
 
@@ -347,7 +370,8 @@ function PrescriptionEditor({
                   type="button"
                   onClick={() => {
                     setContent({
-                      medicines: h.medicines,
+                      items: withTrailingRow(h.items?.length ? h.items : itemsFromText(h.medicines)),
+                      advice: h.advice ?? "",
                       investigations: h.investigations ?? "",
                       vitals: h.vitals ?? EMPTY_VITALS,
                     });

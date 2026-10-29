@@ -87,6 +87,11 @@ service cloud.firestore {
       allow delete: if isDoctor();
     }
 
+    // Drug memory (names with their last form/dose/frequency): doctors only.
+    match /drugs/{id} {
+      allow read, write: if isDoctor();
+    }
+
     // Prescriptions: doctors only.
     match /prescriptions/{id} {
       allow read, create: if isDoctor();

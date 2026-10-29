@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { PRESCRIPTION_PAD } from "@shared/clinic";
 import type { AgeParts, PatientRow, PrescriptionContent } from "@/lib/clinic";
+import { isFilled, type MedicineItem } from "@/lib/medicines";
 
 // A5 pad (148mm x 210mm) laid out in millimetres, measured from the doctor's paper pad.
 // Two layers:
@@ -56,6 +57,32 @@ function Ink({ left, top, width, size = 3.6, children, multiline = false, height
       })}
     >
       {children}
+    </div>
+  );
+}
+
+// Medicines in columns (drug | dose | frequency | days) under the Rx mark, advice below them.
+function MedicineBlock({ items, advice }: { items: MedicineItem[]; advice: string }) {
+  const size = mm(3.4);
+  return (
+    <div className="flex flex-col" style={at(20, 50, { width: mm(84), height: mm(142), overflow: "hidden", color: "#111" })}>
+      {items.map((item, i) => (
+        <div key={i} className="grid" style={{ gridTemplateColumns: "40fr 20fr 12fr 9fr", columnGap: mm(1.5), fontSize: size, lineHeight: 1.65 }}>
+          <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+            {item.form && <span>{item.form} </span>}
+            <span className="font-semibold">{item.name}</span>
+          </span>
+          <span className="whitespace-nowrap overflow-hidden">{item.dose}</span>
+          <span className="whitespace-nowrap overflow-hidden">{item.frequency}</span>
+          <span className="whitespace-nowrap overflow-hidden">{item.days ? `x ${item.days}d` : ""}</span>
+        </div>
+      ))}
+      {advice.trim() && (
+        <div className="whitespace-pre-wrap" style={{ fontSize: mm(3.1), lineHeight: 1.5, marginTop: mm(4) }}>
+          <span className="font-semibold">Advice: </span>
+          {advice.trim()}
+        </div>
+      )}
     </div>
   );
 }
@@ -167,7 +194,7 @@ export default function PrescriptionPad({ patient, content, mode, offset }: Prop
           <Ink left={127.5} top={32.4} width={19} size={3.2}>{padDate(patient.visitAt)}</Ink>
           {familyLine && <Ink left={16} top={38.5} width={128} size={2.8}>{familyLine}</Ink>}
           {vitalsLine && <Ink left={16} top={43} width={128} size={3}>{vitalsLine}</Ink>}
-          <Ink left={20} top={50} width={84} height={142} multiline>{content.medicines}</Ink>
+          <MedicineBlock items={content.items.filter(isFilled)} advice={content.advice} />
           <Ink left={108} top={50} width={37} height={90} size={3.3} multiline>{content.investigations}</Ink>
         </div>
       </div>
