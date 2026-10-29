@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { friendlyError } from "@/lib/clinic";
 
 type Props = {
   identifierLabel: string;
@@ -24,7 +25,7 @@ export default function LoginCard({ identifierLabel, identifierType, onSignIn, w
     try {
       await onSignIn(identifier, password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign in failed.");
+      setError(friendlyError(err, "Sign in failed."));
     } finally {
       setBusy(false);
     }

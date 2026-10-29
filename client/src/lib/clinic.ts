@@ -54,6 +54,27 @@ export type PatientRow = Omit<IntakeInput, "age" | "weight"> & {
   createdAt?: Timestamp | null;
 };
 
+const FRIENDLY_ERRORS: Record<string, string> = {
+  "auth/invalid-credential": "Wrong ID/email or password.",
+  "auth/wrong-password": "Wrong ID/email or password.",
+  "auth/user-not-found": "Wrong ID/email or password.",
+  "auth/invalid-email": "This ID/email is not valid.",
+  "auth/too-many-requests": "Too many attempts. Wait a few minutes and try again.",
+  "auth/network-request-failed": "No internet connection. Check the network and try again.",
+  "auth/email-already-in-use": "This staff ID already exists. Choose another ID.",
+  "auth/weak-password": "Password must be at least 6 characters.",
+  "auth/operation-not-allowed": "Email/Password sign-in is not enabled in Firebase.",
+  "permission-denied": "You do not have permission for this. Check the Firestore rules and your account role.",
+  unavailable: "Cannot reach the server. Check the network and try again.",
+};
+
+// Firebase errors carry a code like "auth/invalid-credential"; show a readable message instead.
+export function friendlyError(err: unknown, fallback = "Something went wrong. Try again."): string {
+  const code = (err as { code?: string } | null)?.code;
+  if (code && FRIENDLY_ERRORS[code]) return FRIENDLY_ERRORS[code];
+  return err instanceof Error && !code ? err.message : fallback;
+}
+
 export async function getProfile(uid: string): Promise<Profile | null> {
   const snap = await getDoc(doc(db, "users", uid));
   return snap.exists() ? (snap.data() as Profile) : null;
@@ -62,7 +83,12 @@ export async function getProfile(uid: string): Promise<Profile | null> {
 // Signs in and makes sure the account has the role this portal needs.
 export async function signIn(email: string, password: string, expected: Role): Promise<void> {
   const cred = await signInWithEmailAndPassword(auth, email, password);
-  const profile = await getProfile(cred.user.uid);
+  let profile: Profile | null = null;
+  try {
+    profile = await getProfile(cred.user.uid);
+  } catch {
+    profile = null;
+  }
   if (!profile || profile.role !== expected) {
     await signOut(auth);
     throw new Error("This account does not have access to this portal.");
@@ -84,7 +110,13 @@ export function useClinicSession(expected: Role): Session {
         setSession({ status: "signed-out" });
         return;
       }
-      const profile = await getProfile(user.uid);
+      let profile: Profile | null = null;
+      try {
+        profile = await getProfile(user.uid);
+      } catch {
+        // A failed profile read must not leave the page stuck on "Loading".
+        profile = null;
+      }
       if (!profile || profile.role !== expected) {
         setSession({ status: "wrong-role" });
         return;
@@ -98,17 +130,27 @@ export function useClinicSession(expected: Role): Session {
 
 // Doctor creates a staff login. A second Firebase app keeps the doctor signed in
 // while the staff account is being created.
+// Staff IDs become part of an email address, so keep them to safe characters.
+const STAFF_ID_PATTERN = /^[a-z0-9._-]{3,30}$/;
+
 export async function createStaff(loginId: string, password: string, name: string): Promise<void> {
+  const id = loginId.trim().toLowerCase();
+  if (!STAFF_ID_PATTERN.test(id)) {
+    throw new Error("Staff ID must be 3-30 characters: letters, numbers, dot, dash or underscore, no spaces.");
+  }
   const secondary = getApps().find((a) => a.name === "staff-admin") ?? initializeApp(firebaseConfig, "staff-admin");
   const secondaryAuth = getAuth(secondary);
-  const cred = await createUserWithEmailAndPassword(secondaryAuth, staffEmail(loginId), password);
-  await setDoc(doc(db, "users", cred.user.uid), {
-    role: "staff",
-    name: name.trim(),
-    loginId: loginId.trim().toLowerCase(),
-    createdAt: serverTimestamp(),
-  });
-  await signOut(secondaryAuth);
+  try {
+    const cred = await createUserWithEmailAndPassword(secondaryAuth, staffEmail(id), password);
+    await setDoc(doc(db, "users", cred.user.uid), {
+      role: "staff",
+      name: name.trim(),
+      loginId: id,
+      createdAt: serverTimestamp(),
+    });
+  } finally {
+    await signOut(secondaryAuth);
+  }
 }
 
 export async function listStaff(): Promise<(Profile & { id: string })[]> {
@@ -132,10 +174,26 @@ export async function saveIntake(input: IntakeInput, by: { source: "patient" } |
   });
 }
 
-export function subscribePatients(cb: (rows: PatientRow[]) => void) {
-  return onSnapshot(query(collection(db, "patients"), orderBy("createdAt", "desc")), (snap) =>
-    cb(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PatientRow, "id">) }))),
+export function subscribePatients(cb: (rows: PatientRow[]) => void, onError: (err: unknown) => void) {
+  return onSnapshot(
+    query(collection(db, "patients"), orderBy("createdAt", "desc")),
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PatientRow, "id">) }))),
+    onError,
   );
+}
+
+export type PrescriptionRow = {
+  id: string;
+  medicines: string;
+  createdAt?: Timestamp | null;
+};
+
+// Earlier prescriptions for one patient, newest first. Sorted here so no composite index is needed.
+export async function listPrescriptions(patientId: string): Promise<PrescriptionRow[]> {
+  const snap = await getDocs(query(collection(db, "prescriptions"), where("patientId", "==", patientId)));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as Omit<PrescriptionRow, "id">) }))
+    .sort((a, b) => (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0));
 }
 
 export async function savePrescription(patient: PatientRow, medicines: string, doctorUid: string) {

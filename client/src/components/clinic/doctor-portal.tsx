@@ -8,12 +8,15 @@ import LoginCard from "@/components/clinic/login-card";
 import {
   auth,
   createStaff,
+  friendlyError,
+  listPrescriptions,
   listStaff,
   savePrescription,
   signIn,
   subscribePatients,
   useClinicSession,
   type PatientRow,
+  type PrescriptionRow,
   type Profile,
 } from "@/lib/clinic";
 
@@ -63,19 +66,41 @@ function DoctorDashboard({ uid, name }: { uid: string; name: string }) {
           Staff
         </Button>
       </div>
-      {tab === "patients" ? <PatientList uid={uid} /> : <StaffManager />}
+      {tab === "patients" ? <PatientList uid={uid} doctorName={name} /> : <StaffManager />}
     </div>
   );
 }
 
-function PatientList({ uid }: { uid: string }) {
+function PatientList({ uid, doctorName }: { uid: string; doctorName: string }) {
   const [rows, setRows] = useState<PatientRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<PatientRow | null>(null);
 
-  useEffect(() => subscribePatients(setRows), []);
+  useEffect(
+    () =>
+      subscribePatients(
+        (next) => {
+          setRows(next);
+          setError(null);
+        },
+        (err) => setError(friendlyError(err, "Could not load patients.")),
+      ),
+    [],
+  );
 
   if (selected) {
-    return <PrescriptionEditor patient={selected} doctorUid={uid} onDone={() => setSelected(null)} />;
+    return (
+      <PrescriptionEditor
+        patient={selected}
+        doctorUid={uid}
+        doctorName={doctorName}
+        onDone={() => setSelected(null)}
+      />
+    );
+  }
+
+  if (error) {
+    return <p className="text-red-600">{error}</p>;
   }
 
   if (rows.length === 0) {
@@ -105,15 +130,24 @@ function PatientList({ uid }: { uid: string }) {
 function PrescriptionEditor({
   patient,
   doctorUid,
+  doctorName,
   onDone,
 }: {
   patient: PatientRow;
   doctorUid: string;
+  doctorName: string;
   onDone: () => void;
 }) {
   const [medicines, setMedicines] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<PrescriptionRow[]>([]);
+
+  useEffect(() => {
+    listPrescriptions(patient.id)
+      .then(setHistory)
+      .catch(() => setHistory([]));
+  }, [patient.id]);
 
   const save = async () => {
     setBusy(true);
@@ -122,7 +156,7 @@ function PrescriptionEditor({
       await savePrescription(patient, medicines, doctorUid);
       onDone();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save prescription.");
+      setError(friendlyError(err, "Could not save prescription."));
     } finally {
       setBusy(false);
     }
@@ -130,6 +164,13 @@ function PrescriptionEditor({
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Printed header: only shows on paper. */}
+      <div className="hidden print:block border-b pb-3">
+        <p className="text-xl font-semibold">Mitrify Clinic</p>
+        <p>Dr. {doctorName}</p>
+        <p className="text-sm">Date: {new Date().toLocaleDateString("en-IN")}</p>
+      </div>
+
       <div className="rounded-md border p-4 text-sm grid grid-cols-2 gap-2 print:border-0">
         <p><strong>Patient:</strong> {patient.name}</p>
         <p><strong>Age:</strong> {patient.age}</p>
@@ -164,6 +205,22 @@ function PrescriptionEditor({
           Back
         </Button>
       </div>
+
+      {history.length > 0 && (
+        <div className="flex flex-col gap-2 print:hidden">
+          <h2 className="text-lg font-medium">Earlier prescriptions</h2>
+          <ul className="flex flex-col divide-y rounded-md border">
+            {history.map((h) => (
+              <li key={h.id} className="p-3 text-sm">
+                <p className="text-muted-foreground mb-1">
+                  {h.createdAt ? h.createdAt.toDate().toLocaleString("en-IN") : "Saving..."}
+                </p>
+                <p className="whitespace-pre-wrap">{h.medicines}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -193,7 +250,7 @@ function StaffManager() {
       setPassword("");
       refresh();
     } catch (err) {
-      setMessage({ kind: "error", text: err instanceof Error ? err.message : "Could not create staff." });
+      setMessage({ kind: "error", text: friendlyError(err, "Could not create staff.") });
     } finally {
       setBusy(false);
     }

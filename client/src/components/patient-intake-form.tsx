@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { IntakeInput } from "@/lib/clinic";
+import { friendlyError, type IntakeInput } from "@/lib/clinic";
 
 // datetime-local wants "YYYY-MM-DDTHH:mm" in local time.
 function nowForInput(): string {
@@ -41,7 +41,7 @@ export default function PatientIntakeForm({ onSave }: Props) {
       setForm(emptyForm());
       setMessage({ kind: "ok", text: "Saved. The doctor can now see this entry." });
     } catch (err) {
-      setMessage({ kind: "error", text: err instanceof Error ? err.message : "Could not save. Try again." });
+      setMessage({ kind: "error", text: friendlyError(err, "Could not save. Try again.") });
     } finally {
       setBusy(false);
     }

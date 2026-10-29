@@ -10,8 +10,8 @@ export default function PortalHome({ portal }: { portal: PortalKey }) {
 
   return (
     <div className="min-h-screen flex flex-col items-center gap-6 p-6 bg-background text-foreground">
-      <img src="/logo.png" alt="Mitrify" className="h-16 w-auto" />
-      <h1 className="text-3xl font-semibold text-center">{title}</h1>
+      <img src="/logo.png" alt="Mitrify" className="h-16 w-auto print:hidden" />
+      <h1 className="text-3xl font-semibold text-center print:hidden">{title}</h1>
 
       {portal === "patients" && (
         <PatientIntakeForm onSave={(input) => saveIntake(input, { source: "patient" })} />
