@@ -17,6 +17,8 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
+  type Transaction,
   arrayUnion,
   deleteDoc,
   increment,
@@ -77,7 +79,14 @@ export type PatientRow = Omit<IntakeInput, "ageDays" | "ageMonths" | "ageYears" 
   // Who registered the visit (staff or doctor uid); null for the public patient page.
   createdBy?: string | null;
   // "skipped": the doctor put the patient aside (e.g. not present when called); they can go back in the queue.
-  status: "new" | "prescribed" | "skipped";
+  // "rejected": an online registration that staff or the doctor turned down.
+  status: "new" | "prescribed" | "skipped" | "rejected";
+  // The day's queue number. Staff entries get it when registered, online ones when approved.
+  // Missing on visits booked for a later day and on entries from before numbering.
+  token?: number;
+  // Online registrations wait until staff (usually after taking the fee) or the doctor approves them.
+  approvedBy?: string;
+  approvedAt?: Timestamp | null;
   createdAt?: Timestamp | null;
 };
 
@@ -234,12 +243,24 @@ export const patientKeyOf = (p: PatientRow) => p.patientKey ?? p.id;
 
 type IntakeBy = { source: "patient" } | { source: "staff"; uid: string; visitType: VisitType; patientKey?: string };
 
-export async function saveIntake(input: IntakeInput, by: IntakeBy) {
+// Queue numbers: one counter per day (counters/YYYY-MM-DD), shared by staff registrations and online
+// approvals, so an approved online patient gets the next number after the last one handed out.
+async function takeToken(tx: Transaction, day: string): Promise<number> {
+  const ref = doc(db, "counters", day);
+  const snap = await tx.get(ref);
+  const last = snap.exists() ? Number(snap.data().last) || 0 : 0;
+  tx.set(ref, { last: last + 1, updatedAt: serverTimestamp() });
+  return last + 1;
+}
+
+// Returns the queue number given, if any. Online (patient) entries get theirs when approved; visits
+// booked for a later day get none, since that day's queue has not started.
+export async function saveIntake(input: IntakeInput, by: IntakeBy): Promise<number | null> {
   const target = by.source === "patient" ? publicDb() : db;
   // The public page may only send the fields its rule lists, so visit details come from staff and doctor only.
   const visit =
     by.source === "staff" ? { visitType: by.visitType, ...(by.patientKey ? { patientKey: by.patientKey } : {}) } : {};
-  await addDoc(collection(target, "patients"), {
+  const data = {
     ...visit,
     name: input.name.trim(),
     age: {
@@ -256,7 +277,60 @@ export async function saveIntake(input: IntakeInput, by: IntakeBy) {
     createdBy: by.source === "staff" ? by.uid : null,
     status: "new",
     createdAt: serverTimestamp(),
+  };
+  const day = input.visitAt.slice(0, 10);
+  if (by.source === "patient" || day !== todayKey()) {
+    await addDoc(collection(target, "patients"), data);
+    return null;
+  }
+  try {
+    return await runTransaction(db, async (tx) => {
+      const token = await takeToken(tx, day);
+      tx.set(doc(collection(db, "patients")), { ...data, token });
+      return token;
+    });
+  } catch (err) {
+    // Before the token rules are published the counter is off-limits; the visit still goes through, unnumbered.
+    if ((err as { code?: string }).code !== "permission-denied") throw err;
+    await addDoc(collection(db, "patients"), data);
+    return null;
+  }
+}
+
+export const isPendingOnline = (p: PatientRow) => p.source === "patient" && !p.approvedAt && p.status === "new";
+
+// Online registrations waiting for approval, oldest first.
+export function subscribeOnlinePending(cb: (rows: PatientRow[]) => void, onError: (err: unknown) => void) {
+  return onSnapshot(
+    query(collection(db, "patients"), where("source", "==", "patient"), where("status", "==", "new")),
+    (snap) =>
+      cb(
+        snap.docs
+          .map(toPatient)
+          .filter(isPendingOnline)
+          .sort((a, b) => (a.createdAt?.toMillis() ?? 0) - (b.createdAt?.toMillis() ?? 0)),
+      ),
+    onError,
+  );
+}
+
+// Approving puts the patient into today's queue with the next number. Two people approving at once
+// cannot both succeed: the second is told it was already done.
+export async function approveOnline(patientId: string, uid: string): Promise<number> {
+  return runTransaction(db, async (tx) => {
+    const ref = doc(db, "patients", patientId);
+    const snap = await tx.get(ref);
+    if (!snap.exists() || snap.data().approvedAt || snap.data().status !== "new") {
+      throw new Error("This registration was already approved or removed.");
+    }
+    const token = await takeToken(tx, todayKey());
+    tx.update(ref, { token, approvedBy: uid, approvedAt: serverTimestamp() });
+    return token;
   });
+}
+
+export async function rejectOnline(patientId: string): Promise<void> {
+  await updateDoc(doc(db, "patients", patientId), { status: "rejected" });
 }
 
 const toPatient = (d: { id: string; data: () => unknown }) => ({ id: d.id, ...(d.data() as Omit<PatientRow, "id">) });
@@ -423,7 +497,7 @@ export async function scheduleRevisit(patient: PatientRow, visitAt: string, uid:
   );
 }
 
-// Everything one staff member registered between two dates ("YYYY-MM-DD", end included), oldest first.
+// Everything one staff member registered or approved (online) between two dates ("YYYY-MM-DD", end included), oldest first.
 // Filtered by date in Firestore and by staff here, so no extra index has to be set up.
 export async function listRegistrationsBy(uid: string, from: string, to: string): Promise<PatientRow[]> {
   const end = new Date(`${to}T00:00`);
@@ -433,7 +507,7 @@ export async function listRegistrationsBy(uid: string, from: string, to: string)
   );
   return snap.docs
     .map(toPatient)
-    .filter((p) => p.createdBy === uid)
+    .filter((p) => p.createdBy === uid || p.approvedBy === uid)
     .sort((a, b) => a.visitAt.localeCompare(b.visitAt));
 }
 

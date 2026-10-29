@@ -12,9 +12,10 @@ import Memories from "@/components/clinic/memories";
 import ClinicProfileForm from "@/components/clinic/clinic-profile";
 import RegisterVisit from "@/components/clinic/register-visit";
 import PatientActions from "@/components/clinic/patient-actions";
+import OnlineRequests, { useOnlinePending } from "@/components/clinic/online-requests";
 import BackButton from "@/components/clinic/back-button";
 import { useBackStep } from "@/lib/back-step";
-import { CalendarClock, CheckCircle2, ChevronDown, ClipboardList, Clock, Printer, Search, Settings, SkipForward, UserPlus } from "lucide-react";
+import { CalendarClock, CheckCircle2, ChevronDown, ClipboardList, Clock, Globe, Printer, Search, Settings, SkipForward, UserPlus } from "lucide-react";
 import AiAssistant, { AiAssistantButton } from "@/components/clinic/ai-assistant";
 import type { AiContext, Provisional } from "@/lib/clinic-ai";
 import { emptyMedicine, isFilled, itemsFromText, medicineLine, suggestDose, type MedicineItem } from "@/lib/medicines";
@@ -23,6 +24,7 @@ import {
   createStaff,
   EMPTY_VITALS,
   formatAge,
+  isPendingOnline,
   friendlyError,
   findTemplate,
   getComplaintMemory,
@@ -108,7 +110,7 @@ function DoctorDashboard({ uid, name }: { uid: string; name: string }) {
   );
 }
 
-type View = "list" | "register" | "profile";
+type View = "list" | "register" | "profile" | "online";
 type StatusFilter = "all" | "queue" | "seen" | "skipped" | "emergency";
 type SortOrder = "queue" | "newest" | "oldest" | "name";
 
@@ -128,9 +130,13 @@ function queueRank(p: PatientRow) {
 }
 const visitTime = (p: PatientRow) => Date.parse(p.visitAt) || p.createdAt?.toMillis() || 0;
 
+// Within the waiting queue, token numbers decide the order (an approved online patient comes after
+// those already registered); entries without a number fall back to their visit time.
+const byArrival = (a: PatientRow, b: PatientRow) =>
+  a.token && b.token ? a.token - b.token : visitTime(a) - visitTime(b);
+
 const SORTERS: Record<SortOrder, (a: PatientRow, b: PatientRow) => number> = {
-  queue: (a, b) =>
-    queueRank(a) - queueRank(b) || (queueRank(a) >= 3 ? visitTime(b) - visitTime(a) : visitTime(a) - visitTime(b)),
+  queue: (a, b) => queueRank(a) - queueRank(b) || (queueRank(a) >= 3 ? visitTime(b) - visitTime(a) : byArrival(a, b)),
   newest: (a, b) => visitTime(b) - visitTime(a),
   oldest: (a, b) => visitTime(a) - visitTime(b),
   name: (a, b) => a.name.localeCompare(b.name),
@@ -190,7 +196,9 @@ function PatientList({ uid }: { uid: string }) {
     };
   }, [q]);
 
-  const searched = found ?? rows;
+  // Online registrations reach this list only after approval; rejected ones never do.
+  const online = useOnlinePending();
+  const searched = (found ?? rows).filter((p) => !isPendingOnline(p) && p.status !== "rejected");
   const matchers: Record<StatusFilter, (p: PatientRow) => boolean> = {
     all: () => true,
     queue: isWaiting,
@@ -215,6 +223,14 @@ function PatientList({ uid }: { uid: string }) {
 
   if (view === "register") return <RegisterVisit uid={uid} onClose={() => setView("list")} />;
   if (view === "profile") return <ClinicProfileForm onDone={() => setView("list")} />;
+  if (view === "online") {
+    return (
+      <div className="flex flex-col gap-4">
+        <BackButton onClick={() => setView("list")} label="Back to patients" />
+        <OnlineRequests uid={uid} rows={online.rows} error={online.error} approver="doctor" />
+      </div>
+    );
+  }
 
   const filters: { key: StatusFilter; label: string }[] = [
     { key: "all", label: "All" },
@@ -230,6 +246,12 @@ function PatientList({ uid }: { uid: string }) {
       <div className="flex flex-wrap gap-2">
         <Button onClick={() => setView("register")}>
           <UserPlus className="mr-1.5 h-4 w-4" /> New registration
+        </Button>
+        <Button variant="outline" onClick={() => setView("online")}>
+          <Globe className="mr-1.5 h-4 w-4" /> Online
+          {online.rows.length > 0 && (
+            <span className="ml-1.5 rounded-full bg-red-600 px-1.5 text-xs font-bold text-white">{online.rows.length}</span>
+          )}
         </Button>
         <Button variant="outline" onClick={() => setView("profile")}>
           <Settings className="mr-1.5 h-4 w-4" /> Edit profile
@@ -333,6 +355,11 @@ function PatientList({ uid }: { uid: string }) {
                 )}
                 <span className="flex min-w-0 flex-1 flex-col gap-1">
                   <span className="flex flex-wrap items-center gap-1.5">
+                    {p.token && (
+                      <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-white">
+                        #{p.token}
+                      </span>
+                    )}
                     <span className="font-medium">{p.name}</span>
                     {isEmergency(p) && (
                       <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">

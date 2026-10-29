@@ -79,9 +79,10 @@ export default function RegisterVisit({
     visitType: VisitType,
     patientKey?: string,
   ) => {
-    await saveIntake(input, { source: "staff", uid, visitType, patientKey });
+    const token = await saveIntake(input, { source: "staff", uid, visitType, patientKey });
     setNotice(
-      `${input.name.trim()} has been sent to the doctor${visitType === "emergency" ? " as EMERGENCY" : ""}.`,
+      `${input.name.trim()} has been sent to the doctor${visitType === "emergency" ? " as EMERGENCY" : ""}.` +
+        (token ? ` Token number ${token}.` : ""),
     );
     setType(null);
   };

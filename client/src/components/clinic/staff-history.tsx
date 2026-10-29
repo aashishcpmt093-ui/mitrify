@@ -20,7 +20,9 @@ const TYPE_LABEL: Record<string, string> = {
   old: "Old patient",
   revisit: "Revisit",
 };
-const typeOf = (p: PatientRow) => TYPE_LABEL[p.visitType ?? "new"];
+// Online registrations approved by this staff member count as "Online".
+const typeKey = (p: PatientRow) => (p.source === "patient" ? "online" : (p.visitType ?? "new"));
+const typeOf = (p: PatientRow) => (p.source === "patient" ? "Online" : TYPE_LABEL[p.visitType ?? "new"]);
 const statusOf = (p: PatientRow) =>
   p.status === "prescribed" ? "Seen" : p.status === "skipped" ? "Skipped" : "In queue";
 // "2026-10-29" -> "29/10/2026"
@@ -67,17 +69,19 @@ export default function StaffHistory({ uid, staffName }: { uid: string; staffNam
     };
   }, [uid, range.from, range.to, valid]);
 
-  const count = (type: string) => rows.filter((p) => (p.visitType ?? "new") === type).length;
+  const count = (type: string) => rows.filter((p) => typeKey(p) === type).length;
   const summary = [
     `Total ${rows.length}`,
     `Emergency ${count("emergency")}`,
     `New OPD ${count("new")}`,
     `Old ${count("old")}`,
+    `Online ${count("online")}`,
   ];
 
   const table = () =>
     rows.map((p, i) => ({
       "#": i + 1,
+      Token: p.token ?? "",
       Date: showDate(p.visitAt.slice(0, 10)),
       Time: p.visitAt.slice(11, 16),
       Patient: p.name,
@@ -94,7 +98,7 @@ export default function StaffHistory({ uid, staffName }: { uid: string; staffNam
   const downloadExcel = async () => {
     const XLSX = await import("xlsx");
     const sheet = XLSX.utils.json_to_sheet(table());
-    sheet["!cols"] = [4, 11, 7, 22, 16, 11, 20, 13, 12, 10].map((wch) => ({ wch }));
+    sheet["!cols"] = [4, 7, 11, 7, 22, 16, 11, 20, 13, 12, 10].map((wch) => ({ wch }));
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, "Registrations");
     XLSX.writeFile(book, `${fileBase}.xlsx`);
@@ -187,6 +191,7 @@ export default function StaffHistory({ uid, staffName }: { uid: string; staffNam
             <li key={p.id} className="flex items-start justify-between gap-3 p-3">
               <span className="flex min-w-0 flex-col gap-0.5">
                 <span className="font-medium">
+                  {p.token ? <span className="mr-1 tabular-nums text-muted-foreground">#{p.token}</span> : null}
                   {p.name}{" "}
                   <span className="font-normal text-muted-foreground">
                     · {formatAge(p.age)} · {p.weight} kg

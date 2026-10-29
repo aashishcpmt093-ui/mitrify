@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { History, UserPlus } from "lucide-react";
+import { Globe, History, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import RegisterVisit from "@/components/clinic/register-visit";
 import StaffHistory from "@/components/clinic/staff-history";
+import OnlineRequests, { useOnlinePending } from "@/components/clinic/online-requests";
 import LoginCard from "@/components/clinic/login-card";
 import { useBackStep } from "@/lib/back-step";
 import { auth, signIn, staffEmail, useClinicSession } from "@/lib/clinic";
@@ -10,9 +11,10 @@ import { signOut } from "firebase/auth";
 
 export default function StaffPortal() {
   const session = useClinicSession("staff");
-  const [tab, setTab] = useState<"register" | "history">("register");
-  // From History, the phone's back button returns to registration.
-  useBackStep(tab === "history", () => setTab("register"));
+  const [tab, setTab] = useState<"register" | "online" | "history">("register");
+  // From Online or History, the phone's back button returns to registration.
+  useBackStep(tab !== "register", () => setTab("register"));
+  const online = useOnlinePending(session.status === "ready");
 
   if (session.status === "loading") {
     return <p className="text-muted-foreground">Loading...</p>;
@@ -42,19 +44,25 @@ export default function StaffPortal() {
         </Button>
       </div>
       <div className="flex w-full max-w-2xl flex-col gap-4">
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant={tab === "register" ? "default" : "outline"} onClick={() => setTab("register")}>
             <UserPlus className="mr-1.5 h-4 w-4" /> New visit
+          </Button>
+          <Button variant={tab === "online" ? "default" : "outline"} onClick={() => setTab("online")}>
+            <Globe className="mr-1.5 h-4 w-4" /> Online
+            {online.rows.length > 0 && (
+              <span className="ml-1.5 rounded-full bg-red-600 px-1.5 text-xs font-bold text-white">{online.rows.length}</span>
+            )}
           </Button>
           <Button variant={tab === "history" ? "default" : "outline"} onClick={() => setTab("history")}>
             <History className="mr-1.5 h-4 w-4" /> History
           </Button>
         </div>
-        {tab === "register" ? (
-          <RegisterVisit uid={session.uid} />
-        ) : (
-          <StaffHistory uid={session.uid} staffName={session.profile.name} />
+        {tab === "register" && <RegisterVisit uid={session.uid} />}
+        {tab === "online" && (
+          <OnlineRequests uid={session.uid} rows={online.rows} error={online.error} approver="staff" />
         )}
+        {tab === "history" && <StaffHistory uid={session.uid} staffName={session.profile.name} />}
       </div>
     </div>
   );

@@ -32,7 +32,12 @@ export default function PortalHome({ portal }: { portal: PortalKey }) {
       <h1 className="text-3xl font-semibold text-center print:hidden">{title}</h1>
 
       {portal === "patients" && (
-        <PatientIntakeForm onSave={(input) => saveIntake(input, { source: "patient" })} />
+        <PatientIntakeForm
+          successText="Registration received. Please meet the reception: staff will confirm it and give your token number."
+          onSave={async (input) => {
+            await saveIntake(input, { source: "patient" });
+          }}
+        />
       )}
       <Suspense fallback={<p className="text-muted-foreground">Loading...</p>}>
         {portal === "staff" && <StaffPortal />}

@@ -34,9 +34,15 @@ type Props = {
   // Details to start from, e.g. a returning patient's last visit. Visit time is always now.
   initial?: Partial<IntakeInput>;
   submitLabel?: string;
+  successText?: string;
 };
 
-export default function PatientIntakeForm({ onSave, initial, submitLabel = "Submit" }: Props) {
+export default function PatientIntakeForm({
+  onSave,
+  initial,
+  submitLabel = "Submit",
+  successText = "Saved. The doctor can now see this entry.",
+}: Props) {
   const [form, setForm] = useState<IntakeInput>(() => ({ ...emptyForm(), ...initial, visitAt: nowForInput() }));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
@@ -51,7 +57,7 @@ export default function PatientIntakeForm({ onSave, initial, submitLabel = "Subm
     try {
       await onSave(form);
       setForm(emptyForm());
-      setMessage({ kind: "ok", text: "Saved. The doctor can now see this entry." });
+      setMessage({ kind: "ok", text: successText });
     } catch (err) {
       setMessage({ kind: "error", text: friendlyError(err, "Could not save. Try again.") });
     } finally {

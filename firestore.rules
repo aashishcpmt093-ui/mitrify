@@ -82,10 +82,19 @@ service cloud.firestore {
           && request.resource.data.createdAt == request.time
         );
       allow read: if isStaffOrDoctor();
-      // Doctors may only change the status (to "prescribed") and nothing else.
-      allow update: if isDoctor()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+      // Doctors may only change the status (seen, skipped, back in queue). Staff and doctors may approve
+      // or reject online registrations: status, token number and who approved, nothing else.
+      allow update: if (isDoctor()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']))
+        || (isStaffOrDoctor()
+          && resource.data.source == 'patient'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'token', 'approvedBy', 'approvedAt']));
       allow delete: if isDoctor();
+    }
+
+    // Daily token counter, shared by staff registrations and online approvals.
+    match /counters/{day} {
+      allow read, write: if isStaffOrDoctor();
     }
 
     // Drug memory (names with their last form/dose/frequency): doctors only.
