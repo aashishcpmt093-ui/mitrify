@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useId, type CSSProperties, type ReactNode } from "react";
 import type { ClinicProfile } from "@shared/clinic";
 import type { AgeParts, PatientRow, PrescriptionContent } from "@/lib/clinic";
 import { isFilled, type MedicineItem } from "@/lib/medicines";
@@ -34,6 +34,60 @@ function shortAge(age: AgeParts | number): string {
 function padDate(visitAt: string): string {
   const [y, m, d] = visitAt.split("T")[0].split("-");
   return y && m && d ? `${d}/${m}/${y.slice(2)}` : visitAt;
+}
+
+const STAMP_RED = "#c4161c";
+
+// Round "EMERGENCY" seal for emergency visits, in the gap between the doctor's name and the address.
+// 18.4 mm across, tilted like a hand stamp, with small ink gaps. It is part of what we print, so it
+// also prints on the pre-printed pad.
+function EmergencySeal({ clinicName, date }: { clinicName: string; date: string }) {
+  // Filter and path ids must be unique on the page and plain enough for url(#...).
+  const id = useId().replace(/[^a-zA-Z0-9]/g, "");
+  const name = clinicName.toUpperCase();
+  // The clinic name runs round the top half (about 125 units of arc); longer names get smaller
+  // letters so they still fit. Bold sans letters are about 0.66 of the font size wide.
+  const nameSize = Math.max(5, Math.min(10, (125 / Math.max(name.length, 1) - 1.2) / 0.66));
+  return (
+    <div style={at(72.3, 5.3, { width: mm(18.4), height: mm(18.4), transform: "rotate(-12deg)" })}>
+      <svg viewBox="0 0 120 120" width="100%" height="100%" style={{ overflow: "visible" }} aria-label="Emergency">
+        <defs>
+          <filter id={`ink${id}`} x="-5%" y="-5%" width="110%" height="110%">
+            <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="7" result="noise" />
+            <feColorMatrix
+              in="noise"
+              type="matrix"
+              values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -2.6 2.55"
+              result="speckle"
+            />
+            <feComposite in="SourceGraphic" in2="speckle" operator="in" result="speckled" />
+            <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="1" seed="2" result="warp" />
+            <feDisplacementMap in="speckled" in2="warp" scale="2.2" />
+          </filter>
+          <path id={`top${id}`} d="M 18 60 A 42 42 0 0 1 102 60" />
+          <path id={`bottom${id}`} d="M 14 60 A 46 46 0 0 0 106 60" />
+        </defs>
+        <g filter={`url(#ink${id})`} stroke={STAMP_RED} fill="none">
+          <circle cx="60" cy="60" r="56" strokeWidth="4" />
+          <circle cx="60" cy="60" r="38" strokeWidth="1.6" />
+          <text fill={STAMP_RED} stroke="none" fontFamily="Arial, Helvetica, sans-serif" fontWeight="700" fontSize={nameSize} letterSpacing="1.2">
+            <textPath href={`#top${id}`} startOffset="50%" textAnchor="middle">
+              {name}
+            </textPath>
+          </text>
+          <text fill={STAMP_RED} stroke="none" fontFamily="Arial, Helvetica, sans-serif" fontWeight="700" fontSize="9.5" letterSpacing="1.5">
+            <textPath href={`#bottom${id}`} startOffset="50%" textAnchor="middle" dominantBaseline="hanging">
+              {`★ ${date} ★`}
+            </textPath>
+          </text>
+          <rect x="6" y="47" width="108" height="26" fill={STAMP_RED} stroke="none" />
+          <text x="60" y="66.5" textAnchor="middle" fill="#fff" stroke="none" fontFamily="'Arial Black', Arial, sans-serif" fontWeight="900" fontSize="15" textLength="98" lengthAdjust="spacingAndGlyphs">
+            EMERGENCY
+          </text>
+        </g>
+      </svg>
+    </div>
+  );
 }
 
 function Ink({ left, top, width, size = 3.6, children, multiline = false, height }: {
@@ -247,6 +301,9 @@ export default function PrescriptionPad({ patient, content, mode, offset, profil
           <Ink left={80.5} top={32.4} width={14} size={3.2}>{shortAge(patient.age)}</Ink>
           <Ink left={104} top={32.4} width={16} size={3.2}>{`${patient.weight} kg`}</Ink>
           <Ink left={127.5} top={32.4} width={19} size={3.2}>{padDate(patient.visitAt)}</Ink>
+          {patient.visitType === "emergency" && (
+            <EmergencySeal clinicName={profile.clinicName} date={padDate(patient.visitAt).replace(/\//g, "·")} />
+          )}
           {/* Parent's name, address and mobile stay in the records only. */}
           {/* Body column: vitals, complaints, diagnosis, medicines, advice and notes flow one under the
               other, so more complaints simply push the rest down. Investigations stay on the right. */}
