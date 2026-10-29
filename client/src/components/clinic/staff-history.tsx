@@ -6,7 +6,9 @@ import { Label } from "@/components/ui/label";
 import {
   formatAge,
   friendlyError,
+  diagnosesBetween,
   listRegistrationsBy,
+  listStaff,
   todayKey,
   useClinicProfile,
   type PatientRow,
@@ -34,8 +36,18 @@ function monthEnd(month: string): string {
   return todayKey(new Date(y, m, 0));
 }
 
-// Read-only list of the visits this staff member registered, with Excel and PDF downloads.
-export default function StaffHistory({ uid, staffName }: { uid: string; staffName: string }) {
+// Read-only list of visits with Excel and PDF downloads. Staff see the visits they registered or approved.
+// The doctor (doctorUid set) sees every visit, who registered it and the diagnosis written.
+export default function StaffHistory({
+  uid,
+  staffName,
+  doctorUid,
+}: {
+  uid: string | null;
+  staffName: string;
+  doctorUid?: string;
+}) {
+  const everyone = !!doctorUid;
   const { clinicName } = useClinicProfile();
   const today = todayKey();
   const [period, setPeriod] = useState<Period>("day");
@@ -46,6 +58,15 @@ export default function StaffHistory({ uid, staffName }: { uid: string; staffNam
   const [rows, setRows] = useState<PatientRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [staffNames, setStaffNames] = useState<Map<string, string>>(new Map());
+  const [diagnoses, setDiagnoses] = useState<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    if (!everyone) return;
+    listStaff()
+      .then((list) => setStaffNames(new Map(list.map((s) => [s.id, s.name]))))
+      .catch(() => undefined);
+  }, [everyone]);
 
   const range =
     period === "day"
@@ -60,18 +81,32 @@ export default function StaffHistory({ uid, staffName }: { uid: string; staffNam
     let current = true;
     setLoading(true);
     setError(null);
-    listRegistrationsBy(uid, range.from, range.to)
-      .then((found) => current && setRows(found))
+    Promise.all([
+      listRegistrationsBy(uid, range.from, range.to),
+      everyone ? diagnosesBetween(range.from, range.to).catch(() => new Map<string, string>()) : null,
+    ])
+      .then(([found, dx]) => {
+        if (!current) return;
+        setRows(found);
+        if (dx) setDiagnoses(dx);
+      })
       .catch((err) => current && setError(friendlyError(err, "Could not load the history.")))
       .finally(() => current && setLoading(false));
     return () => {
       current = false;
     };
-  }, [uid, range.from, range.to, valid]);
+  }, [uid, range.from, range.to, valid, everyone]);
+
+  // Who put the visit in the queue: a staff member, the doctor, or the patient online (and who approved).
+  const nameOf = (id?: string | null) =>
+    !id ? "" : id === doctorUid ? "Doctor" : (staffNames.get(id) ?? "Staff");
+  const registeredBy = (p: PatientRow) =>
+    p.source === "patient" ? `Online${p.approvedBy ? ` (approved by ${nameOf(p.approvedBy)})` : ""}` : nameOf(p.createdBy);
 
   const count = (type: string) => rows.filter((p) => typeKey(p) === type).length;
   const summary = [
     `Total ${rows.length}`,
+    ...(everyone ? [`Seen ${rows.filter((p) => p.status === "prescribed").length}`] : []),
     `Emergency ${count("emergency")}`,
     `New OPD ${count("new")}`,
     `Old ${count("old")}`,
@@ -91,14 +126,15 @@ export default function StaffHistory({ uid, staffName }: { uid: string; staffNam
       Mobile: p.mobile ?? "",
       Type: typeOf(p),
       Status: statusOf(p),
+      ...(everyone ? { "Registered by": registeredBy(p), Diagnosis: diagnoses.get(p.id) ?? "" } : {}),
     }));
-  const fileBase = `${staffName}-registrations-${range.from}${range.to !== range.from ? `-to-${range.to}` : ""}`.replace(/\s+/g, "-");
+  const fileBase = `${everyone ? "clinic-patients" : `${staffName}-registrations`}-${range.from}${range.to !== range.from ? `-to-${range.to}` : ""}`.replace(/\s+/g, "-");
 
   // The libraries load only when a download is tapped, so the page itself stays light.
   const downloadExcel = async () => {
     const XLSX = await import("xlsx");
     const sheet = XLSX.utils.json_to_sheet(table());
-    sheet["!cols"] = [4, 7, 11, 7, 22, 16, 11, 20, 13, 12, 10].map((wch) => ({ wch }));
+    sheet["!cols"] = [4, 7, 11, 7, 22, 16, 11, 20, 13, 12, 10, 24, 28].map((wch) => ({ wch }));
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, sheet, "Registrations");
     XLSX.writeFile(book, `${fileBase}.xlsx`);
@@ -110,14 +146,14 @@ export default function StaffHistory({ uid, staffName }: { uid: string; staffNam
     pdf.setFontSize(15);
     pdf.text(clinicName, 14, 15);
     pdf.setFontSize(10.5);
-    pdf.text(`Registrations by ${staffName}  ·  ${range.label}`, 14, 22);
+    pdf.text(`${everyone ? "All patients" : `Registrations by ${staffName}`}  ·  ${range.label}`, 14, 22);
     pdf.text(summary.join("   ·   "), 14, 28);
     const data = table();
     autoTable(pdf, {
       startY: 33,
       head: [Object.keys(data[0] ?? { "#": 0 })],
       body: data.map((r) => Object.values(r).map(String)),
-      styles: { fontSize: 8.5, cellPadding: 1.6 },
+      styles: { fontSize: everyone ? 7.5 : 8.5, cellPadding: 1.6 },
       headStyles: { fillColor: [36, 49, 143] },
     });
     pdf.save(`${fileBase}.pdf`);
@@ -184,7 +220,11 @@ export default function StaffHistory({ uid, staffName }: { uid: string; staffNam
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading...</p>
       ) : rows.length === 0 ? (
-        !error && <p className="text-sm text-muted-foreground">No registrations by you in this period.</p>
+        !error && (
+          <p className="text-sm text-muted-foreground">
+            {everyone ? "No patients in this period." : "No registrations by you in this period."}
+          </p>
+        )
       ) : (
         <ul className="flex flex-col divide-y rounded-md border">
           {rows.map((p) => (
@@ -197,10 +237,14 @@ export default function StaffHistory({ uid, staffName }: { uid: string; staffNam
                     · {formatAge(p.age)} · {p.weight} kg
                   </span>
                 </span>
-                <span className="truncate text-xs text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   {showDate(p.visitAt.slice(0, 10))} {p.visitAt.slice(11, 16)}
                   {p.mobile ? ` · ${p.mobile}` : ""}
+                  {everyone && registeredBy(p) ? ` · by ${registeredBy(p)}` : ""}
                 </span>
+                {everyone && diagnoses.get(p.id) && (
+                  <span className="text-xs font-medium">Dx: {diagnoses.get(p.id)}</span>
+                )}
               </span>
               <span className="flex shrink-0 flex-col items-end gap-1 text-xs">
                 <span className={p.visitType === "emergency" ? "font-semibold text-red-700" : "text-muted-foreground"}>

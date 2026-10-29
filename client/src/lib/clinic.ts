@@ -514,9 +514,10 @@ export async function scheduleRevisit(patient: PatientRow, visitAt: string, uid:
   );
 }
 
-// Everything one staff member registered or approved (online) between two dates ("YYYY-MM-DD", end included), oldest first.
-// Filtered by date in Firestore and by staff here, so no extra index has to be set up.
-export async function listRegistrationsBy(uid: string, from: string, to: string): Promise<PatientRow[]> {
+// Visits between two dates ("YYYY-MM-DD", end included), oldest first: those one staff member registered
+// or approved (online), or with uid null every visit that reached the queue (for the doctor).
+// Filtered by date in Firestore and by person here, so no extra index has to be set up.
+export async function listRegistrationsBy(uid: string | null, from: string, to: string): Promise<PatientRow[]> {
   const end = new Date(`${to}T00:00`);
   end.setDate(end.getDate() + 1);
   const snap = await getDocs(
@@ -524,8 +525,29 @@ export async function listRegistrationsBy(uid: string, from: string, to: string)
   );
   return snap.docs
     .map(toPatient)
-    .filter((p) => p.createdBy === uid || p.approvedBy === uid)
+    .filter((p) =>
+      uid ? p.createdBy === uid || p.approvedBy === uid : !isPendingOnline(p) && p.status !== "rejected",
+    )
     .sort((a, b) => a.visitAt.localeCompare(b.visitAt));
+}
+
+// Diagnosis written for each visit (by patient entry id) on prescriptions saved between two dates.
+export async function diagnosesBetween(from: string, to: string): Promise<Map<string, string>> {
+  const end = new Date(`${to}T00:00`);
+  end.setDate(end.getDate() + 1);
+  const snap = await getDocs(
+    query(
+      collection(db, "prescriptions"),
+      where("createdAt", ">=", new Date(`${from}T00:00`)),
+      where("createdAt", "<", end),
+    ),
+  );
+  const found = new Map<string, string>();
+  for (const d of snap.docs) {
+    const data = d.data() as { patientId?: string; diagnosis?: string };
+    if (data.patientId && data.diagnosis) found.set(data.patientId, data.diagnosis);
+  }
+  return found;
 }
 
 // For a patient seen without a prescription (e.g. only advice), so the queue still moves on.

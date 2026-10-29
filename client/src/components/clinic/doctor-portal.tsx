@@ -10,6 +10,7 @@ import MedicineRows, { withTrailingRow } from "@/components/clinic/medicine-rows
 import ComplaintsInput from "@/components/clinic/complaints-input";
 import Memories from "@/components/clinic/memories";
 import ClinicProfileForm from "@/components/clinic/clinic-profile";
+import StaffHistory from "@/components/clinic/staff-history";
 import RegisterVisit from "@/components/clinic/register-visit";
 import PatientActions from "@/components/clinic/patient-actions";
 import OnlineRequests, { useOnlinePending } from "@/components/clinic/online-requests";
@@ -52,7 +53,7 @@ import {
   type Vitals,
 } from "@/lib/clinic";
 
-type Tab = "patients" | "memories" | "staff";
+type Tab = "patients" | "memories" | "staff" | "history";
 
 export default function DoctorPortal() {
   const session = useClinicSession("doctor");
@@ -92,7 +93,7 @@ function DoctorDashboard({ uid, name }: { uid: string; name: string }) {
           Sign out
         </Button>
       </div>
-      <div className="flex gap-2 print:hidden">
+      <div className="flex flex-wrap gap-2 print:hidden">
         <Button variant={tab === "patients" ? "default" : "outline"} onClick={() => setTab("patients")}>
           Patients
         </Button>
@@ -102,10 +103,14 @@ function DoctorDashboard({ uid, name }: { uid: string; name: string }) {
         <Button variant={tab === "staff" ? "default" : "outline"} onClick={() => setTab("staff")}>
           Staff
         </Button>
+        <Button variant={tab === "history" ? "default" : "outline"} onClick={() => setTab("history")}>
+          History
+        </Button>
       </div>
       {tab === "patients" && <PatientList uid={uid} />}
       {tab === "memories" && <Memories />}
       {tab === "staff" && <StaffManager />}
+      {tab === "history" && <StaffHistory uid={null} staffName={name} doctorUid={uid} />}
     </div>
   );
 }
