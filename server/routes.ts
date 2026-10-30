@@ -68,9 +68,14 @@ function recordGpBulkRun(adminKey: string): void {
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const restoreUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } });
 
-const ADMIN_ID = process.env.ADMIN_ID || "aashishcpmt09@mitrify";
-let ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "Mitrify@8949199709";
-const ADMIN_PHONE = process.env.ADMIN_PHONE || "8949199709";
+// Admin credentials come only from the server's environment settings, never from the code. If they are
+// not set, admin sign-in stays off instead of falling back to a built-in password.
+const ADMIN_ID = process.env.ADMIN_ID || "";
+let ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+const ADMIN_PHONE = process.env.ADMIN_PHONE || "";
+if (!ADMIN_ID || !ADMIN_PASSWORD) {
+  console.warn("[admin] ADMIN_ID / ADMIN_PASSWORD are not set in the environment: admin sign-in is disabled.");
+}
 
 // In-memory OTP brute-force store: key = contact, value = { count, blockedUntil, tier }
 const otpFailStore = new Map<string, { count: number; blockedUntil: number; tier: number }>();
@@ -813,6 +818,9 @@ export async function registerRoutes(
 
   app.post("/api/admin/login", (req, res) => {
     const { id, password } = req.body;
+    if (!ADMIN_ID || !ADMIN_PASSWORD) {
+      return res.status(503).json({ message: "Admin sign-in is not set up on the server." });
+    }
     if (id === ADMIN_ID && password === ADMIN_PASSWORD) {
       (req.session as any).adminAuth = true;
       req.session.save(() => {
