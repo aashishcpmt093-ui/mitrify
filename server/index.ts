@@ -12,9 +12,15 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { ensureSchema } from "./ensureSchema";
 import { clinicAiRouter } from "./clinicAi";
+import { createGatewayMiddleware } from "./gateway";
 
 const app = express();
 const httpServer = createServer(app);
+
+// Mitrify AI Gateway (gateway.mitrify.com). Off unless MITRIFY_GATEWAY_ENABLED=1. Mounted first, before
+// the body parsers and the request logger, so it reads request bodies as raw bytes and nothing logs
+// prompts or answers. Requests for any other host pass straight through to the marketplace.
+app.use(createGatewayMiddleware());
 
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: false, limit: "5mb" }));

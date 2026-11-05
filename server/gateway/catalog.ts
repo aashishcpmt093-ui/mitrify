@@ -1,0 +1,124 @@
+// The pricing catalog: a daily ranking of the cheapest approved models across all providers.
+//
+// Prices come only from entries the owner verified against each provider's official pricing page or
+// API (each entry carries its source URL and the date it was checked). The gateway never scrapes
+// random websites and never invents a price. Every refresh is saved as a numbered snapshot, so it is
+// always possible to say which models were in the pool on a given day.
+
+import type { GatewayConfig } from "./config";
+import type { CatalogSnapshot, PriceEntry, SnapshotEntry } from "./store";
+
+export const AUTO_MODEL = "mitrify/auto-cheap";
+
+/** Below this many tokens of history the observed input/output ratio is not trusted yet. */
+export const MIN_OBSERVED_TOKENS = 100_000;
+
+export function rankingWeights(totals: { input: number; output: number }) {
+  if (totals.input + totals.output >= MIN_OBSERVED_TOKENS && totals.input > 0 && totals.output > 0) {
+    const sum = totals.input + totals.output;
+    return { input: totals.input / sum, output: totals.output / sum, source: "observed" as const };
+  }
+  return { input: 0.5, output: 0.5, source: "default" as const };
+}
+
+export function blendedPrice(p: { inputPerMTokUsd: number; outputPerMTokUsd: number }, w: { input: number; output: number }) {
+  return p.inputPerMTokUsd * w.input + p.outputPerMTokUsd * w.output;
+}
+
+export function buildSnapshot(
+  prices: PriceEntry[],
+  config: GatewayConfig,
+  totals: { input: number; output: number },
+  now: Date,
+): Omit<CatalogSnapshot, "id"> {
+  const weights = rankingWeights(totals);
+  const providers = new Map(config.providers.map((p) => [p.id, p]));
+  const maxAgeMs = config.maxPriceAgeDays * 24 * 60 * 60 * 1000;
+  const excluded: CatalogSnapshot["excluded"] = [];
+  const eligible: (SnapshotEntry & { priority: number })[] = [];
+
+  for (const p of prices) {
+    const prov = providers.get(p.provider);
+    const reason = !prov
+      ? "unknown provider"
+      : prov.status !== "active"
+        ? `provider ${prov.status}`
+        : !p.enabled
+          ? "disabled"
+          : !p.qualityPassed
+            ? "quality check not passed"
+            : now.getTime() - p.verifiedAt.getTime() > maxAgeMs
+              ? `price older than ${config.maxPriceAgeDays} days`
+              : !(p.inputPerMTokUsd >= 0 && p.outputPerMTokUsd >= 0)
+                ? "invalid price"
+                : null;
+    if (reason) {
+      excluded.push({ provider: p.provider, upstreamModel: p.upstreamModel, reason });
+      continue;
+    }
+    eligible.push({
+      provider: p.provider,
+      upstreamModel: p.upstreamModel,
+      blendedPerMTokUsd: Math.round(blendedPrice(p, weights) * 1e6) / 1e6,
+      inputPerMTokUsd: p.inputPerMTokUsd,
+      outputPerMTokUsd: p.outputPerMTokUsd,
+      cachedInputPerMTokUsd: p.cachedInputPerMTokUsd,
+      supportsStreaming: p.supportsStreaming,
+      contextLength: p.contextLength,
+      priority: prov!.priority,
+    });
+  }
+
+  eligible.sort(
+    (a, b) =>
+      a.blendedPerMTokUsd - b.blendedPerMTokUsd ||
+      a.priority - b.priority ||
+      a.provider.localeCompare(b.provider) ||
+      a.upstreamModel.localeCompare(b.upstreamModel),
+  );
+  for (const e of eligible.slice(config.poolSize)) {
+    excluded.push({ provider: e.provider, upstreamModel: e.upstreamModel, reason: `outside the top ${config.poolSize}` });
+  }
+  const entries = eligible.slice(0, config.poolSize).map(({ priority: _p, ...e }) => e);
+  return { createdAt: now, weights, entries, excluded };
+}
+
+/** Validates a price entry sent by the admin. Returns an error message or null. */
+export function validatePriceInput(body: unknown): { entry?: Omit<PriceEntry, "updatedAt">; error?: string } {
+  if (!body || typeof body !== "object") return { error: "send a JSON object" };
+  const b = body as Record<string, unknown>;
+  const str = (k: string) => (typeof b[k] === "string" && (b[k] as string).trim() ? (b[k] as string).trim() : null);
+  const price = (k: string) => (typeof b[k] === "number" && Number.isFinite(b[k]) && (b[k] as number) >= 0 ? (b[k] as number) : null);
+  const provider = str("provider");
+  const upstreamModel = str("upstreamModel");
+  const sourceUrl = str("sourceUrl");
+  const verifiedAtRaw = str("verifiedAt");
+  const input = price("inputPerMTokUsd");
+  const output = price("outputPerMTokUsd");
+  if (!provider || !upstreamModel) return { error: "provider and upstreamModel are required" };
+  if (input === null || output === null) return { error: "inputPerMTokUsd and outputPerMTokUsd must be numbers >= 0 (USD per 1M tokens)" };
+  if (!sourceUrl || !/^https:\/\//.test(sourceUrl)) return { error: "sourceUrl must be the https link of the official price page" };
+  const verifiedAt = verifiedAtRaw ? new Date(verifiedAtRaw) : null;
+  if (!verifiedAt || Number.isNaN(verifiedAt.getTime())) return { error: "verifiedAt must be the date the price was checked (ISO date)" };
+  if (b.currency !== undefined && b.currency !== "USD") return { error: "only USD prices are supported for now" };
+  const cached = b.cachedInputPerMTokUsd === undefined || b.cachedInputPerMTokUsd === null ? null : price("cachedInputPerMTokUsd");
+  if (b.cachedInputPerMTokUsd != null && cached === null) return { error: "cachedInputPerMTokUsd must be a number >= 0" };
+  const ctx = typeof b.contextLength === "number" && b.contextLength > 0 ? Math.floor(b.contextLength) : null;
+  return {
+    entry: {
+      provider,
+      upstreamModel,
+      inputPerMTokUsd: input,
+      outputPerMTokUsd: output,
+      cachedInputPerMTokUsd: cached,
+      currency: "USD",
+      sourceUrl,
+      verifiedAt,
+      contextLength: ctx,
+      supportsStreaming: b.supportsStreaming !== false,
+      supportsTools: b.supportsTools === true,
+      qualityPassed: b.qualityPassed === true,
+      enabled: b.enabled !== false,
+    },
+  };
+}
