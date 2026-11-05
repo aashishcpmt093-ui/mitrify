@@ -56,7 +56,14 @@ NavBharatAI → **Mitrify Gateway** → provider (पहले Surplus) → AI m
 
 ## 2. पहली बार चालू करना (owner के लिए)
 
-> **ज़रूरी बात:** Audit में पता चला कि Mitrify का server **Render** पर चलता है (`render.yaml`), और **Hostinger पर सिर्फ़ DNS** है। इसलिए environment variables **Render dashboard** में डालने हैं, Hostinger में नहीं। Hostinger में सिर्फ़ एक DNS record जुड़ेगा।
+> **ज़रूरी बात:** `mitrify.com` **Hostinger** की hosting से चलता है (Render का `mitrify` service अलग और पुराना है)।
+> इसलिए variables **Hostinger → mitrify.com → Environment variables** में डालकर **Redeploy** करना है। पहले
+> `docs/hostinger-setup.md` से database और login चालू करें।
+>
+> **`gateway.mitrify.com` का रास्ता अभी तय नहीं है।** Hostinger की shared Node hosting पर लंबी streaming (SSE)
+> बीच में कट सकती है, और एक subdomain को उसी app तक पहुंचाने का तरीका भी जांचना है। एक विकल्प यह है कि gateway
+> Render पर चले और Hostinger DNS में सिर्फ़ `gateway` का एक CNAME जुड़े। इसे live करने से पहले यह तय करना और
+> एक असली streaming test करना बाकी है। DNS बदलने से पहले आपकी मंज़ूरी चाहिए।
 
 ### Step 1: Setup code बनाएं
 
@@ -68,9 +75,9 @@ openssl rand -base64 36
 
 इसे password manager में सुरक्षित रखें। **यही code API key बनाने की चाबी है।** इसके बिना कोई भी, admin भी, key नहीं बना सकता।
 
-### Step 2: Render में environment variables डालें
+### Step 2: Hostinger में environment variables डालें
 
-Render → `mitrify` service → **Environment** में ये डालें (पूरी list `docs/ai-gateway.env.example` में है):
+Hostinger → `mitrify.com` → **Environment variables** में ये डालें (पूरी list `docs/ai-gateway.env.example` में है):
 
 ```
 MITRIFY_GATEWAY_ENABLED=1
@@ -83,9 +90,9 @@ MITRIFY_SURPLUS_APPROVED=1        ← Surplus की terms जांचने �
 MITRIFY_SURPLUS_MAX_CONCURRENCY=<Surplus की असली limit>
 ```
 
-Save करने पर Render service restart करेगा।
+Save करके **Redeploy** करें।
 
-### Step 3: Subdomain जोड़ें
+### Step 3: Subdomain जोड़ें (ऊपर की ज़रूरी बात पढ़कर, तय होने के बाद)
 
 1. **Render:** `mitrify` service → Settings → Custom Domains → `gateway.mitrify.com` जोड़ें। Render एक CNAME target दिखाएगा (आमतौर पर `mitrify.onrender.com`)।
 2. **Hostinger** (hpanel → Domains → mitrify.com → DNS): नया record जोड़ें: Type **CNAME**, Name **gateway**, Value **वही target जो Render ने दिखाया**।
@@ -155,7 +162,7 @@ curl $H https://gateway.mitrify.com/admin/audit             # कौन-सा a
 | काम | Command |
 |---|---|
 | पूरा gateway बंद | `POST /admin/kill` `{"enabled":true}`। चालू करना: `{"enabled":false}` |
-| Database के बिना भी बंद | Render में `MITRIFY_GATEWAY_KILL=1` डालें |
+| Database के बिना भी बंद | जहां gateway चलता है वहां की settings में `MITRIFY_GATEWAY_KILL=1` डालें |
 | एक provider बंद | `POST /admin/providers/surplus/disable` `{"disabled":true}` |
 | Key तुरंत रद्द | `POST /admin/keys/<id>/revoke` |
 | Key बदलें | `POST /admin/keys/<id>/rotate` (नई key मिलती है, पुरानी 24 घंटे और चलती है) |
@@ -179,8 +186,8 @@ curl $H https://gateway.mitrify.com/admin/audit             # कौन-सा a
 ## 5. Rollback
 
 1. **सबसे तेज़:** NavBharatAI का switch वापस `direct` पर करें। Mitrify में कुछ बदलने की ज़रूरत नहीं।
-2. **Gateway बंद:** `POST /admin/kill` या Render में `MITRIFY_GATEWAY_KILL=1`।
-3. **Gateway हटाएं:** Render में `MITRIFY_GATEWAY_ENABLED` हटाएं। Marketplace पहले जैसा चलता है।
+2. **Gateway बंद:** `POST /admin/kill` या settings में `MITRIFY_GATEWAY_KILL=1`।
+3. **Gateway हटाएं:** Settings से `MITRIFY_GATEWAY_ENABLED` हटाएं (फिर Redeploy)। Marketplace पहले जैसा चलता है।
 4. **Tables हटाएं (ज़रूरी हो तो):** पहले usage export करें, फिर `migrations/0012_ai_gateway.down.sql` चलाएं।
 5. **Code हटाएं:** इस branch का merge commit revert करें।
 
@@ -202,7 +209,7 @@ GATEWAY_TEST_DATABASE_URL=postgres://user@127.0.0.1:5432/scratch npm run test:ga
 
 - Surplus का official base URL, model ids, कीमतें, rate limit और terms (resale/gateway की इजाज़त)। **मैंने कोई endpoint या कीमत अपनी तरफ़ से नहीं लिखी।**
 - बाकी 4 providers: हर एक के docs और terms जांचने के बाद ही उनकी settings डालें।
-- Render free plan 15 मिनट बाद सो जाता है, फिर पहली request 30–50 सेकंड लेती है। Gateway के लिए Starter plan बेहतर रहेगा। लंबी streaming पर Render का असली बर्ताव live test में जांचना होगा।
+- जिस hosting पर gateway चलेगा, वहां लंबी streaming (SSE) का असली बर्ताव live test में जांचना होगा। Render का free plan 15 मिनट बाद सो जाता है, इसलिए gateway के लिए वह Starter plan पर ही ठीक रहेगा।
 - Live चैट test (असली Surplus के साथ) और load test अभी नहीं हुए हैं।
-- Rate limits, queue और budget का हिसाब एक process की memory में है। अभी Render पर एक instance है, ठीक है, लेकिन कई instances पर ले जाने से पहले इसे shared storage में ले जाना होगा।
+- Rate limits, queue और budget का हिसाब एक process की memory में है। अभी एक ही instance है, ठीक है, लेकिन कई instances पर ले जाने से पहले इसे shared storage में ले जाना होगा।
 - Budget की जांच request से **पहले** होती है, इसलिए एक साथ चल रही requests cap को थोड़ा पार कर सकती हैं।

@@ -3,7 +3,7 @@
 `MITRIFY_ADMIN_ONLY=1` लगाने पर पूरा Mitrify सिर्फ़ admin के लिए खुलता है। यह server पर जांचा जाता है।
 बटन छिपाने पर निर्भर नहीं है।
 
-## चालू करना (Render → mitrify service → Environment)
+## चालू करना (Hostinger → mitrify.com → Environment variables)
 
 ```
 ADMIN_ID=<आपका admin नाम>
@@ -11,9 +11,9 @@ ADMIN_PASSWORD=<कम से कम 10 अक्षर, मज़बूत>
 MITRIFY_ADMIN_ONLY=1
 ```
 
-Save करने पर Render restart करेगा। उसके बाद `mitrify.com` खोलने पर हर कोई `/admin/login` पर पहुंचता है।
+Save करके **Redeploy** करें। उसके बाद `mitrify.com` खोलने पर हर कोई `/admin/login` पर पहुंचता है।
 
-> Render वह जगह है जहां Mitrify का server चलता है, Hostinger में नहीं। Hostinger में सिर्फ़ DNS है।
+> `mitrify.com` Hostinger पर चलता है। पहले `docs/hostinger-setup.md` की database और login settings करें।
 
 ## क्या होता है
 - बिना login कोई पेज नहीं खुलता (सब `/admin/login` पर जाते हैं), और कोई API जवाब नहीं देता (403)।
@@ -28,8 +28,8 @@ Save करने पर Render restart करेगा। उसके बा�
 लॉगिन पेज पर ही रुकेगा। Doctor का AI assistant भी बंद रहता है। ऑनलाइन registration और payments भी नहीं चलेंगे।
 
 ## वापस पहले जैसा करना
-Render में `MITRIFY_ADMIN_ONLY` हटा दें (या `0` कर दें)। साइट तुरंत पहले जैसी हो जाती है।
+Hostinger में `MITRIFY_ADMIN_ONLY` हटा दें (फिर Redeploy) (या `0` कर दें)। साइट तुरंत पहले जैसी हो जाती है।
 
 ## ध्यान रखें
-- Password बदलना है तो Render में `ADMIN_PASSWORD` बदलें। OTP से किया गया बदलाव सिर्फ़ तब तक रहता है जब तक server restart न हो।
+- Password बदलना है तो Hostinger में `ADMIN_PASSWORD` बदलें। OTP से किया गया बदलाव सिर्फ़ तब तक रहता है जब तक server restart न हो।
 - इस बदलाव से पहले `ADMIN_ID`/`ADMIN_PASSWORD` सेट नहीं थे, तो admin login पहले से बंद था। इसी वजह से login नहीं दिखता था।

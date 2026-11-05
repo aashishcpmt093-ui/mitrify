@@ -6,6 +6,8 @@ process.on("unhandledRejection", (reason) => {
   console.error("UNHANDLED REJECTION — server kept alive:", reason);
 });
 
+// Must stay the first import: it may build DATABASE_URL before anything reads it.
+import "./dbEnv";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
