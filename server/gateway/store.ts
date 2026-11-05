@@ -135,6 +135,8 @@ export interface GatewayStore {
   getCustomerByEmail(email: string): Promise<CustomerRecord | null>;
   listCustomers(): Promise<CustomerRecord[]>;
   updateCustomer(id: string, patch: Partial<Pick<CustomerRecord, "name" | "passwordHash" | "disabledAt">>): Promise<void>;
+  /** Removes the account. Its credit history and usage rows stay, as bookkeeping. False if there was no such customer. */
+  deleteCustomer(id: string): Promise<boolean>;
   /** Moves the balance by delta (credit +, debit -) in one step and writes the ledger row. Null if no such customer. */
   adjustBalance(customerId: string, deltaUsd: number, kind: LedgerEntry["kind"], ref: string, note: string): Promise<number | null>;
   listLedger(customerId: string, limit: number): Promise<LedgerEntry[]>;
@@ -213,6 +215,9 @@ export class MemoryStore implements GatewayStore {
   async updateCustomer(id: string, patch: Partial<Pick<CustomerRecord, "name" | "passwordHash" | "disabledAt">>) {
     const c = this.customers.get(id);
     if (c) this.customers.set(id, { ...c, ...patch });
+  }
+  async deleteCustomer(id: string) {
+    return this.customers.delete(id);
   }
   async adjustBalance(customerId: string, deltaUsd: number, kind: LedgerEntry["kind"], ref: string, note: string) {
     const c = this.customers.get(customerId);

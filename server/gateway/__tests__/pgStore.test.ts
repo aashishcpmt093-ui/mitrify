@@ -131,5 +131,13 @@ describe("PgStore", { skip: !url && "set GATEWAY_TEST_DATABASE_URL to run" }, ()
     assert.equal(rows[0].billedCostUsd, 0.003);
     assert.deepEqual(await store.listUsageForClients(["1b2c3d4e-5f60-4718-8293-ffffffffffff"], new Date(0), 10), []);
     assert.deepEqual(await store.listUsageForClients([], new Date(0), 10), []);
+
+    // Deleting removes the account but keeps the ledger.
+    assert.equal(await store.deleteCustomer(c.id), true);
+    assert.equal(await store.getCustomer(c.id), null);
+    assert.equal(await store.deleteCustomer(c.id), false);
+    assert.equal(await store.deleteCustomer("'; drop table x; --"), false);
+    assert.equal((await store.listLedger(c.id, 100)).length, 51);
+    assert.equal(await store.createCustomer({ ...c, id: "8b3e5d2f-3c4b-4e6d-9fa0-123456789abc" }), true, "the e-mail is free again");
   });
 });

@@ -5,7 +5,7 @@
 // the repository. When a variable is missing the gateway stays off, it never falls back to a default
 // secret.
 
-export const PROVIDER_IDS = ["surplus", "routerone", "siliconflow", "deepinfra", "novita"] as const;
+export const PROVIDER_IDS = ["surplus", "routerone", "siliconflow", "deepinfra", "novita", "openrouter"] as const;
 export type ProviderId = (typeof PROVIDER_IDS)[number] | string;
 
 export type ProviderStatus = "active" | "pending_approval" | "not_configured" | "invalid_config";
@@ -70,7 +70,14 @@ export interface GatewayConfig {
   providers: ProviderConfig[];
 }
 
+// Fixed, documented addresses of providers whose OpenAI-compatible API address is public and stable.
+// A setting in the environment still wins. Only https addresses of the provider itself belong here.
+const DEFAULT_BASE_URLS: Record<string, string> = {
+  openrouter: "https://openrouter.ai/api/v1",
+};
+
 const LABELS: Record<string, string> = {
+  openrouter: "OpenRouter",
   surplus: "Surplus Intelligence",
   routerone: "Router One",
   siliconflow: "SiliconFlow",
@@ -106,7 +113,7 @@ function list(raw: string | undefined): string[] {
 export function loadProvider(env: Env, id: string, index: number): ProviderConfig {
   const up = id.toUpperCase();
   const apiKey = env[`MITRIFY_${up}_API_KEY`]?.trim() || null;
-  const rawUrl = env[`MITRIFY_${up}_BASE_URL`]?.trim() || null;
+  const rawUrl = env[`MITRIFY_${up}_BASE_URL`]?.trim() || DEFAULT_BASE_URLS[id] || null;
   const approved = env[`MITRIFY_${up}_APPROVED`] === "1";
   let baseUrl: string | null = null;
   let status: ProviderStatus = "active";
