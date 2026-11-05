@@ -6,7 +6,8 @@ import { BodyTooLargeError, clientIp, readRawBody, sendError, sendJson } from ".
 import { JsonScanError, findTopLevelModel, replaceTopLevelModel } from "./jsonModel";
 import { bearerToken, displayPrefix, generateApiKey, hashApiKey, looksLikeApiKey, setupCodeMatches } from "./keys";
 import { CircuitBreaker, Lockout, QueueFullError, QueueTimeoutError, RateLimiter, Semaphore } from "./limits";
-import type { CatalogSnapshot, ClientRecord, GatewayStore, PriceEntry, UsageRow } from "./store";
+import { PortalApi } from "./portal";
+import type { CatalogSnapshot, ClientRecord, CustomerRecord, GatewayStore, PriceEntry, UsageRow } from "./store";
 import { SseWatcher, costUsd, readUsage, type Usage } from "./usage";
 
 // The Mitrify AI Gateway.
@@ -40,6 +41,8 @@ interface Candidate {
 
 interface AuthedClient {
   record: ClientRecord;
+  /** The API portal customer who owns the key, when there is one. */
+  customer: CustomerRecord | null;
 }
 
 function startOfUtcDay(t: number) {
@@ -61,7 +64,12 @@ function publicClient(c: ClientRecord) {
     revokedAt: c.revokedAt,
     rotatedFrom: c.rotatedFrom,
     lastUsedAt: c.lastUsedAt,
+    customerId: c.customerId,
   };
+}
+
+export function publicKey(c: ClientRecord) {
+  return publicClient(c);
 }
 
 export interface GatewayDeps {
@@ -71,13 +79,14 @@ export interface GatewayDeps {
 }
 
 export class Gateway {
+  readonly portal: PortalApi;
   readonly semaphores = new Map<string, Semaphore>();
   readonly breakers = new Map<string, CircuitBreaker>();
   private rate: RateLimiter;
   private lockout: Lockout;
   private fetchImpl: typeof fetch;
-  private now: () => number;
-  private log: Log;
+  readonly now: () => number;
+  readonly log: Log;
   private inflight = 0;
   private snapshot: CatalogSnapshot | null = null;
   private clientCache = new Map<string, { at: number; rec: ClientRecord | null }>();
@@ -93,6 +102,7 @@ export class Gateway {
     this.fetchImpl = deps.fetch ?? fetch;
     this.now = deps.now ?? Date.now;
     this.log = deps.log ?? ((m) => console.log(`[gateway] ${m}`));
+    this.portal = new PortalApi(this);
     this.rate = new RateLimiter(this.now);
     this.lockout = new Lockout(this.now);
     for (const p of config.providers) {
@@ -113,6 +123,7 @@ export class Gateway {
     try {
       if (path === "/healthz") return sendJson(res, 200, { status: "ok" });
       if (path.startsWith("/v1/")) return await this.handleClient(req, res, path);
+      if (path === "/portal-api" || path.startsWith("/portal-api/")) return await this.portal.handle(req, res, path);
       if (path === "/admin" || path.startsWith("/admin/")) return await this.handleAdmin(req, res, path);
       return sendError(res, 404, "not_found", "Unknown path.");
     } catch (err) {
@@ -136,7 +147,7 @@ export class Gateway {
     return this.settingsCache;
   }
 
-  private invalidateCaches() {
+  invalidateCaches() {
     this.settingsCache = null;
     this.clientCache.clear();
     this.pricesCache = null;
@@ -211,6 +222,14 @@ export class Gateway {
       sendError(res, 403, "insufficient_scope", `This API key does not have the ${scope} permission.`);
       return null;
     }
+    let customer: CustomerRecord | null = null;
+    if (rec.customerId) {
+      customer = await this.store.getCustomer(rec.customerId);
+      if (!customer || customer.disabledAt) {
+        sendError(res, 403, "account_disabled", "This account is switched off. Please contact the owner.");
+        return null;
+      }
+    }
     const r = this.rate.take(rec.id, rec.rpm);
     if (!r.ok) {
       sendError(res, 429, "rate_limited", "Too many requests for this API key.", { "retry-after": String(r.retryAfterSec) });
@@ -220,7 +239,7 @@ export class Gateway {
       rec.lastUsedAt = new Date(t);
       this.store.updateClient(rec.id, { lastUsedAt: rec.lastUsedAt }).catch(() => {});
     }
-    return { record: rec };
+    return { record: rec, customer };
   }
 
   private async handleClient(req: IncomingMessage, res: ServerResponse, path: string) {
@@ -228,7 +247,7 @@ export class Gateway {
       if (req.method !== "GET") return sendError(res, 405, "method_not_allowed", "Use GET.");
       const c = await this.authenticateClient(req, res, "models:read");
       if (!c) return;
-      return this.listModels(res);
+      return this.listModels(res, !!c.customer);
     }
     if (path === "/v1/chat/completions") {
       if (req.method !== "POST") return sendError(res, 405, "method_not_allowed", "Use POST.");
@@ -239,9 +258,11 @@ export class Gateway {
     return sendError(res, 404, "not_found", "Only /v1/chat/completions and /v1/models are available in this pilot.");
   }
 
-  private async listModels(res: ServerResponse) {
+  private async listModels(res: ServerResponse, resale: boolean) {
     const sw = await this.switches();
-    const usable = new Map(this.config.providers.filter((p) => this.providerUsable(p, sw.disabled)).map((p) => [p.id, p]));
+    const usable = new Map(
+      this.config.providers.filter((p) => this.providerUsable(p, sw.disabled) && (!resale || p.resaleApproved)).map((p) => [p.id, p]),
+    );
     const data = (await this.prices())
       .filter((p) => p.enabled && usable.has(p.provider))
       .map((p) => ({ id: p.upstreamModel, object: "model", owned_by: p.provider, mitrify_provider: p.provider }));
@@ -303,9 +324,14 @@ export class Gateway {
       return sendError(res, 429, "budget_exceeded", "Today's budget for this API key is used up.", { "retry-after": "3600" });
     }
 
+    // A customer needs credit left. (Requests already running can take it slightly below zero.)
+    if (client.customer && client.customer.balanceUsd <= 0) {
+      return sendError(res, 402, "insufficient_balance", "No credit left on this account. Please ask the owner to add credit.");
+    }
+
     // Choose the route before forwarding. It does not change while the request runs.
     const mode: UsageRow["mode"] = model === AUTO_MODEL ? "auto-cheap" : "pinned";
-    const route = await this.route(mode, model, stream, req.headers["x-mitrify-provider"]);
+    const route = await this.route(mode, model, stream, req.headers["x-mitrify-provider"], !!client.customer);
     if ("error" in route) return sendError(res, route.status, route.code, route.error);
 
     if (this.inflight >= this.config.maxInflight) {
@@ -324,6 +350,7 @@ export class Gateway {
     model: string,
     stream: boolean,
     providerHeader: string | string[] | undefined,
+    resaleOnly: boolean,
   ): Promise<{ candidates: Candidate[] } | { status: number; code: string; error: string }> {
     const sw = await this.switches();
     const byId = new Map(this.config.providers.map((p) => [p.id, p]));
@@ -337,6 +364,7 @@ export class Gateway {
       for (const e of snap.entries) {
         const p = byId.get(e.provider);
         if (!p || !this.providerUsable(p, sw.disabled)) continue;
+        if (resaleOnly && !p.resaleApproved) continue;
         if (stream && !e.supportsStreaming) continue;
         if (!this.breakers.get(p.id)!.available()) continue;
         candidates.push({ provider: p, upstreamModel: e.upstreamModel, price: e });
@@ -357,7 +385,8 @@ export class Gateway {
         p.upstreamModel === model &&
         (!wanted || p.provider === wanted) &&
         byId.has(p.provider) &&
-        this.providerUsable(byId.get(p.provider)!, sw.disabled),
+        this.providerUsable(byId.get(p.provider)!, sw.disabled) &&
+        (!resaleOnly || byId.get(p.provider)!.resaleApproved),
     );
     if (matches.length === 0) {
       return { status: 404, code: "model_not_available", error: `Model "${model}" is not enabled at any active provider.` };
@@ -610,6 +639,7 @@ export class Gateway {
       usageSource: usage ? "upstream" : "missing",
       estimatedCostUsd: est,
       reconciledCostUsd: null,
+      billedCostUsd: null,
       currency: "USD",
       billingStatus: est === null ? "unknown" : "estimated",
       latencyMs: this.now() - o.started,
@@ -618,6 +648,12 @@ export class Gateway {
       createdAt: new Date(this.now()),
     };
     if (est) this.addSpend(row.clientId, est);
+    // Portal customers pay the listed price plus the explicit markup (0% unless the owner sets one).
+    // A request whose cost is unknown is not charged; it is marked unknown for the owner to settle.
+    const customer = o.client.customer;
+    if (customer && est !== null) {
+      row.billedCostUsd = Math.round(est * (1 + this.config.resaleMarkupPercent / 100) * 1e8) / 1e8;
+    }
     this.log(
       `${row.requestId} client=${o.client.record.name} ${row.provider}/${row.model} status=${httpStatus} ${outcome} ` +
         `in=${row.inputTokens ?? "?"} out=${row.outputTokens ?? "?"} cost=${est ?? "unknown"} ${row.latencyMs}ms`,
@@ -626,6 +662,14 @@ export class Gateway {
       await this.store.insertUsage(row);
     } catch (e) {
       this.log(`could not save usage for ${row.requestId}: ${(e as Error).message}`);
+    }
+    if (customer && row.billedCostUsd) {
+      try {
+        const left = await this.store.adjustBalance(customer.id, -row.billedCostUsd, "debit", row.requestId, "");
+        if (left === null) this.log(`customer ${customer.id} not found when charging ${row.requestId}`);
+      } catch (e) {
+        this.log(`could not charge ${row.requestId}: ${(e as Error).message}`);
+      }
     }
   }
 
@@ -673,7 +717,7 @@ export class Gateway {
 
   // ── Admin API (/admin/*) — needs the owner's setup code ────────────────────────────────────────
 
-  private async handleAdmin(req: IncomingMessage, res: ServerResponse, path: string) {
+  async handleAdmin(req: IncomingMessage, res: ServerResponse, path: string) {
     const ip = clientIp(req, this.config.trustProxy);
     if (this.config.adminIps.length && !this.config.adminIps.includes(ip.toLowerCase())) {
       return sendError(res, 403, "forbidden", "Admin access is not allowed from this address.");
@@ -783,6 +827,7 @@ export class Gateway {
       await this.audit("owner", "usage_reconciled", ip, { requestId: seg[2], costUsd: cost });
       return sendJson(res, 200, { requestId: seg[2], reconciledCostUsd: cost });
     }
+    if (seg[1] === "customers") return this.portal.admin(req, res, seg, body, ip);
     if (m === "GET /audit") return sendJson(res, 200, { events: await this.store.listAudit(200) });
     return sendError(res, 404, "not_found", "Unknown admin path.");
   }
@@ -810,6 +855,44 @@ export class Gateway {
     };
   }
 
+  /** Creates and stores a key. The key itself is returned once and never stored. */
+  async issueKey(o: {
+    name: string;
+    scopes: string[];
+    dailyBudgetUsd: number | null;
+    rpm: number;
+    expiresAt: Date | null;
+    rotatedFrom: string | null;
+    customerId: string | null;
+    actor: string;
+    ip: string;
+  }): Promise<{ record: ClientRecord; key: string }> {
+    const key = generateApiKey();
+    const record: ClientRecord = {
+      id: randomUUID(),
+      name: o.name,
+      keyHash: hashApiKey(key),
+      keyPrefix: displayPrefix(key),
+      scopes: o.scopes,
+      dailyBudgetUsd: o.dailyBudgetUsd,
+      rpm: o.rpm,
+      createdAt: new Date(this.now()),
+      expiresAt: o.expiresAt,
+      revokedAt: null,
+      rotatedFrom: o.rotatedFrom,
+      lastUsedAt: null,
+      customerId: o.customerId,
+    };
+    await this.store.createClient(record);
+    await this.audit(o.actor, o.rotatedFrom ? "key_rotated" : "key_created", o.ip, {
+      id: record.id,
+      name: o.name,
+      keyPrefix: record.keyPrefix,
+      customerId: o.customerId,
+    });
+    return { record, key };
+  }
+
   private async createKey(res: ServerResponse, body: unknown, ip: string, rotatedFrom: ClientRecord | null = null) {
     const b = (body ?? {}) as Record<string, unknown>;
     const name = rotatedFrom?.name ?? (typeof b.name === "string" ? b.name.trim() : "");
@@ -825,26 +908,19 @@ export class Gateway {
     const days = rotatedFrom ? null : b.expiresInDays === undefined ? 365 : Number(b.expiresInDays);
     if (days !== null && !(Number.isFinite(days) && days > 0 && days <= 3650)) return sendError(res, 400, "invalid_request", "expiresInDays must be 1-3650.");
 
-    const key = generateApiKey();
-    const t = this.now();
-    const rec: ClientRecord = {
-      id: randomUUID(),
+    const { record, key } = await this.issueKey({
       name,
-      keyHash: hashApiKey(key),
-      keyPrefix: displayPrefix(key),
       scopes: scopes as string[],
       dailyBudgetUsd: budget,
       rpm,
-      createdAt: new Date(t),
-      expiresAt: rotatedFrom ? rotatedFrom.expiresAt : new Date(t + days! * 86400_000),
-      revokedAt: null,
+      expiresAt: rotatedFrom ? rotatedFrom.expiresAt : new Date(this.now() + days! * 86400_000),
       rotatedFrom: rotatedFrom?.id ?? null,
-      lastUsedAt: null,
-    };
-    await this.store.createClient(rec);
-    await this.audit("owner", rotatedFrom ? "key_rotated" : "key_created", ip, { id: rec.id, name, keyPrefix: rec.keyPrefix });
+      customerId: rotatedFrom?.customerId ?? null,
+      actor: "owner",
+      ip,
+    });
     return sendJson(res, 201, {
-      ...publicClient(rec),
+      ...publicClient(record),
       key,
       warning: "This is the only time the key is shown. Store it in NavBharatAI's server settings, never in an app or browser.",
     });
@@ -869,7 +945,7 @@ export class Gateway {
     return this.createKey(res, {}, ip, c);
   }
 
-  private async audit(actor: string, action: string, ip: string, detail: Record<string, unknown>) {
+  async audit(actor: string, action: string, ip: string, detail: Record<string, unknown>) {
     try {
       await this.store.insertAudit({ at: new Date(this.now()), actor, action, ip, detail });
     } catch (e) {

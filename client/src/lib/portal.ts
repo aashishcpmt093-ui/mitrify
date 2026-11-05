@@ -24,3 +24,12 @@ export function getPortal(
   const label = hostname.split(".")[0];
   return isPortal(label) ? label : null;
 }
+
+// The API portal (customers of the API gateway, and the owner): mitrify.com/?portal=api or api.<domain>.
+// It is not a clinic portal, so it keeps Mitrify's own name.
+export function isApiPortal(
+  hostname: string = window.location.hostname,
+  search: string = window.location.search,
+): boolean {
+  return new URLSearchParams(search).get("portal") === "api" || hostname.split(".")[0] === "api";
+}

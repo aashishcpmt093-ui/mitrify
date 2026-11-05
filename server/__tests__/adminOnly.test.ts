@@ -4,7 +4,7 @@ import express from "express";
 import session from "express-session";
 import { createServer } from "http";
 import type { AddressInfo } from "net";
-import { adminOnlyEnabled, adminOnlyGate, blockWhileAdminOnly, safeEqual } from "../adminOnly";
+import { adminOnlyEnabled, adminOnlyGate, isPortalPage, safeEqual } from "../adminOnly";
 
 async function start() {
   const app = express();
@@ -24,7 +24,6 @@ async function start() {
   app.get("/api/profiles/me", (_req, res) => res.json({ secret: "profile" }));
   app.post("/api/jobs", (_req, res) => res.json({ created: true }));
   app.get("/admin/dashboard", (_req, res) => res.send("dashboard"));
-  app.use("/api/clinic-ai", blockWhileAdminOnly, (_req, res) => res.json({ ai: true }));
   const server = createServer(app);
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -78,14 +77,14 @@ describe("owner-only gate", () => {
     s.close();
   });
 
-  it("closes the AI assistant, which has no session, while owner-only is on", async () => {
+  it("keeps the clinic portals and the API portal pages open, but not other ?portal values or APIs", async () => {
     const s = await start();
-    process.env.MITRIFY_ADMIN_ONLY = "1";
-    try {
-      assert.equal((await fetch(s.url + "/api/clinic-ai/ask")).status, 403);
-    } finally {
-      delete process.env.MITRIFY_ADMIN_ONLY;
+    for (const p of ["doctors", "staff", "patients", "api"]) {
+      assert.equal((await fetch(`${s.url}/?portal=${p}`, { redirect: "manual" })).status, 200, p);
     }
+    assert.equal((await fetch(`${s.url}/?portal=other`, { redirect: "manual" })).status, 302);
+    assert.equal((await fetch(`${s.url}/api/profiles/me?portal=doctors`)).status, 403);
+    assert.equal((await fetch(`${s.url}/?portal=doctors`, { method: "POST" })).status, 403);
     s.close();
   });
 });
@@ -95,6 +94,13 @@ describe("owner-only switch and helpers", () => {
     assert.equal(adminOnlyEnabled({}), false);
     assert.equal(adminOnlyEnabled({ MITRIFY_ADMIN_ONLY: "true" }), false);
     assert.equal(adminOnlyEnabled({ MITRIFY_ADMIN_ONLY: "1" }), true);
+  });
+  it("recognises portal pages by query or by the first label of the host", () => {
+    assert.ok(isPortalPage({ hostname: "mitrify.com", query: { portal: "doctors" } } as any));
+    assert.ok(isPortalPage({ hostname: "staff.mitrify.com", query: {} } as any));
+    assert.ok(isPortalPage({ hostname: "api.mitrify.com", query: {} } as any));
+    assert.ok(!isPortalPage({ hostname: "mitrify.com", query: { portal: "admin" } } as any));
+    assert.ok(!isPortalPage({ hostname: "www.mitrify.com", query: {} } as any));
   });
   it("safeEqual compares strings only", () => {
     assert.ok(safeEqual("abc", "abc"));

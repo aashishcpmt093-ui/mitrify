@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "crypto";
 import type { NextFunction, Request, Response } from "express";
+import { PORTAL_KEYS } from "@shared/clinic";
 
 // Owner-only mode for the whole Mitrify site.
 //
@@ -8,7 +9,11 @@ import type { NextFunction, Request, Response } from "express";
 // Visitors are sent to /admin/login. It is checked on the server, so hiding buttons is not what
 // protects the site. Doctors, staff, patients and customers cannot sign in while it is on.
 //
-// Not covered by this gate: gateway.mitrify.com (it has its own keys and is mounted before this).
+// Not covered by this gate:
+//  - gateway.mitrify.com and /portal-api (the API gateway has its own keys and accounts and is mounted first);
+//  - the clinic portals (patients / staff / doctors) and the API portal, which sign in with their own
+//    accounts (Firebase for the clinic, Mitrify API accounts for the API portal). Their pages are open
+//    here, their data is protected by those accounts.
 
 export const MIN_ADMIN_PASSWORD_LENGTH = 10;
 
@@ -30,6 +35,15 @@ const OPEN_API = new Set([
 // images). The built files are the same for everyone and hold no data.
 const ASSET = /^\/(?:assets\/.+|[^/]+\.(?:js|mjs|css|map|svg|png|jpe?g|webp|gif|ico|woff2?|ttf|otf|webmanifest))$/i;
 
+const PORTAL_LABELS = new Set<string>([...PORTAL_KEYS, "api"]);
+
+/** Is this a page request for one of the portals (?portal=doctors or doctors.<domain>)? */
+export function isPortalPage(req: Pick<Request, "hostname" | "query">): boolean {
+  const label = String(req.hostname ?? "").split(".")[0].toLowerCase();
+  const asked = String(req.query?.portal ?? "").toLowerCase();
+  return PORTAL_LABELS.has(asked) || PORTAL_LABELS.has(label);
+}
+
 function isAdminSession(req: Request): boolean {
   return (req.session as { adminAuth?: boolean } | undefined)?.adminAuth === true;
 }
@@ -42,6 +56,8 @@ export function adminOnlyGate(req: Request, res: Response, next: NextFunction) {
   if (isAdminSession(req)) return next();
   if (OPEN_API.has(path)) return next();
   if (read && (path === "/admin/login" || ASSET.test(path))) return next();
+  // Pages only: a ?portal= value never opens an API.
+  if (read && !path.startsWith("/api/") && isPortalPage(req)) return next();
 
   res.set("Cache-Control", "no-store");
   if (path.startsWith("/api/")) {
@@ -49,13 +65,6 @@ export function adminOnlyGate(req: Request, res: Response, next: NextFunction) {
   }
   if (read) return res.redirect(302, "/admin/login");
   return res.status(403).send("Forbidden");
-}
-
-/** For the doctor's AI assistant, which is mounted before sessions exist: closed while owner-only. */
-export function blockWhileAdminOnly(_req: Request, res: Response, next: NextFunction) {
-  if (!adminOnlyEnabled()) return next();
-  res.set("Cache-Control", "no-store");
-  return res.status(403).json({ message: "This site is private. Only the owner can sign in." });
 }
 
 /** Compares two strings in constant time, without leaking their lengths. */

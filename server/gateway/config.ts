@@ -19,6 +19,11 @@ export interface ProviderConfig {
   apiKey: string | null;
   /** The owner confirmed this provider's terms allow this use (MITRIFY_<ID>_APPROVED=1). */
   approved: boolean;
+  /**
+   * The owner confirmed the provider's terms allow reselling or passing its models on to other people
+   * (MITRIFY_<ID>_RESALE_APPROVED=1). Customers of the API portal are only ever routed to such providers.
+   */
+  resaleApproved: boolean;
   /** Requests sent to this provider at the same time. Set it from the provider's verified limit. */
   maxConcurrency: number;
   /** Requests allowed to wait for a free slot; beyond this the client gets 429. */
@@ -54,6 +59,14 @@ export interface GatewayConfig {
   maxPriceAgeDays: number;
   maxAttempts: number;
   keyRotationGraceHours: number;
+  /** Signs API portal sign-in tokens. Without it (32+ characters) the portal accounts are off. */
+  portalSecret: string | null;
+  portalProblem: string | null;
+  /** Extra percent added to the provider's listed price for portal customers. 0 = same price. */
+  resaleMarkupPercent: number;
+  /** Shown to customers as the API address. */
+  publicBaseUrl: string;
+  maxKeysPerCustomer: number;
   providers: ProviderConfig[];
 }
 
@@ -134,6 +147,7 @@ export function loadProvider(env: Env, id: string, index: number): ProviderConfi
     baseUrl,
     apiKey,
     approved,
+    resaleApproved: env[`MITRIFY_${up}_RESALE_APPROVED`] === "1",
     // Conservative until the provider's real limit is verified and written in the environment.
     maxConcurrency: int(env, `MITRIFY_${up}_MAX_CONCURRENCY`, 4, 1),
     maxQueue: int(env, `MITRIFY_${up}_MAX_QUEUE`, 50, 0),
@@ -155,6 +169,14 @@ export function loadConfig(env: Env = process.env): GatewayConfig {
   } else {
     setupCode = rawCode;
   }
+
+  const rawSecret = env.MITRIFY_PORTAL_SECRET ?? "";
+  let portalSecret: string | null = null;
+  let portalProblem: string | null = null;
+  if (!rawSecret) portalProblem = "MITRIFY_PORTAL_SECRET is not set: API portal accounts are off";
+  else if (rawSecret.length < MIN_SETUP_CODE_LENGTH) portalProblem = `MITRIFY_PORTAL_SECRET is shorter than ${MIN_SETUP_CODE_LENGTH} characters: API portal accounts are off`;
+  else portalSecret = rawSecret;
+  const markup = num(env, "MITRIFY_RESALE_MARKUP_PERCENT");
 
   const extra = list(env.MITRIFY_GATEWAY_EXTRA_PROVIDERS).filter((id) => /^[a-z0-9]{2,32}$/.test(id));
   const ids = [...PROVIDER_IDS, ...extra.filter((id) => !(PROVIDER_IDS as readonly string[]).includes(id))];
@@ -179,6 +201,11 @@ export function loadConfig(env: Env = process.env): GatewayConfig {
     maxPriceAgeDays: int(env, "MITRIFY_GATEWAY_MAX_PRICE_AGE_DAYS", 30, 1),
     maxAttempts: Math.min(int(env, "MITRIFY_GATEWAY_MAX_ATTEMPTS", 2, 1), 3),
     keyRotationGraceHours: int(env, "MITRIFY_GATEWAY_KEY_ROTATION_GRACE_HOURS", 24, 0),
+    portalSecret,
+    portalProblem,
+    resaleMarkupPercent: markup !== null && markup <= 1000 ? markup : 0,
+    publicBaseUrl: env.MITRIFY_GATEWAY_PUBLIC_URL?.trim() || `https://${list(env.MITRIFY_GATEWAY_HOST || "gateway.mitrify.com")[0]}/v1`,
+    maxKeysPerCustomer: int(env, "MITRIFY_PORTAL_MAX_KEYS", 5, 1),
     providers: ids.map((id, i) => loadProvider(env, id, i)),
   };
 }
@@ -193,6 +220,7 @@ export function describeProvider(p: ProviderConfig) {
     apiKeyConfigured: !!p.apiKey,
     baseUrlHost: p.baseUrl ? new URL(p.baseUrl).host : null,
     approved: p.approved,
+    resaleApproved: p.resaleApproved,
     maxConcurrency: p.maxConcurrency,
     maxQueue: p.maxQueue,
     priority: p.priority,
