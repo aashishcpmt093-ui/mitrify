@@ -234,6 +234,39 @@ describe("API portal", () => {
     await login(g.url, "keys@example.com", "a-new-long-password");
   });
 
+  it("deleting a customer needs the typed email, stops every key, frees the email, and keeps the credit history", async () => {
+    const c = await newCustomer(g.url, "delete-me@example.com");
+    await admin(g.url, `/admin/customers/${c.customer.id}/credit`, { body: { amountUsd: 2, note: "test" } });
+    const token = await login(g.url, "delete-me@example.com", c.password!);
+    const key = await customerKey(g.url, token);
+
+    // Without the right email nothing happens.
+    assert.equal((await admin(g.url, `/admin/customers/${c.customer.id}/delete`, { body: {} })).status, 400);
+    assert.equal((await admin(g.url, `/admin/customers/${c.customer.id}/delete`, { body: { confirmEmail: "someone-else@example.com" } })).status, 400);
+    assert.ok(await g.store.getCustomer(c.customer.id), "still there");
+    assert.equal((await chat(g.url, key.key, '{"model":"resale-model"}')).status, 200);
+
+    // Only the owner can do it.
+    const noCode = await fetch(g.url + `/admin/customers/${c.customer.id}/delete`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirmEmail: "delete-me@example.com" }) });
+    assert.equal(noCode.status, 401);
+
+    const done = await admin(g.url, `/admin/customers/${c.customer.id}/delete`, { body: { confirmEmail: " Delete-Me@Example.com " } });
+    assert.equal(done.status, 200);
+    assert.equal((await done.json()).deleted, true);
+    assert.equal(await g.store.getCustomer(c.customer.id), null);
+    assert.equal((await chat(g.url, key.key, '{"model":"resale-model"}')).status, 401, "the key stops at once (it was revoked)");
+    assert.equal((await portal(g.url, "/me", { token })).status, 401, "the old sign-in token stops");
+    assert.equal((await portal(g.url, "/login", { body: { email: "delete-me@example.com", password: c.password } })).status, 401);
+    assert.ok(g.store.ledger.some((l) => l.customerId === c.customer.id), "the credit history stays");
+    assert.ok(g.store.audit.some((a) => a.action === "customer_deleted"));
+    assert.equal((await admin(g.url, `/admin/customers/${c.customer.id}/delete`, { body: { confirmEmail: "delete-me@example.com" } })).status, 404);
+
+    // The email can be used again, as a brand-new account with no credit.
+    const again = await newCustomer(g.url, "delete-me@example.com");
+    assert.notEqual(again.customer.id, c.customer.id);
+    assert.equal((await g.store.getCustomer(again.customer.id))!.balanceUsd, 0);
+  });
+
   it("owner credit and adjustment are validated and audited", async () => {
     const c = await newCustomer(g.url, "credit@example.com");
     for (const amountUsd of [0, -5, "5", NaN, 1e9]) {

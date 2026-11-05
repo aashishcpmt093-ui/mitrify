@@ -266,6 +266,21 @@ export class PortalApi {
       await this.gw.audit("owner", b.disabled ? "customer_disabled" : "customer_enabled", ip, { id: customer.id });
       return sendJson(res, 200, { id: customer.id, disabled: b.disabled });
     }
+    if (action === "delete" && method === "POST") {
+      // The owner must type the customer's e-mail, so one wrong tap or call cannot delete an account.
+      if (normEmail(b.confirmEmail) !== customer.email) {
+        return sendError(res, 400, "confirmation_required", "Send {\"confirmEmail\": <the customer's email>} to confirm the deletion.");
+      }
+      // Keys stop at once; the account goes; the credit history and usage rows stay for bookkeeping.
+      const now = new Date(this.gw.now());
+      for (const k of await store.listClientsForCustomer(customer.id)) {
+        if (!k.revokedAt) await store.updateClient(k.id, { revokedAt: now });
+      }
+      await store.deleteCustomer(customer.id);
+      this.gw.invalidateCaches();
+      await this.gw.audit("owner", "customer_deleted", ip, { id: customer.id, email: customer.email, forfeitedUsd: customer.balanceUsd });
+      return sendJson(res, 200, { id: customer.id, deleted: true, forfeitedUsd: customer.balanceUsd });
+    }
     if (action === "password" && method === "POST") {
       const given = typeof b.password === "string" ? b.password : null;
       if (given !== null && (given.length < MIN_PASSWORD || given.length > 200)) {

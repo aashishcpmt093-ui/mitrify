@@ -409,6 +409,23 @@ function Owner({ code, onLeave }: { code: string; onLeave: () => void }) {
                 >
                   History
                 </button>
+                <button
+                  className={`${btn2} border-red-500 text-red-700`}
+                  onClick={() => {
+                    const warn =
+                      `Delete ${c.email}? Their keys stop at once and the account is removed.` +
+                      (c.balanceUsd > 0 ? ` The remaining credit (${usd(c.balanceUsd)}) is lost.` : "") +
+                      `\n\nType the email to confirm:`;
+                    const typed = prompt(warn);
+                    if (typed === null) return;
+                    void run(async () => {
+                      await call(`/owner/customers/${c.id}/delete`, { code, body: { confirmEmail: typed } });
+                      setLedger(null);
+                    });
+                  }}
+                >
+                  Delete
+                </button>
               </div>
               {ledger && ledger.id === c.id && (
                 <ul className="text-xs space-y-1">

@@ -311,6 +311,11 @@ export class PgStore implements GatewayStore {
     vals.push(id);
     await this.pool.query(`UPDATE gateway_customers SET ${sets.join(", ")} WHERE id = $${vals.length}`, vals);
   }
+  async deleteCustomer(id: string) {
+    if (!UUID.test(id)) return false;
+    const r = await this.pool.query("DELETE FROM gateway_customers WHERE id = $1", [id]);
+    return (r.rowCount ?? 0) > 0;
+  }
   async adjustBalance(customerId: string, deltaUsd: number, kind: LedgerEntry["kind"], ref: string, note: string) {
     if (!UUID.test(customerId)) return null;
     const db = await this.pool.connect();
