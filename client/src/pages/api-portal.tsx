@@ -275,6 +275,178 @@ function Customer({ token, onSignOut }: { token: string; onSignOut: () => void }
   );
 }
 
+// ── Owner: prices and models ─────────────────────────────────────────────────────────────────────
+
+function Prices({ code, providers }: { code: string; providers: Obj[] }) {
+  const [prices, setPrices] = useState<Obj[]>([]);
+  const [pool, setPool] = useState<Obj[]>([]);
+  const [q, setQ] = useState("");
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [manual, setManual] = useState(false);
+  const [f, setF] = useState({ provider: "", model: "", input: "", output: "", cached: "", url: "" });
+
+  const load = useCallback(async () => {
+    try {
+      const [p, c] = await Promise.all([call("/owner/prices", { code }), call("/owner/catalog", { code })]);
+      setPrices(p.prices);
+      setPool(c.entries ?? []);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }, [code]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const run = async (fn: () => Promise<string | void>) => {
+    setBusy(true);
+    setErr("");
+    setMsg("");
+    try {
+      const m = await fn();
+      if (m) setMsg(m);
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const importer = providers.find((p) => p.id === "openrouter" && p.status === "active");
+  const needle = q.trim().toLowerCase();
+  const shown = prices
+    .filter((p) => !needle || `${p.provider} ${p.upstreamModel}`.toLowerCase().includes(needle))
+    .sort((a, b) => a.inputPerMTokUsd + a.outputPerMTokUsd - (b.inputPerMTokUsd + b.outputPerMTokUsd))
+    .slice(0, 40);
+  // The box changes at once; if the server refuses, the list is reloaded and the box goes back.
+  const flag = (p: Obj, key: "enabled" | "qualityPassed", value: boolean) => {
+    setPrices((prev) => prev.map((x) => (x.provider === p.provider && x.upstreamModel === p.upstreamModel ? { ...x, [key]: value } : x)));
+    return run(async () => void (await call("/owner/prices/flags", { code, body: { provider: p.provider, upstreamModel: p.upstreamModel, [key]: value } })));
+  };
+
+  return (
+    <Card title={`Prices and models (${prices.length})`}>
+      {err && <Notice kind="error">{err}</Notice>}
+      {msg && <Notice kind="ok">{msg}</Notice>}
+      <p className="text-sm text-muted-foreground">
+        <b>On</b>: the model can be called and is listed. <b>Pool</b>: you checked its quality, so "cheapest" may choose it. Prices are dollars per 1 million tokens.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {importer && (
+          <button
+            className={btn2}
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                const r = await call("/owner/prices/import", { code, body: { provider: "openrouter" } });
+                return `OpenRouter: ${r.added} new models (switched off), ${r.updated} updated.`;
+              })
+            }
+          >
+            Import prices from OpenRouter
+          </button>
+        )}
+        <button
+          className={btn2}
+          disabled={busy}
+          onClick={() =>
+            run(async () => {
+              const r = await call("/owner/catalog/refresh", { code, body: {} });
+              return `Cheapest pool rebuilt: ${r.entries.length} models.`;
+            })
+          }
+        >
+          Rebuild cheapest pool
+        </button>
+      </div>
+
+      {pool.length > 0 && (
+        <div className="rounded border p-2 text-xs space-y-1">
+          <p className="font-medium">Cheapest pool today</p>
+          {pool.map((e: Obj) => (
+            <p key={`${e.provider}/${e.upstreamModel}`} className="break-all">
+              {e.upstreamModel} · {e.provider} · {usd(e.blendedPerMTokUsd)}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <input className={input} placeholder="Search models (name or provider)" value={q} onChange={(e) => setQ(e.target.value)} />
+      <ul className="space-y-2">
+        {shown.map((p) => (
+          <li key={`${p.provider}/${p.upstreamModel}`} className="rounded border p-2 text-sm">
+            <p className="break-all font-medium">{p.upstreamModel}</p>
+            <p className="text-xs text-muted-foreground">
+              {p.provider} · in {usd(p.inputPerMTokUsd)} · out {usd(p.outputPerMTokUsd)}
+            </p>
+            <div className="mt-1 flex gap-4">
+              <label className="flex items-center gap-1">
+                <input type="checkbox" checked={!!p.enabled} disabled={busy} onChange={(e) => flag(p, "enabled", e.target.checked)} /> On
+              </label>
+              <label className="flex items-center gap-1">
+                <input type="checkbox" checked={!!p.qualityPassed} disabled={busy} onChange={(e) => flag(p, "qualityPassed", e.target.checked)} /> Pool
+              </label>
+            </div>
+          </li>
+        ))}
+        {!shown.length && <li className="text-sm text-muted-foreground">{prices.length ? "No model matches." : "No prices yet. Import them, or add one by hand."}</li>}
+      </ul>
+      {prices.length > shown.length && <p className="text-xs text-muted-foreground">Showing the cheapest {shown.length}. Type in the search box to find others.</p>}
+
+      <button className="text-sm underline" onClick={() => setManual(!manual)}>
+        {manual ? "Hide" : "Add a price by hand"}
+      </button>
+      {manual && (
+        <form
+          className="space-y-2"
+          onSubmit={(e: FormEvent) => {
+            e.preventDefault();
+            void run(async () => {
+              await call("/owner/prices", {
+                code,
+                method: "PUT",
+                body: {
+                  provider: f.provider,
+                  upstreamModel: f.model.trim(),
+                  inputPerMTokUsd: Number(f.input),
+                  outputPerMTokUsd: Number(f.output),
+                  cachedInputPerMTokUsd: f.cached === "" ? null : Number(f.cached),
+                  sourceUrl: f.url.trim(),
+                  verifiedAt: new Date().toISOString().slice(0, 10),
+                  enabled: false,
+                  qualityPassed: false,
+                },
+              });
+              setF({ ...f, model: "", input: "", output: "", cached: "" });
+              return "Saved, switched off. Turn it On in the list when you are ready.";
+            });
+          }}
+        >
+          <select className={input} value={f.provider} onChange={(e) => setF({ ...f, provider: e.target.value })} required>
+            <option value="">Provider...</option>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          <input className={input} placeholder="Model name, exactly as the provider writes it" value={f.model} onChange={(e) => setF({ ...f, model: e.target.value })} required />
+          <input className={input} placeholder="Input price, $ per 1M tokens" inputMode="decimal" value={f.input} onChange={(e) => setF({ ...f, input: e.target.value })} required />
+          <input className={input} placeholder="Output price, $ per 1M tokens" inputMode="decimal" value={f.output} onChange={(e) => setF({ ...f, output: e.target.value })} required />
+          <input className={input} placeholder="Cached input price (optional)" inputMode="decimal" value={f.cached} onChange={(e) => setF({ ...f, cached: e.target.value })} />
+          <input className={input} type="url" placeholder="Link of the provider's official price page (https://...)" value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} required />
+          <button className={btn} type="submit" disabled={busy}>
+            Save price
+          </button>
+        </form>
+      )}
+    </Card>
+  );
+}
+
 // ── Owner ────────────────────────────────────────────────────────────────────────────────────────
 
 function Owner({ code, onLeave }: { code: string; onLeave: () => void }) {
@@ -349,6 +521,8 @@ function Owner({ code, onLeave }: { code: string; onLeave: () => void }) {
           </button>
         </Card>
       )}
+
+      {status && <Prices code={code} providers={status.providers} />}
 
       <Card title={`Customers (${customers.length})`}>
         <ul className="space-y-3">

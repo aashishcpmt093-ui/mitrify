@@ -7,6 +7,7 @@ import { JsonScanError, findTopLevelModel, replaceTopLevelModel } from "./jsonMo
 import { bearerToken, displayPrefix, generateApiKey, hashApiKey, looksLikeApiKey, setupCodeMatches } from "./keys";
 import { CircuitBreaker, Lockout, QueueFullError, QueueTimeoutError, RateLimiter, Semaphore } from "./limits";
 import { PortalApi } from "./portal";
+import { importPrices, supportsImport } from "./priceImport";
 import type { CatalogSnapshot, ClientRecord, CustomerRecord, GatewayStore, PriceEntry, UsageRow } from "./store";
 import { SseWatcher, costUsd, readUsage, type Usage } from "./usage";
 
@@ -690,6 +691,16 @@ export class Gateway {
   async refreshCatalogIfDue() {
     const latest = this.snapshot;
     if (latest && this.now() - latest.createdAt.getTime() < 24 * 60 * 60 * 1000) return;
+    // Fresh prices first (providers that publish them), then the pool. Either step failing keeps the old data.
+    for (const p of this.config.providers) {
+      if (!supportsImport(p.id) || p.status !== "active") continue;
+      try {
+        const r = await importPrices(p, this.store, this.fetchImpl, new Date(this.now()));
+        this.log(`prices from ${p.id}: ${r.added} new, ${r.updated} updated`);
+      } catch (e) {
+        this.log(`price import from ${p.id} failed, keeping the old prices: ${(e as Error).message}`);
+      }
+    }
     try {
       await this.refreshCatalog();
     } catch (e) {
@@ -796,6 +807,37 @@ export class Gateway {
       this.pricesCache = null;
       await this.audit("owner", "prices_updated", ip, { entries: saved });
       return sendJson(res, 200, { saved, note: "Run POST /admin/catalog/refresh to rebuild today's pool now." });
+    }
+    if (m === "POST /prices/import") {
+      const id = typeof (body as { provider?: unknown })?.provider === "string" ? (body as { provider: string }).provider : "";
+      const p = this.config.providers.find((x) => x.id === id);
+      if (!p || !supportsImport(p.id)) return sendError(res, 400, "invalid_request", "That provider has no price list to import. Add its prices by hand.");
+      try {
+        const r = await importPrices(p, this.store, this.fetchImpl, new Date(this.now()));
+        this.pricesCache = null;
+        await this.audit("owner", "prices_imported", ip, { provider: p.id, added: r.added, updated: r.updated });
+        return sendJson(res, 200, { ...r, note: "New models are switched off. Switch on the ones you want, then rebuild the pool." });
+      } catch (e) {
+        return sendError(res, 502, "import_failed", (e as Error).message);
+      }
+    }
+    if (m === "POST /prices/flags") {
+      const b = (body ?? {}) as Record<string, unknown>;
+      const cur = (await this.store.listPrices()).find((x) => x.provider === b.provider && x.upstreamModel === b.upstreamModel);
+      if (!cur) return sendError(res, 404, "not_found", "No such price entry.");
+      for (const k of ["enabled", "qualityPassed"] as const) {
+        if (b[k] !== undefined && typeof b[k] !== "boolean") return sendError(res, 400, "invalid_request", `${k} must be true or false.`);
+      }
+      const next = {
+        ...cur,
+        enabled: typeof b.enabled === "boolean" ? b.enabled : cur.enabled,
+        qualityPassed: typeof b.qualityPassed === "boolean" ? b.qualityPassed : cur.qualityPassed,
+        updatedAt: new Date(this.now()),
+      };
+      await this.store.upsertPrice(next);
+      this.pricesCache = null;
+      await this.audit("owner", "price_flags_changed", ip, { provider: cur.provider, model: cur.upstreamModel, enabled: next.enabled, qualityPassed: next.qualityPassed });
+      return sendJson(res, 200, { provider: cur.provider, upstreamModel: cur.upstreamModel, enabled: next.enabled, qualityPassed: next.qualityPassed });
     }
     if (m === "POST /catalog/refresh") {
       const snap = await this.refreshCatalog();
