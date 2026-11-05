@@ -1,0 +1,200 @@
+// Mitrify AI Gateway — configuration.
+//
+// Everything is read from the server's environment (Render / Hostinger / VPS settings), never from
+// the code or the browser. Nothing here is a secret value: only the NAMES of the variables live in
+// the repository. When a variable is missing the gateway stays off, it never falls back to a default
+// secret.
+
+export const PROVIDER_IDS = ["surplus", "routerone", "siliconflow", "deepinfra", "novita"] as const;
+export type ProviderId = (typeof PROVIDER_IDS)[number] | string;
+
+export type ProviderStatus = "active" | "pending_approval" | "not_configured" | "invalid_config";
+
+export interface ProviderConfig {
+  id: ProviderId;
+  label: string;
+  /** https base URL of the provider's OpenAI-compatible API, e.g. https://api.example.com/v1. */
+  baseUrl: string | null;
+  /** Upstream API key. Never logged, never returned by any endpoint. */
+  apiKey: string | null;
+  /** The owner confirmed this provider's terms allow this use (MITRIFY_<ID>_APPROVED=1). */
+  approved: boolean;
+  /** Requests sent to this provider at the same time. Set it from the provider's verified limit. */
+  maxConcurrency: number;
+  /** Requests allowed to wait for a free slot; beyond this the client gets 429. */
+  maxQueue: number;
+  /** Optional path for an active health probe, e.g. "/models". Empty = passive health only. */
+  healthPath: string | null;
+  /** Lower number = preferred when two entries cost the same. */
+  priority: number;
+  status: ProviderStatus;
+  statusReason: string;
+}
+
+export interface GatewayConfig {
+  enabled: boolean;
+  hosts: string[];
+  /** The owner's code, required for every admin action including creating API keys. */
+  setupCode: string | null;
+  setupCodeProblem: string | null;
+  envKillSwitch: boolean;
+  maxBodyBytes: number;
+  firstByteTimeoutMs: number;
+  idleTimeoutMs: number;
+  totalTimeoutMs: number;
+  queueTimeoutMs: number;
+  maxInflight: number;
+  /** Total estimated spend allowed per day (UTC) across all clients. null = not set = traffic refused. */
+  globalDailyBudgetUsd: number | null;
+  /** Streaming requests must ask for usage (stream_options.include_usage) so they can be billed. */
+  requireStreamUsage: boolean;
+  trustProxy: boolean;
+  adminIps: string[];
+  poolSize: number;
+  maxPriceAgeDays: number;
+  maxAttempts: number;
+  keyRotationGraceHours: number;
+  providers: ProviderConfig[];
+}
+
+const LABELS: Record<string, string> = {
+  surplus: "Surplus Intelligence",
+  routerone: "Router One",
+  siliconflow: "SiliconFlow",
+  deepinfra: "DeepInfra",
+  novita: "Novita AI",
+};
+
+export const MIN_SETUP_CODE_LENGTH = 32;
+
+type Env = Record<string, string | undefined>;
+
+function int(env: Env, name: string, fallback: number, min = 0): number {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
+}
+
+function num(env: Env, name: string): number | null {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function list(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function loadProvider(env: Env, id: string, index: number): ProviderConfig {
+  const up = id.toUpperCase();
+  const apiKey = env[`MITRIFY_${up}_API_KEY`]?.trim() || null;
+  const rawUrl = env[`MITRIFY_${up}_BASE_URL`]?.trim() || null;
+  const approved = env[`MITRIFY_${up}_APPROVED`] === "1";
+  let baseUrl: string | null = null;
+  let status: ProviderStatus = "active";
+  let statusReason = "ready";
+
+  if (rawUrl) {
+    try {
+      const u = new URL(rawUrl);
+      // Fixed, server-side destinations only, and only over TLS (certificates are verified by Node).
+      if (u.protocol !== "https:" && !(env.MITRIFY_GATEWAY_ALLOW_HTTP_UPSTREAM === "1" && u.protocol === "http:")) {
+        status = "invalid_config";
+        statusReason = `MITRIFY_${up}_BASE_URL must start with https://`;
+      } else if (u.username || u.password || u.search || u.hash) {
+        status = "invalid_config";
+        statusReason = `MITRIFY_${up}_BASE_URL must not contain credentials, a query or a fragment`;
+      } else {
+        baseUrl = u.toString().replace(/\/+$/, "");
+      }
+    } catch {
+      status = "invalid_config";
+      statusReason = `MITRIFY_${up}_BASE_URL is not a valid URL`;
+    }
+  }
+
+  if (status === "active") {
+    if (!apiKey || !baseUrl) {
+      status = "not_configured";
+      statusReason = `set MITRIFY_${up}_API_KEY and MITRIFY_${up}_BASE_URL`;
+    } else if (!approved) {
+      status = "pending_approval";
+      statusReason = `terms not confirmed: set MITRIFY_${up}_APPROVED=1 after checking the provider's terms`;
+    }
+  }
+
+  return {
+    id,
+    label: LABELS[id] ?? id,
+    baseUrl,
+    apiKey,
+    approved,
+    // Conservative until the provider's real limit is verified and written in the environment.
+    maxConcurrency: int(env, `MITRIFY_${up}_MAX_CONCURRENCY`, 4, 1),
+    maxQueue: int(env, `MITRIFY_${up}_MAX_QUEUE`, 50, 0),
+    healthPath: env[`MITRIFY_${up}_HEALTH_PATH`]?.trim() || null,
+    priority: int(env, `MITRIFY_${up}_PRIORITY`, index + 1, 0),
+    status,
+    statusReason,
+  };
+}
+
+export function loadConfig(env: Env = process.env): GatewayConfig {
+  const rawCode = env.MITRIFY_GATEWAY_SETUP_CODE ?? "";
+  let setupCode: string | null = null;
+  let setupCodeProblem: string | null = null;
+  if (!rawCode) {
+    setupCodeProblem = "MITRIFY_GATEWAY_SETUP_CODE is not set: admin actions and API key creation are disabled";
+  } else if (rawCode.length < MIN_SETUP_CODE_LENGTH) {
+    setupCodeProblem = `MITRIFY_GATEWAY_SETUP_CODE is shorter than ${MIN_SETUP_CODE_LENGTH} characters: admin actions are disabled`;
+  } else {
+    setupCode = rawCode;
+  }
+
+  const extra = list(env.MITRIFY_GATEWAY_EXTRA_PROVIDERS).filter((id) => /^[a-z0-9]{2,32}$/.test(id));
+  const ids = [...PROVIDER_IDS, ...extra.filter((id) => !(PROVIDER_IDS as readonly string[]).includes(id))];
+
+  return {
+    enabled: env.MITRIFY_GATEWAY_ENABLED === "1",
+    hosts: list(env.MITRIFY_GATEWAY_HOST || "gateway.mitrify.com"),
+    setupCode,
+    setupCodeProblem,
+    envKillSwitch: env.MITRIFY_GATEWAY_KILL === "1",
+    maxBodyBytes: int(env, "MITRIFY_GATEWAY_MAX_BODY_BYTES", 8 * 1024 * 1024, 1024),
+    firstByteTimeoutMs: int(env, "MITRIFY_GATEWAY_FIRST_BYTE_TIMEOUT_MS", 120_000, 1000),
+    idleTimeoutMs: int(env, "MITRIFY_GATEWAY_IDLE_TIMEOUT_MS", 120_000, 1000),
+    totalTimeoutMs: int(env, "MITRIFY_GATEWAY_TOTAL_TIMEOUT_MS", 30 * 60_000, 1000),
+    queueTimeoutMs: int(env, "MITRIFY_GATEWAY_QUEUE_TIMEOUT_MS", 30_000, 0),
+    maxInflight: int(env, "MITRIFY_GATEWAY_MAX_INFLIGHT", 200, 1),
+    globalDailyBudgetUsd: num(env, "MITRIFY_GATEWAY_DAILY_BUDGET_USD"),
+    requireStreamUsage: env.MITRIFY_GATEWAY_REQUIRE_STREAM_USAGE !== "0",
+    trustProxy: env.MITRIFY_GATEWAY_TRUST_PROXY === "1",
+    adminIps: list(env.MITRIFY_GATEWAY_ADMIN_IPS),
+    poolSize: int(env, "MITRIFY_GATEWAY_POOL_SIZE", 10, 1),
+    maxPriceAgeDays: int(env, "MITRIFY_GATEWAY_MAX_PRICE_AGE_DAYS", 30, 1),
+    maxAttempts: Math.min(int(env, "MITRIFY_GATEWAY_MAX_ATTEMPTS", 2, 1), 3),
+    keyRotationGraceHours: int(env, "MITRIFY_GATEWAY_KEY_ROTATION_GRACE_HOURS", 24, 0),
+    providers: ids.map((id, i) => loadProvider(env, id, i)),
+  };
+}
+
+/** Safe view of a provider for admin screens: whether a key is set, never the key itself. */
+export function describeProvider(p: ProviderConfig) {
+  return {
+    id: p.id,
+    label: p.label,
+    status: p.status,
+    statusReason: p.statusReason,
+    apiKeyConfigured: !!p.apiKey,
+    baseUrlHost: p.baseUrl ? new URL(p.baseUrl).host : null,
+    approved: p.approved,
+    maxConcurrency: p.maxConcurrency,
+    maxQueue: p.maxQueue,
+    priority: p.priority,
+  };
+}

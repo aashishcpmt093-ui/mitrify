@@ -56,8 +56,9 @@ npm start          # Runs production server
 
 ## Admin Panel
 - URL: /admin/login
-- ID: aashishcpmt09
-- Password: 7742039808
+- ID and password: set ADMIN_ID and ADMIN_PASSWORD in the hosting environment. They are not written
+  in this file or in the code. (An older version of this file published them, so the old password
+  must be treated as known and changed.)
 
 ## Key Features
 - 3-role system: Customer, Provider, Admin
