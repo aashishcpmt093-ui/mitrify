@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import pg from "pg";
 import { PgStore } from "../pgStore";
-import type { ClientRecord, UsageRow } from "../store";
+import type { ClientRecord, CustomerRecord, UsageRow } from "../store";
 
 // Runs only when GATEWAY_TEST_DATABASE_URL points at a throwaway database, e.g.
 //   GATEWAY_TEST_DATABASE_URL=postgres://test@127.0.0.1:5433/gw npm run test:gateway
@@ -18,7 +18,7 @@ describe("PgStore", { skip: !url && "set GATEWAY_TEST_DATABASE_URL to run" }, ()
     store = new PgStore(pool);
     await store.init();
     await store.init(); // idempotent
-    await pool.query("TRUNCATE gateway_clients, gateway_usage, gateway_prices, gateway_price_snapshots, gateway_settings, gateway_audit");
+    await pool.query("TRUNCATE gateway_clients, gateway_usage, gateway_prices, gateway_price_snapshots, gateway_settings, gateway_audit, gateway_customers, gateway_ledger");
   });
   after(async () => pool?.end());
 
@@ -36,6 +36,7 @@ describe("PgStore", { skip: !url && "set GATEWAY_TEST_DATABASE_URL to run" }, ()
       revokedAt: null,
       rotatedFrom: null,
       lastUsedAt: null,
+      customerId: null,
     };
     await store.createClient(c);
     assert.equal((await store.findClientByHash("a".repeat(64)))!.dailyBudgetUsd, 1.5);
@@ -50,7 +51,7 @@ describe("PgStore", { skip: !url && "set GATEWAY_TEST_DATABASE_URL to run" }, ()
     const base: UsageRow = {
       requestId: "r1", clientId: "6f1c3b9e-1d2a-4c3b-9a8e-123456789abc", provider: "surplus", model: "m", requestedModel: "m",
       mode: "pinned", httpStatus: 200, outcome: "completed", inputTokens: 10, outputTokens: 20, cachedTokens: 0,
-      usageSource: "upstream", estimatedCostUsd: 0.25, reconciledCostUsd: null, currency: "USD", billingStatus: "estimated",
+      usageSource: "upstream", estimatedCostUsd: 0.25, reconciledCostUsd: null, billedCostUsd: null, currency: "USD", billingStatus: "estimated",
       latencyMs: 5, firstByteMs: 2, attempts: 1, createdAt: new Date(),
     };
     await store.insertUsage(base);
@@ -85,5 +86,50 @@ describe("PgStore", { skip: !url && "set GATEWAY_TEST_DATABASE_URL to run" }, ()
     assert.equal(await store.getSetting<boolean>("kill.global"), false);
     await store.insertAudit({ at: now, actor: "owner", action: "x", ip: "1.1.1.1", detail: { a: 1 } });
     assert.equal((await store.listAudit(5))[0].action, "x");
+  });
+
+  it("customers: unique e-mail, atomic balance changes with a ledger, keys and usage by customer", async () => {
+    const c: CustomerRecord = {
+      id: "7a2d4c1e-2b3a-4d5c-8e9f-0123456789ab", email: "a@x.io", name: "A", passwordHash: "$2a$10$x", balanceUsd: 0,
+      createdAt: new Date(), disabledAt: null,
+    };
+    assert.equal(await store.createCustomer(c), true);
+    assert.equal(await store.createCustomer({ ...c, id: "8b3e5d2f-3c4b-4e6d-9fa0-123456789abc" }), false, "same e-mail twice");
+    assert.equal((await store.getCustomerByEmail("a@x.io"))!.id, c.id);
+    assert.equal(await store.getCustomer("'; drop table x; --"), null);
+
+    assert.equal(await store.adjustBalance(c.id, 10, "credit", "", "top-up"), 10);
+    // Fifty charges at the same moment must all be counted, none lost.
+    await Promise.all(Array.from({ length: 50 }, (_, i) => store.adjustBalance(c.id, -0.01, "debit", "req-" + i, "")));
+    assert.equal((await store.getCustomer(c.id))!.balanceUsd, 9.5);
+    assert.equal((await store.listLedger(c.id, 100)).length, 51);
+    assert.equal((await store.listLedger(c.id, 1))[0].kind, "debit");
+    assert.equal(await store.adjustBalance("9c4f6e30-4d5c-4f7e-8ab1-23456789abcd", 1, "credit", "", ""), null);
+
+    await store.updateCustomer(c.id, { disabledAt: new Date(), passwordHash: "new-hash" });
+    const got = (await store.getCustomer(c.id))!;
+    assert.ok(got.disabledAt);
+    assert.equal(got.passwordHash, "new-hash");
+    assert.equal(got.email, "a@x.io");
+
+    const key: ClientRecord = {
+      id: "1b2c3d4e-5f60-4718-8293-a4b5c6d7e8f9", name: "k", keyHash: "c".repeat(64), keyPrefix: "mtf_live_zzz", scopes: ["chat:write"],
+      dailyBudgetUsd: null, rpm: 60, createdAt: new Date(), expiresAt: null, revokedAt: null, rotatedFrom: null, lastUsedAt: null, customerId: c.id,
+    };
+    await store.createClient(key);
+    assert.deepEqual((await store.listClientsForCustomer(c.id)).map((k) => k.id), [key.id]);
+    assert.deepEqual(await store.listClientsForCustomer("7a2d4c1e-2b3a-4d5c-8e9f-ffffffffffff"), []);
+    const row: UsageRow = {
+      requestId: "bill-1", clientId: key.id, provider: "p", model: "m", requestedModel: "m", mode: "pinned", httpStatus: 200,
+      outcome: "completed", inputTokens: 1, outputTokens: 1, cachedTokens: 0, usageSource: "upstream", estimatedCostUsd: 0.002,
+      reconciledCostUsd: null, billedCostUsd: 0.003, currency: "USD", billingStatus: "estimated", latencyMs: 1, firstByteMs: 1,
+      attempts: 1, createdAt: new Date(),
+    };
+    await store.insertUsage(row);
+    const rows = await store.listUsageForClients([key.id], new Date(0), 10);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].billedCostUsd, 0.003);
+    assert.deepEqual(await store.listUsageForClients(["1b2c3d4e-5f60-4718-8293-ffffffffffff"], new Date(0), 10), []);
+    assert.deepEqual(await store.listUsageForClients([], new Date(0), 10), []);
   });
 });

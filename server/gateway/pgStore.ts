@@ -3,7 +3,9 @@ import type {
   AuditEvent,
   CatalogSnapshot,
   ClientRecord,
+  CustomerRecord,
   GatewayStore,
+  LedgerEntry,
   PriceEntry,
   UsageRow,
 } from "./store";
@@ -95,8 +97,34 @@ CREATE TABLE IF NOT EXISTS gateway_audit (
   detail jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS gateway_audit_at_idx ON gateway_audit (at);
+
+-- API portal customers (added after the first gateway version; all statements are safe to repeat).
+CREATE TABLE IF NOT EXISTS gateway_customers (
+  id uuid PRIMARY KEY,
+  email text NOT NULL UNIQUE,
+  name text NOT NULL,
+  password_hash text NOT NULL,
+  balance_usd numeric(18,8) NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  disabled_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS gateway_ledger (
+  id bigserial PRIMARY KEY,
+  customer_id uuid NOT NULL,
+  kind text NOT NULL,
+  amount_usd numeric(18,8) NOT NULL,
+  balance_after_usd numeric(18,8) NOT NULL,
+  ref text NOT NULL DEFAULT '',
+  note text NOT NULL DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS gateway_ledger_customer_idx ON gateway_ledger (customer_id, id);
+ALTER TABLE gateway_clients ADD COLUMN IF NOT EXISTS customer_id uuid;
+CREATE INDEX IF NOT EXISTS gateway_clients_customer_idx ON gateway_clients (customer_id);
+ALTER TABLE gateway_usage ADD COLUMN IF NOT EXISTS billed_cost_usd numeric(18,8);
 `;
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const f = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 const d = (v: unknown): Date | null => (v ? new Date(v as string) : null);
 
@@ -114,6 +142,32 @@ function client(r: any): ClientRecord {
     revokedAt: d(r.revoked_at),
     rotatedFrom: r.rotated_from,
     lastUsedAt: d(r.last_used_at),
+    customerId: r.customer_id ?? null,
+  };
+}
+
+function customer(r: any): CustomerRecord {
+  return {
+    id: r.id,
+    email: r.email,
+    name: r.name,
+    passwordHash: r.password_hash,
+    balanceUsd: Number(r.balance_usd),
+    createdAt: new Date(r.created_at),
+    disabledAt: d(r.disabled_at),
+  };
+}
+
+function ledger(r: any): LedgerEntry {
+  return {
+    id: Number(r.id),
+    customerId: r.customer_id,
+    kind: r.kind,
+    amountUsd: Number(r.amount_usd),
+    balanceAfterUsd: Number(r.balance_after_usd),
+    ref: r.ref,
+    note: r.note,
+    createdAt: new Date(r.created_at),
   };
 }
 
@@ -133,6 +187,7 @@ function usage(r: any): UsageRow {
     usageSource: r.usage_source,
     estimatedCostUsd: f(r.estimated_cost_usd),
     reconciledCostUsd: f(r.reconciled_cost_usd),
+    billedCostUsd: f(r.billed_cost_usd),
     currency: r.currency,
     billingStatus: r.billing_status,
     latencyMs: r.latency_ms,
@@ -184,9 +239,9 @@ export class PgStore implements GatewayStore {
 
   async createClient(c: ClientRecord) {
     await this.pool.query(
-      `INSERT INTO gateway_clients (id, name, key_hash, key_prefix, scopes, daily_budget_usd, rpm, created_at, expires_at, revoked_at, rotated_from)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [c.id, c.name, c.keyHash, c.keyPrefix, c.scopes, c.dailyBudgetUsd, c.rpm, c.createdAt, c.expiresAt, c.revokedAt, c.rotatedFrom],
+      `INSERT INTO gateway_clients (id, name, key_hash, key_prefix, scopes, daily_budget_usd, rpm, created_at, expires_at, revoked_at, rotated_from, customer_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [c.id, c.name, c.keyHash, c.keyPrefix, c.scopes, c.dailyBudgetUsd, c.rpm, c.createdAt, c.expiresAt, c.revokedAt, c.rotatedFrom, c.customerId],
     );
   }
   async findClientByHash(hash: string) {
@@ -194,7 +249,7 @@ export class PgStore implements GatewayStore {
     return r.rows[0] ? client(r.rows[0]) : null;
   }
   async getClient(id: string) {
-    if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+    if (!UUID.test(id)) return null;
     const r = await this.pool.query("SELECT * FROM gateway_clients WHERE id = $1", [id]);
     return r.rows[0] ? client(r.rows[0]) : null;
   }
@@ -216,16 +271,95 @@ export class PgStore implements GatewayStore {
     await this.pool.query(`UPDATE gateway_clients SET ${sets.join(", ")} WHERE id = $${vals.length}`, vals);
   }
 
+  async listClientsForCustomer(customerId: string) {
+    if (!UUID.test(customerId)) return [];
+    const r = await this.pool.query("SELECT * FROM gateway_clients WHERE customer_id = $1 ORDER BY created_at DESC", [customerId]);
+    return r.rows.map(client);
+  }
+
+  async createCustomer(c: CustomerRecord) {
+    const r = await this.pool.query(
+      `INSERT INTO gateway_customers (id, email, name, password_hash, balance_usd, created_at, disabled_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (email) DO NOTHING`,
+      [c.id, c.email, c.name, c.passwordHash, c.balanceUsd, c.createdAt, c.disabledAt],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+  async getCustomer(id: string) {
+    if (!UUID.test(id)) return null;
+    const r = await this.pool.query("SELECT * FROM gateway_customers WHERE id = $1", [id]);
+    return r.rows[0] ? customer(r.rows[0]) : null;
+  }
+  async getCustomerByEmail(email: string) {
+    const r = await this.pool.query("SELECT * FROM gateway_customers WHERE email = $1", [email]);
+    return r.rows[0] ? customer(r.rows[0]) : null;
+  }
+  async listCustomers() {
+    const r = await this.pool.query("SELECT * FROM gateway_customers ORDER BY created_at DESC");
+    return r.rows.map(customer);
+  }
+  async updateCustomer(id: string, patch: Partial<Pick<CustomerRecord, "name" | "passwordHash" | "disabledAt">>) {
+    const cols: Record<string, string> = { name: "name", passwordHash: "password_hash", disabledAt: "disabled_at" };
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    for (const [k, v] of Object.entries(patch)) {
+      if (!cols[k]) continue;
+      vals.push(v);
+      sets.push(`${cols[k]} = $${vals.length}`);
+    }
+    if (!sets.length || !UUID.test(id)) return;
+    vals.push(id);
+    await this.pool.query(`UPDATE gateway_customers SET ${sets.join(", ")} WHERE id = $${vals.length}`, vals);
+  }
+  async adjustBalance(customerId: string, deltaUsd: number, kind: LedgerEntry["kind"], ref: string, note: string) {
+    if (!UUID.test(customerId)) return null;
+    const db = await this.pool.connect();
+    try {
+      await db.query("BEGIN");
+      const u = await db.query("UPDATE gateway_customers SET balance_usd = balance_usd + $2 WHERE id = $1 RETURNING balance_usd", [customerId, deltaUsd]);
+      if (!u.rows[0]) {
+        await db.query("ROLLBACK");
+        return null;
+      }
+      const after = Number(u.rows[0].balance_usd);
+      await db.query(
+        "INSERT INTO gateway_ledger (customer_id, kind, amount_usd, balance_after_usd, ref, note) VALUES ($1,$2,$3,$4,$5,$6)",
+        [customerId, kind, Math.abs(deltaUsd), after, ref, note],
+      );
+      await db.query("COMMIT");
+      return after;
+    } catch (e) {
+      await db.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      db.release();
+    }
+  }
+  async listLedger(customerId: string, limit: number) {
+    if (!UUID.test(customerId)) return [];
+    const r = await this.pool.query("SELECT * FROM gateway_ledger WHERE customer_id = $1 ORDER BY id DESC LIMIT $2", [customerId, limit]);
+    return r.rows.map(ledger);
+  }
+  async listUsageForClients(clientIds: string[], since: Date, limit: number) {
+    const ids = clientIds.filter((x) => UUID.test(x));
+    if (!ids.length) return [];
+    const r = await this.pool.query(
+      "SELECT * FROM gateway_usage WHERE client_id = ANY($1::uuid[]) AND created_at >= $2 ORDER BY created_at DESC LIMIT $3",
+      [ids, since, limit],
+    );
+    return r.rows.map(usage);
+  }
+
   async insertUsage(u: UsageRow) {
     await this.pool.query(
       `INSERT INTO gateway_usage (request_id, client_id, provider, model, requested_model, mode, http_status, outcome,
          input_tokens, output_tokens, cached_tokens, usage_source, estimated_cost_usd, reconciled_cost_usd, currency,
-         billing_status, latency_ms, first_byte_ms, attempts, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+         billing_status, latency_ms, first_byte_ms, attempts, created_at, billed_cost_usd)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
       [
         u.requestId, u.clientId, u.provider, u.model, u.requestedModel, u.mode, u.httpStatus, u.outcome,
         u.inputTokens, u.outputTokens, u.cachedTokens, u.usageSource, u.estimatedCostUsd, u.reconciledCostUsd, u.currency,
-        u.billingStatus, u.latencyMs, u.firstByteMs, u.attempts, u.createdAt,
+        u.billingStatus, u.latencyMs, u.firstByteMs, u.attempts, u.createdAt, u.billedCostUsd,
       ],
     );
   }

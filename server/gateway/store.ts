@@ -16,6 +16,33 @@ export interface ClientRecord {
   revokedAt: Date | null;
   rotatedFrom: string | null;
   lastUsedAt: Date | null;
+  /** Set when the key belongs to a customer of the API portal; null for the owner's own keys. */
+  customerId: string | null;
+}
+
+/** A customer of the API portal. Accounts are created by the owner only (no public sign-up). */
+export interface CustomerRecord {
+  id: string;
+  email: string;
+  name: string;
+  /** bcrypt hash. The password itself is never stored. */
+  passwordHash: string;
+  balanceUsd: number;
+  createdAt: Date;
+  disabledAt: Date | null;
+}
+
+export interface LedgerEntry {
+  id: number;
+  customerId: string;
+  kind: "credit" | "debit" | "adjust";
+  /** Always positive; the kind says which way it moved. */
+  amountUsd: number;
+  balanceAfterUsd: number;
+  /** A request id for usage debits, otherwise empty. */
+  ref: string;
+  note: string;
+  createdAt: Date;
 }
 
 export type BillingStatus = "estimated" | "unknown" | "reconciled";
@@ -36,6 +63,8 @@ export interface UsageRow {
   usageSource: "upstream" | "missing";
   estimatedCostUsd: number | null;
   reconciledCostUsd: number | null;
+  /** What the customer was charged (listed price plus the explicit markup, 0% by default). */
+  billedCostUsd: number | null;
   currency: "USD";
   billingStatus: BillingStatus;
   latencyMs: number;
@@ -98,6 +127,18 @@ export interface GatewayStore {
   getClient(id: string): Promise<ClientRecord | null>;
   listClients(): Promise<ClientRecord[]>;
   updateClient(id: string, patch: Partial<ClientRecord>): Promise<void>;
+  listClientsForCustomer(customerId: string): Promise<ClientRecord[]>;
+
+  /** False when the e-mail is already taken. */
+  createCustomer(c: CustomerRecord): Promise<boolean>;
+  getCustomer(id: string): Promise<CustomerRecord | null>;
+  getCustomerByEmail(email: string): Promise<CustomerRecord | null>;
+  listCustomers(): Promise<CustomerRecord[]>;
+  updateCustomer(id: string, patch: Partial<Pick<CustomerRecord, "name" | "passwordHash" | "disabledAt">>): Promise<void>;
+  /** Moves the balance by delta (credit +, debit -) in one step and writes the ledger row. Null if no such customer. */
+  adjustBalance(customerId: string, deltaUsd: number, kind: LedgerEntry["kind"], ref: string, note: string): Promise<number | null>;
+  listLedger(customerId: string, limit: number): Promise<LedgerEntry[]>;
+  listUsageForClients(clientIds: string[], since: Date, limit: number): Promise<UsageRow[]>;
 
   insertUsage(row: UsageRow): Promise<void>;
   /** Sum of known costs (reconciled when present, otherwise estimated) since the given time. */
@@ -147,6 +188,54 @@ export class MemoryStore implements GatewayStore {
   async updateClient(id: string, patch: Partial<ClientRecord>) {
     const c = this.clients.get(id);
     if (c) this.clients.set(id, { ...c, ...patch });
+  }
+  async listClientsForCustomer(customerId: string) {
+    return [...this.clients.values()].filter((c) => c.customerId === customerId).map((c) => ({ ...c }));
+  }
+  customers = new Map<string, CustomerRecord>();
+  ledger: LedgerEntry[] = [];
+  async createCustomer(c: CustomerRecord) {
+    if ([...this.customers.values()].some((x) => x.email === c.email)) return false;
+    this.customers.set(c.id, { ...c });
+    return true;
+  }
+  async getCustomer(id: string) {
+    const c = this.customers.get(id);
+    return c ? { ...c } : null;
+  }
+  async getCustomerByEmail(email: string) {
+    for (const c of this.customers.values()) if (c.email === email) return { ...c };
+    return null;
+  }
+  async listCustomers() {
+    return [...this.customers.values()].map((c) => ({ ...c }));
+  }
+  async updateCustomer(id: string, patch: Partial<Pick<CustomerRecord, "name" | "passwordHash" | "disabledAt">>) {
+    const c = this.customers.get(id);
+    if (c) this.customers.set(id, { ...c, ...patch });
+  }
+  async adjustBalance(customerId: string, deltaUsd: number, kind: LedgerEntry["kind"], ref: string, note: string) {
+    const c = this.customers.get(customerId);
+    if (!c) return null;
+    c.balanceUsd = Math.round((c.balanceUsd + deltaUsd) * 1e8) / 1e8;
+    this.ledger.push({
+      id: this.ledger.length + 1,
+      customerId,
+      kind,
+      amountUsd: Math.abs(deltaUsd),
+      balanceAfterUsd: c.balanceUsd,
+      ref,
+      note,
+      createdAt: new Date(),
+    });
+    return c.balanceUsd;
+  }
+  async listLedger(customerId: string, limit: number) {
+    return this.ledger.filter((l) => l.customerId === customerId).slice(-limit).reverse();
+  }
+  async listUsageForClients(clientIds: string[], since: Date, limit: number) {
+    const ids = new Set(clientIds);
+    return this.usage.filter((r) => ids.has(r.clientId) && r.createdAt >= since).slice(-limit).reverse();
   }
   async insertUsage(row: UsageRow) {
     this.usage.push({ ...row });

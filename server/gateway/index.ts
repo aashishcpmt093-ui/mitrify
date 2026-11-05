@@ -49,7 +49,10 @@ export function createGatewayMiddleware(opts: { config?: GatewayConfig; store?: 
   ready = attempt();
 
   return (req: IncomingMessage, res: ServerResponse, next: Next) => {
-    if (!config.hosts.includes(hostOf(req))) return next();
+    // The API portal page (mitrify.com/?portal=api) calls /portal-api on whatever host it was opened on.
+    const path = (req.url ?? "/").split("?")[0];
+    const portalApi = path === "/portal-api" || path.startsWith("/portal-api/");
+    if (!portalApi && !config.hosts.includes(hostOf(req))) return next();
     void (async () => {
       await ready;
       if (!gateway) return sendError(res, 503, "gateway_unavailable", "The gateway is starting or its database is unreachable. See the server log.");
