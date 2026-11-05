@@ -750,6 +750,15 @@ export class Gateway {
     }
     this.lockout.succeed(ip);
 
+    // "Try a message": the owner sends a normal chat request through the real gateway path (routing,
+    // budgets, usage and cost are all recorded), as a built-in test client. The body is not read here;
+    // chat() reads it as raw bytes, exactly as for any other client.
+    if (req.method === "POST" && path === "/admin/try") {
+      const client = await this.ownerTestClient(ip);
+      await this.audit("owner", "try_message", ip, {});
+      return this.chat(req, res, { record: client, customer: null });
+    }
+
     let body: unknown = null;
     if (req.method === "POST" || req.method === "PUT") {
       try {
@@ -895,6 +904,25 @@ export class Gateway {
         ? { snapshot: this.snapshot.id, createdAt: this.snapshot.createdAt, models: this.snapshot.entries.length }
         : null,
     };
+  }
+
+  /** The built-in client behind "Try a message". Its key is never shown or kept: it can only be used from here. */
+  private async ownerTestClient(ip: string): Promise<ClientRecord> {
+    const name = "owner-test (page)";
+    const found = (await this.store.listClients()).find((c) => c.name === name && !c.revokedAt && c.customerId === null);
+    if (found) return found;
+    const { record } = await this.issueKey({
+      name,
+      scopes: ["chat:write"],
+      dailyBudgetUsd: null,
+      rpm: 60,
+      expiresAt: null,
+      rotatedFrom: null,
+      customerId: null,
+      actor: "owner",
+      ip,
+    });
+    return record;
   }
 
   /** Creates and stores a key. The key itself is returned once and never stored. */
