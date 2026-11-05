@@ -9,7 +9,7 @@
     "build:web": "vite build",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
-    "test:gateway": "node --import tsx --test --test-concurrency=1 server/gateway/__tests__/*.test.ts",
+    "test:gateway": "node --import tsx --test --test-concurrency=1 server/gateway/__tests__/*.test.ts server/__tests__/*.test.ts",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {

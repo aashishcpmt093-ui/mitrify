@@ -18,6 +18,8 @@ import * as XLSX from "xlsx";
 import { streamBackupSql, makeBackupFilename, getBackupStatus, startBackupScheduler, restoreFromSql, runDailyBackup, parseTablesFromDump, previewSqlBackup, previewLenientSchemaAdjustments, uploadToGCS, isGCSConfigured, sendBackupAlert, claimRunNowSlot, listGCSBackups, downloadFromGCS, BACKUPS_DIR, countRowsPerTable, getActiveRestoreState, markRestoreCancelled, RestoreCancelledError, recordTestAlert, getTestAlertHistory, recordBackupHistory, getSkippedReport, deleteSkippedReport, splitSqlStatements } from "./backupJob";
 import { startAutoTagJob, getJobStatus, getActiveJobId, getLatestJob, recoverStaleJobs } from "./lib/auto-tags";
 import { cleanBusinessName, extractDescriptionSuffix, mergeDescription } from "./lib/cleanName";
+import { adminOnlyEnabled, adminOnlyGate, safeEqual, MIN_ADMIN_PASSWORD_LENGTH } from "./adminOnly";
+import { Lockout } from "./gateway/limits";
 import { searchGoogleFallback, searchSavedGoogleLeads } from "./googleFallbackSearch";
   const ensureProviderProfile = async (userId: string, seed: Record<string, any> = {}) => {
     const existing = await storage.getProvider(userId);
@@ -156,6 +158,11 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   await setupAuth(app);
+  // Owner-only mode (MITRIFY_ADMIN_ONLY=1): after the session is loaded, before any other route.
+  if (adminOnlyEnabled()) {
+    app.use(adminOnlyGate);
+    console.log("[admin-only] ON: only the admin can open Mitrify. Everyone else is sent to /admin/login.");
+  }
   registerAuthRoutes(app);
 
   // Seed special promo code on startup (idempotent) — code from env or default
@@ -816,18 +823,37 @@ export async function registerRoutes(
     });
   });
 
+  // Wrong tries lock the address out (5 tries: 15 minutes; 20 tries from anywhere: 1 hour).
+  const adminLockout = new Lockout();
+
   app.post("/api/admin/login", (req, res) => {
-    const { id, password } = req.body;
+    const ip = req.ip || "unknown";
+    const wait = adminLockout.blocked(ip);
+    if (wait > 0) {
+      res.set("Retry-After", String(Math.ceil(wait / 1000)));
+      return res.status(429).json({ message: "Too many wrong tries. Please try again later." });
+    }
     if (!ADMIN_ID || !ADMIN_PASSWORD) {
       return res.status(503).json({ message: "Admin sign-in is not set up on the server." });
     }
-    if (id === ADMIN_ID && password === ADMIN_PASSWORD) {
+    if (adminOnlyEnabled() && ADMIN_PASSWORD.length < MIN_ADMIN_PASSWORD_LENGTH) {
+      return res.status(503).json({
+        message: `Admin sign-in is off: ADMIN_PASSWORD must be at least ${MIN_ADMIN_PASSWORD_LENGTH} characters while the site is owner-only.`,
+      });
+    }
+    const { id, password } = req.body ?? {};
+    // Both are always compared, in constant time.
+    const okId = safeEqual(id, ADMIN_ID);
+    const okPassword = safeEqual(password, ADMIN_PASSWORD);
+    if (okId && okPassword) {
+      adminLockout.succeed(ip);
       (req.session as any).adminAuth = true;
       req.session.save(() => {
         res.json({ success: true });
       });
       return;
     }
+    adminLockout.fail(ip);
     return res.status(401).json({ message: "Invalid credentials" });
   });
 
@@ -837,9 +863,14 @@ export async function registerRoutes(
       if (!gmailTransporter) {
         return res.status(400).json({ message: "Email service not configured" });
       }
+      const lastSent = (req.session as any).adminResetOtpAt || 0;
+      if (Date.now() - lastSent < 60 * 1000) {
+        return res.status(429).json({ message: "Please wait a minute before asking for another OTP." });
+      }
       const otp = generateOtp();
       (req.session as any).adminResetOtp = otp;
       (req.session as any).adminResetOtpAt = Date.now();
+      (req.session as any).adminResetTries = 0;
       // Send OTP to admin email (uses GMAIL_USER as both from and to, or ADMIN_EMAIL if set)
       const adminEmail = process.env.ADMIN_EMAIL || process.env.GMAIL_USER;
       if (!adminEmail) return res.status(400).json({ message: "Admin email not configured" });
@@ -862,12 +893,22 @@ export async function registerRoutes(
     const storedOtp = (req.session as any).adminResetOtp;
     const otpAt = (req.session as any).adminResetOtpAt || 0;
     if (!storedOtp) return res.status(400).json({ message: "OTP nahi mila. Pehle OTP mangao." });
+    // 5 wrong tries cancel this OTP, so a 6-digit code cannot be guessed.
+    if (((req.session as any).adminResetTries || 0) >= 5) {
+      (req.session as any).adminResetOtp = null;
+      return res.status(429).json({ message: "Too many wrong OTPs. Ask for a new OTP." });
+    }
     if (Date.now() - otpAt > 10 * 60 * 1000) {
       (req.session as any).adminResetOtp = null;
       return res.status(401).json({ message: "OTP expired. Dobara try karo." });
     }
-    if (otp !== storedOtp) return res.status(401).json({ message: "Galat OTP" });
-    if (newPassword.length < 8) return res.status(400).json({ message: "Password kam se kam 8 characters ka hona chahiye" });
+    if (!safeEqual(otp, storedOtp)) {
+      (req.session as any).adminResetTries = ((req.session as any).adminResetTries || 0) + 1;
+      return res.status(401).json({ message: "Galat OTP" });
+    }
+    if (typeof newPassword !== "string" || newPassword.length < MIN_ADMIN_PASSWORD_LENGTH) {
+      return res.status(400).json({ message: `Password kam se kam ${MIN_ADMIN_PASSWORD_LENGTH} characters ka hona chahiye` });
+    }
     ADMIN_PASSWORD = newPassword;
     (req.session as any).adminResetOtp = null;
     res.json({ success: true, message: "Password change ho gaya!" });

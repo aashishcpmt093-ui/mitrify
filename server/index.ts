@@ -13,6 +13,7 @@ import { createServer } from "http";
 import { ensureSchema } from "./ensureSchema";
 import { clinicAiRouter } from "./clinicAi";
 import { createGatewayMiddleware } from "./gateway";
+import { blockWhileAdminOnly } from "./adminOnly";
 
 const app = express();
 const httpServer = createServer(app);
@@ -41,7 +42,7 @@ app.get("/health", (_req, res) => {
 });
 
 // Doctor's AI assistant. Mounted before the database-backed routes so it works without a database.
-app.use("/api/clinic-ai", clinicAiRouter);
+app.use("/api/clinic-ai", blockWhileAdminOnly, clinicAiRouter);
 
 app.use((req, res, next) => {
   const start = Date.now();
