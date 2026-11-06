@@ -133,6 +133,7 @@ export class Gateway {
   /** Calls sent to each provider's free models today and in the last minute. */
   readonly freeQuota: FreeQuota;
   private quotaLoaded = false;
+  private lastEmptyRebuild = 0;
   private rate: RateLimiter;
   private lockout: Lockout;
   private fetchImpl: typeof fetch;
@@ -263,6 +264,27 @@ export class Gateway {
    * models are set aside together, instead of every request burning an attempt (and a count of the daily limit,
    * which failed attempts also use) on each free model in turn.
    */
+  /** A short, plain reason the pool has no models, per provider (no secrets: only names, counts and reasons). */
+  private emptyPoolWhy(snap: CatalogSnapshot | null, sw: { disabled: Set<string> }): string {
+    const parts: string[] = [];
+    for (const p of this.config.providers) {
+      if (p.status === "not_configured") continue;
+      if (p.status !== "active") parts.push(`${p.label}: ${p.status.replace("_", " ")}`);
+      else if (sw.disabled.has(p.id)) parts.push(`${p.label}: switched off`);
+      else {
+        const left = (snap?.excluded ?? []).filter((x) => x.provider === p.id);
+        if (!left.length) parts.push(`${p.label}: no prices yet (import them)`);
+        else {
+          const by = new Map<string, number>();
+          for (const x of left) by.set(x.reason, (by.get(x.reason) ?? 0) + 1);
+          const top = [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([r, n]) => `${n} x ${r}`);
+          parts.push(`${p.label}: all left out (${top.join(", ")})`);
+        }
+      }
+    }
+    return parts.length ? `Reasons: ${parts.join("; ")}.` : "No provider is set up.";
+  }
+
   /** Brings back today's free-call count after a restart (once). */
   private async loadFreeQuota() {
     if (this.quotaLoaded) return;
@@ -491,12 +513,21 @@ export class Gateway {
     const byId = new Map(this.config.providers.map((p) => [p.id, p]));
 
     if (mode === "auto-cheap") {
-      const snap = this.snapshot;
+      let snap = this.snapshot;
+      // An empty pool may only be out of date (built before a provider was set up or switched). Look again, at most once a minute.
+      if ((!snap || snap.entries.length === 0) && this.now() - this.lastEmptyRebuild > 60_000) {
+        this.lastEmptyRebuild = this.now();
+        try {
+          snap = await this.refreshCatalog();
+        } catch (e) {
+          this.log(`pool rebuild on an empty pool failed: ${(e as Error).message}`);
+        }
+      }
       if (!snap || snap.entries.length === 0) {
         return {
           status: 503,
           code: "pool_empty",
-          error: "The cheapest-model pool is empty. Prices are read from the provider automatically; ask the owner to check the provider is set up.",
+          error: `The cheapest-model pool is empty. ${this.emptyPoolWhy(snap, sw)}`,
         };
       }
       // Cheapest first (free, then paid). forward() walks this list, skipping models that fill up meanwhile.
