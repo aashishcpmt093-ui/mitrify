@@ -136,6 +136,7 @@ export class Gateway {
   readonly now: () => number;
   readonly log: Log;
   private inflight = 0;
+  private inflightBytes = 0;
   private snapshot: CatalogSnapshot | null = null;
   private clientCache = new Map<string, { at: number; rec: ClientRecord | null }>();
   private settingsCache: { at: number; kill: boolean; disabled: Set<string> } | null = null;
@@ -365,6 +366,12 @@ export class Gateway {
     const requestId = randomUUID();
     const ct = String(req.headers["content-type"] ?? "");
     if (!/^application\/json\b/i.test(ct)) return sendError(res, 415, "unsupported_media_type", "Send Content-Type: application/json.");
+    // Memory guard: refuse before reading a body that would not fit in what is left of the budget.
+    const declared = Number(req.headers["content-length"]);
+    if (Number.isFinite(declared) && this.inflightBytes + declared > this.config.maxInflightBytes) {
+      req.resume();
+      return sendError(res, 503, "gateway_busy", "The gateway is holding as much as it can right now, try again shortly.", { "retry-after": "5" });
+    }
 
     let raw: Buffer;
     try {
@@ -426,14 +433,16 @@ export class Gateway {
       return sendError(res, route.status, route.code, route.error, route.retryAfter ? { "retry-after": String(route.retryAfter) } : {});
     }
 
-    if (this.inflight >= this.config.maxInflight) {
-      return sendError(res, 503, "gateway_busy", "The gateway is at its connection limit, try again shortly.", { "retry-after": "5" });
+    if (this.inflight >= this.config.maxInflight || this.inflightBytes + raw.length > this.config.maxInflightBytes) {
+      return sendError(res, 503, "gateway_busy", "The gateway is at its limit, try again shortly.", { "retry-after": "5" });
     }
     this.inflight++;
+    this.inflightBytes += raw.length;
     try {
       await this.forward({ req, res, client, raw, requestId, model, mode, stream, started, candidates: route.candidates });
     } finally {
       this.inflight--;
+      this.inflightBytes -= raw.length;
     }
   }
 
@@ -458,6 +467,8 @@ export class Gateway {
       }
       // Cheapest first (free, then paid). forward() walks this list, skipping models that fill up meanwhile.
       const candidates: Candidate[] = [];
+      let freeCount = 0;
+      let paidCount = 0;
       let soonestFree = Infinity;
       for (const e of snap.entries) {
         const p = byId.get(e.provider);
@@ -476,8 +487,15 @@ export class Gateway {
           soonestFree = Math.min(soonestFree, tier.until);
           continue;
         }
+        // Free models first, but keep room for paid ones behind them: the last attempt of a request needs one.
+        if (isFreePrice(e)) {
+          if (freeCount >= 24) continue;
+          freeCount++;
+        } else {
+          if (paidCount >= 12) continue;
+          paidCount++;
+        }
         candidates.push(cand);
-        if (candidates.length >= 24) break;
       }
       if (candidates.length === 0) {
         if (soonestFree !== Infinity) {
@@ -555,11 +573,28 @@ export class Gateway {
     // In the automatic mode, a failure BEFORE any reply bytes were sent can move on to the next model when the
     // model is free (nothing is spent), or when the owner allowed it for paid ones too (MITRIFY_GATEWAY_RETRY_PAID=1).
     const lenient = (c: Candidate) => mode === "auto-cheap" && (free(c) || this.config.retryPaid);
+    // Spreading the load: take the cheapest candidate whose provider has a free place right now, so a busy
+    // provider does not hold up requests that another provider could start at once. When every provider is
+    // full, wait at the one with the shortest queue (the cheapest on a tie).
+    const pick = (ok: (c: Candidate) => boolean) => {
+      let best = -1;
+      let bestQueue = Infinity;
+      for (let i = 0; i < remaining.length; i++) {
+        if (!ok(remaining[i])) continue;
+        const sem = this.semaphores.get(remaining[i].provider.id)!;
+        if (sem.hasSlot) return i;
+        if (sem.queued < bestQueue) {
+          best = i;
+          bestQueue = sem.queued;
+        }
+      }
+      return best;
+    };
     while (attempts < maxAttempts) {
-      let idx = remaining.findIndex(usable);
+      let idx = pick(usable);
       if (idx < 0) break;
       if (mode === "auto-cheap" && attempts === maxAttempts - 1 && free(remaining[idx])) {
-        const paid = remaining.findIndex((c) => usable(c) && !free(c));
+        const paid = pick((c) => usable(c) && !free(c));
         if (paid >= 0) idx = paid;
       }
       const cand = remaining.splice(idx, 1)[0];
@@ -697,9 +732,9 @@ export class Gateway {
               if (r.done) break;
               pending.push(r.value);
               size += r.value.length;
-              if (size > 4 * 1024 * 1024) break; // too large to judge; sent as it is
+              if (size > 1024 * 1024) break; // too large to judge; sent as it is
             }
-            bad = size > 4 * 1024 * 1024 ? null : badJsonReply(Buffer.concat(pending));
+            bad = size > 1024 * 1024 ? null : badJsonReply(Buffer.concat(pending));
           }
         } catch {
           cleanup();
@@ -1136,6 +1171,7 @@ export class Gateway {
       dailyBudgetUsd: this.config.globalDailyBudgetUsd,
       spentTodayUsd: await this.store.spentSince(day),
       inflight: this.inflight,
+      inflightMegabytes: Math.round(this.inflightBytes / 1024 / 102.4) / 10,
       providers: this.config.providers.map((p) => ({
         ...describeProvider(p),
         disabledByAdmin: sw.disabled.has(p.id),

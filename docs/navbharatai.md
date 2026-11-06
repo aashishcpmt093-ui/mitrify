@@ -38,7 +38,7 @@ NavBharatAI में एक switch रखें (जैसे `AI_BASE_URL = di
 owner पेज पर **Try a message** में **Stream** का निशान लगाकर संदेश भेजें। नीचे लिखा आएगा कि "words arrived one after another" (ठीक है) या "WARNING: everything arrived at once" (साइट के आगे कोई चीज़, जैसे Hostinger का CDN, stream को रोककर रख रही है, तब NavBharatAI में streaming ठीक नहीं चलेगी और मुझे बताएं)।
 
 ## 6. बहुत सारी requests (जैसे 1000)
-डिफ़ॉल्ट सीमाएं छोटी हैं। `docs/openrouter.md` में "बहुत सारी requests एक साथ" वाली चार settings लगाएं। **Hostinger का आपका plan इतना भार संभालेगा या नहीं, यह अभी जांचा नहीं गया है।**
+हज़ार एक साथ के लिए `docs/capacity.md` पढ़ें: key का `rpm` बढ़ाना (6000), providers की सीमाएं सही रखना, और NavBharatAI की तरफ़ से एक साथ भेजी जाने वाली requests की अपनी सीमा। **Hostinger का आपका plan इतना भार संभालेगा या नहीं, यह अभी जांचा नहीं गया है।**
 
 ## 7. खर्च देखना
 owner पेज के **Gateway** कार्ड में "Spent today" दिखता है (free का खर्च 0)। हर request का हिसाब gateway में रहता है।

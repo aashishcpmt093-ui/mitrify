@@ -49,6 +49,8 @@ export interface GatewayConfig {
   totalTimeoutMs: number;
   queueTimeoutMs: number;
   maxInflight: number;
+  /** Total size of the request bodies being worked on at once. Beyond it new requests are told to wait. */
+  maxInflightBytes: number;
   /** Total estimated spend allowed per day (UTC) across all clients. null = not set = traffic refused. */
   globalDailyBudgetUsd: number | null;
   /** Streaming requests must ask for usage (stream_options.include_usage) so they can be billed. */
@@ -166,8 +168,9 @@ export function loadProvider(env: Env, id: string, index: number): ProviderConfi
     approved,
     resaleApproved: env[`MITRIFY_${up}_RESALE_APPROVED`] === "1",
     // Conservative until the provider's real limit is verified and written in the environment.
-    maxConcurrency: int(env, `MITRIFY_${up}_MAX_CONCURRENCY`, 4, 1),
-    maxQueue: int(env, `MITRIFY_${up}_MAX_QUEUE`, 50, 0),
+    // Set these from the provider's real limit. The defaults are for a provider that takes a lot of parallel work.
+    maxConcurrency: int(env, `MITRIFY_${up}_MAX_CONCURRENCY`, 32, 1),
+    maxQueue: int(env, `MITRIFY_${up}_MAX_QUEUE`, 1000, 0),
     healthPath: env[`MITRIFY_${up}_HEALTH_PATH`]?.trim() || null,
     priority: int(env, `MITRIFY_${up}_PRIORITY`, index + 1, 0),
     status,
@@ -208,8 +211,9 @@ export function loadConfig(env: Env = process.env): GatewayConfig {
     firstByteTimeoutMs: int(env, "MITRIFY_GATEWAY_FIRST_BYTE_TIMEOUT_MS", 120_000, 1000),
     idleTimeoutMs: int(env, "MITRIFY_GATEWAY_IDLE_TIMEOUT_MS", 120_000, 1000),
     totalTimeoutMs: int(env, "MITRIFY_GATEWAY_TOTAL_TIMEOUT_MS", 30 * 60_000, 1000),
-    queueTimeoutMs: int(env, "MITRIFY_GATEWAY_QUEUE_TIMEOUT_MS", 30_000, 0),
-    maxInflight: int(env, "MITRIFY_GATEWAY_MAX_INFLIGHT", 200, 1),
+    queueTimeoutMs: int(env, "MITRIFY_GATEWAY_QUEUE_TIMEOUT_MS", 90_000, 0),
+    maxInflight: int(env, "MITRIFY_GATEWAY_MAX_INFLIGHT", 1500, 1),
+    maxInflightBytes: int(env, "MITRIFY_GATEWAY_MAX_INFLIGHT_MB", 512, 1) * 1024 * 1024,
     globalDailyBudgetUsd: num(env, "MITRIFY_GATEWAY_DAILY_BUDGET_USD"),
     requireStreamUsage: env.MITRIFY_GATEWAY_REQUIRE_STREAM_USAGE !== "0",
     trustProxy: env.MITRIFY_GATEWAY_TRUST_PROXY === "1",

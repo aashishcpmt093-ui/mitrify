@@ -38,6 +38,10 @@ export class Semaphore {
   get queued() {
     return this.waiters.length;
   }
+  /** A request could start right now, without waiting. */
+  get hasSlot() {
+    return this.active < this.max;
+  }
   /** True when a request could start right now or join the queue. */
   get hasRoom() {
     return this.active < this.max || this.waiters.length < this.maxQueue;
