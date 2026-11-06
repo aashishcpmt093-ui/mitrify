@@ -36,7 +36,7 @@ type Log = (msg: string) => void;
 
 const MAX_COOLDOWN_MS = 2 * 3600_000;
 /** Bump when the way imported models are judged changes: the lists are then read again once. */
-const IMPORT_RULES_VERSION = 2;
+const IMPORT_RULES_VERSION = 3;
 
 /** The first piece of a stream already says it failed (an error event) or that nothing is coming. */
 export function badStreamStart(chunk: Uint8Array): string | null {
@@ -410,7 +410,7 @@ export class Gateway {
       this.config.providers.filter((p) => this.providerUsable(p, sw.disabled) && (!resale || p.resaleApproved)).map((p) => [p.id, p]),
     );
     const data = (await this.prices())
-      .filter((p) => p.enabled && usable.has(p.provider) && !(sw.freeOnly.has(p.provider) && !isFreePrice(p)))
+      .filter((p) => p.enabled && usable.has(p.provider) && !(sw.freeOnly.has(p.provider) && !isFreePrice(p)) && !(usable.get(p.provider)!.noFreeModels && isFreePrice(p)))
       .map((p) => ({ id: p.upstreamModel, object: "model", owned_by: p.provider, mitrify_provider: p.provider }));
     data.unshift({ id: AUTO_MODEL, object: "model", owned_by: "mitrify", mitrify_provider: "auto" });
     sendJson(res, 200, { object: "list", data });
@@ -595,6 +595,7 @@ export class Gateway {
         byId.has(p.provider) &&
         this.providerUsable(byId.get(p.provider)!, sw.disabled) &&
         !(sw.freeOnly.has(p.provider) && !isFreePrice(p)) &&
+        !(byId.get(p.provider)!.noFreeModels && isFreePrice(p)) &&
         (!resaleOnly || byId.get(p.provider)!.resaleApproved),
     );
     if (matches.length === 0) {

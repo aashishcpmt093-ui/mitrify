@@ -49,6 +49,8 @@ export function baseEnv(extra: Record<string, string> = {}): Record<string, stri
     MITRIFY_GATEWAY_SETUP_CODE: SETUP_CODE,
     MITRIFY_GATEWAY_DAILY_BUDGET_USD: "10",
     MITRIFY_GATEWAY_ALLOW_HTTP_UPSTREAM: "1",
+    // Tests use "surplus" as a stand-in provider that may have free models; the real rule has its own test.
+    MITRIFY_SURPLUS_NO_FREE_MODELS: "0",
     ...extra,
   };
 }

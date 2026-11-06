@@ -33,6 +33,11 @@ export interface ProviderConfig {
   /** Free-model calls this provider allows per day (UTC) and per minute for the whole account; null = no local count. */
   freePerDay: number | null;
   freePerMinute: number | null;
+  /**
+   * The provider has no free models, so a price of 0 in its list means "no price / no seller right now", not
+   * "free" (Surplus is a prepaid market). Such models are never picked.
+   */
+  noFreeModels: boolean;
   /** Lower number = preferred when two entries cost the same. */
   priority: number;
   status: ProviderStatus;
@@ -188,6 +193,7 @@ export function loadProvider(env: Env, id: string, index: number): ProviderConfi
     // sent only to be refused. Set MITRIFY_<ID>_FREE_PER_DAY / _FREE_PER_MINUTE (0 = do not count).
     freePerDay: limitOrNull(env, `MITRIFY_${up}_FREE_PER_DAY`, id === "openrouter" ? 1000 : null),
     freePerMinute: limitOrNull(env, `MITRIFY_${up}_FREE_PER_MINUTE`, id === "openrouter" ? 20 : null),
+    noFreeModels: env[`MITRIFY_${up}_NO_FREE_MODELS`] === "1" || (id === "surplus" && env[`MITRIFY_${up}_NO_FREE_MODELS`] !== "0"),
     priority: int(env, `MITRIFY_${up}_PRIORITY`, index + 1, 0),
     status,
     statusReason,
