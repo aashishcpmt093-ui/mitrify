@@ -49,11 +49,23 @@ function copy(text: string) {
   }
 }
 
-function Card({ title, children }: { title: string; children: ReactNode }) {
+function Card({ title, children, collapsible = false, defaultOpen = true }: { title: string; children: ReactNode; collapsible?: boolean; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  if (!collapsible) {
+    return (
+      <section className="rounded-lg border bg-card text-card-foreground p-4 space-y-3">
+        <h2 className="text-base font-semibold">{title}</h2>
+        {children}
+      </section>
+    );
+  }
   return (
     <section className="rounded-lg border bg-card text-card-foreground p-4 space-y-3">
-      <h2 className="text-base font-semibold">{title}</h2>
-      {children}
+      <button type="button" className="flex w-full items-center justify-between text-left" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <h2 className="text-base font-semibold">{title}</h2>
+        <span className="text-sm text-muted-foreground">{open ? "Hide ▲" : "Show ▼"}</span>
+      </button>
+      {open && children}
     </section>
   );
 }
@@ -329,7 +341,7 @@ function Prices({ code, providers, cooling }: { code: string; providers: Obj[]; 
   };
 
   return (
-    <Card title={`Prices and models (${prices.length})`}>
+    <Card title={`Prices and models (${prices.length})`} collapsible defaultOpen={false}>
       {err && <Notice kind="error">{err}</Notice>}
       {msg && <Notice kind="ok">{msg}</Notice>}
       <div className="rounded-md bg-green-50 text-green-900 p-3 text-sm space-y-1">
