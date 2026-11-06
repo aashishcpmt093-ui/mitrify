@@ -96,7 +96,7 @@ describe("catalog", () => {
     assert.match(reasons["m-unapproved"], /pending_approval/);
     assert.match(reasons["m-bad-quality"], /not switched On/);
     assert.match(reasons["m-stale"], /older/);
-    assert.match(reasons["m-out"], /top 2/);
+    assert.match(reasons["m-out"], /outside the pool of 2/);
     assert.equal(snap.weights.source, "default");
   });
   it("weights by the observed input/output ratio once there is enough traffic", () => {

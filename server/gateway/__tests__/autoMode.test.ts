@@ -70,6 +70,25 @@ describe("automatic pool rules", () => {
     assert.deepEqual(snap.entries.map((e) => e.free), [true, true, false, false]);
   });
 
+  it("always keeps places for paid models behind the free ones, however many free models there are", () => {
+    const many = [
+      ...Array.from({ length: 60 }, (_, i) => entry({ upstreamModel: `f/free-${String(i).padStart(2, "0")}`, inputPerMTokUsd: 0, outputPerMTokUsd: 0 })),
+      ...Array.from({ length: 12 }, (_, i) => entry({ upstreamModel: `p/paid-${String(i).padStart(2, "0")}`, inputPerMTokUsd: 0.01 * (i + 1), outputPerMTokUsd: 0.01 * (i + 1) })),
+    ];
+    const snap = buildSnapshot(many, or(), { input: 0, output: 0 }, new Date());
+    assert.equal(snap.entries.length, 40);
+    assert.equal(snap.entries.filter((e) => e.free).length, 32);
+    assert.equal(snap.entries.filter((e) => !e.free).length, 8);
+    assert.deepEqual(snap.entries.slice(32).map((e) => e.upstreamModel), Array.from({ length: 8 }, (_, i) => `p/paid-${String(i).padStart(2, "0")}`), "the cheapest paid ones, after every free one");
+    assert.ok(snap.entries.slice(0, 32).every((e) => e.free));
+    // With few free models, the spare places go to more paid ones.
+    const few = buildSnapshot(many.slice(55), or(), { input: 0, output: 0 }, new Date());
+    assert.equal(few.entries.length, 17);
+    // The number of reserved places can be changed or switched off.
+    assert.equal(buildSnapshot(many, or({ MITRIFY_GATEWAY_POOL_PAID: "0" }), { input: 0, output: 0 }, new Date()).entries.filter((e) => !e.free).length, 0);
+    assert.equal(buildSnapshot(many, or({ MITRIFY_GATEWAY_POOL_PAID: "20" }), { input: 0, output: 0 }, new Date()).entries.filter((e) => !e.free).length, 12);
+  });
+
   it("keeps out models that are not for chat, too short, skipped by the owner, or not imported", () => {
     const snap = buildSnapshot(
       [

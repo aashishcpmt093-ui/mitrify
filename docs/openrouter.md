@@ -40,6 +40,7 @@ owner पेज पर **Prices and models** में पूल का क्�
 - `MITRIFY_GATEWAY_AUTO_SELECT=0`: अपने-आप चुनाव बंद (तब हर model पर हाथ से On और Pool लगाना पड़ेगा)।
 - `MITRIFY_GATEWAY_MIN_CONTEXT`: कम से कम context (डिफ़ॉल्ट 8000)।
 - `MITRIFY_GATEWAY_POOL_SIZE`: पूल में कितने models (डिफ़ॉल्ट 40)।
+- `MITRIFY_GATEWAY_POOL_PAID`: पूल में सशुल्क models के लिए हमेशा बचाकर रखी जाने वाली जगह (डिफ़ॉल्ट 8)। free models कितने भी हों, उनके पीछे सबसे सस्ते 8 सशुल्क बने रहते हैं।
 - `MITRIFY_GATEWAY_MAX_ATTEMPTS`: एक request की ज़्यादा से ज़्यादा कोशिशें (डिफ़ॉल्ट 4, अधिकतम 6)।
 
 ## बहुत सारी requests एक साथ (जैसे 1000)

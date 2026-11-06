@@ -94,10 +94,19 @@ export function buildSnapshot(
       a.provider.localeCompare(b.provider) ||
       a.upstreamModel.localeCompare(b.upstreamModel),
   );
-  for (const e of eligible.slice(config.poolSize)) {
-    excluded.push({ provider: e.provider, upstreamModel: e.upstreamModel, reason: `outside the top ${config.poolSize}` });
+  // The pool is free models first, then paid ones. A number of places is always kept for paid models, so
+  // however many free models there are, the cheapest paid ones stay behind them as the fallback.
+  const freeOnes = eligible.filter((e) => e.free);
+  const paidOnes = eligible.filter((e) => !e.free);
+  const paidSlots = Math.min(paidOnes.length, config.poolPaid, config.poolSize);
+  const freeSlots = Math.min(freeOnes.length, config.poolSize - paidSlots);
+  const paidTake = Math.min(paidOnes.length, config.poolSize - freeSlots);
+  const chosen = [...freeOnes.slice(0, freeSlots), ...paidOnes.slice(0, paidTake)];
+  const chosenSet = new Set(chosen);
+  for (const e of eligible) {
+    if (!chosenSet.has(e)) excluded.push({ provider: e.provider, upstreamModel: e.upstreamModel, reason: `outside the pool of ${config.poolSize}` });
   }
-  const entries = eligible.slice(0, config.poolSize).map(({ priority: _p, ...e }) => e);
+  const entries = chosen.map(({ priority: _p, ...e }) => e);
   return { createdAt: now, weights, entries, excluded };
 }
 
