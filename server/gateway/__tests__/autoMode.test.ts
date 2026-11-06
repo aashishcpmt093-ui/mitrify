@@ -208,6 +208,52 @@ describe("free first, then the cheapest, when requests arrive in bulk", () => {
     await t.close();
   });
 
+  it("a free model that fails with a provider error or a bad-request refusal is skipped, and the answer says what was tried", async () => {
+    const t = await setup(
+      {
+        "free-502": (_n, r) => (r.writeHead(502, { "content-type": "application/json" }), r.end('{"error":{"message":"Provider returned error","code":502}}')),
+        "free-400": (_n, r) => (r.writeHead(400, { "content-type": "application/json" }), r.end('{"error":{"message":"Developer instruction is not enabled","code":400}}')),
+      },
+      [["free-502", 0, 0], ["free-400", 0, 0], ["free-ok", 0, 0], ["paid-1", 0.1, 0.2]],
+    );
+    const r = await chat(t.g.url, t.key, AUTO);
+    assert.equal(r.status, 200);
+    assert.equal(decodeURIComponent(r.headers.get("x-mitrify-model")!), "free-ok");
+    assert.equal(r.headers.get("x-mitrify-trail"), "free-400%3A400,free-502%3A502,free-ok%3A200");
+    await r.text();
+    // The two that failed are left alone for a while: the next request goes straight to the one that works.
+    const r2 = await chat(t.g.url, t.key, AUTO);
+    assert.equal(r2.headers.get("x-mitrify-trail"), "free-ok%3A200");
+    await r2.text();
+    assert.deepEqual([t.s.calls["free-502"], t.s.calls["free-400"], t.s.calls["free-ok"]], [1, 1, 2]);
+    await t.close();
+  });
+
+  it("a PAID model's provider error is passed on, never run twice, and the trail is there to read", async () => {
+    const t = await setup(
+      { "paid-1": (_n, r) => (r.writeHead(502, { "content-type": "application/json" }), r.end('{"error":{"message":"Provider returned error","code":502}}')) },
+      [["paid-1", 0.1, 0.2], ["paid-2", 0.3, 0.4]],
+    );
+    const r = await chat(t.g.url, t.key, AUTO);
+    assert.equal(r.status, 502, "the provider's own answer");
+    assert.equal((await r.json()).error.message, "Provider returned error");
+    assert.equal(r.headers.get("x-mitrify-trail"), "paid-1%3A502");
+    assert.deepEqual(t.s.calls, { "paid-1": 1 }, "the paid model was asked once and no other paid model was tried");
+    await t.close();
+  });
+
+  it("when only free models are left and all fail, the last answer is passed on with the whole trail", async () => {
+    const t = await setup(
+      { "free-a": (_n, r) => (r.writeHead(502), r.end('{"error":{"message":"Provider returned error"}}')), "free-b": (_n, r) => (r.writeHead(400), r.end('{"error":{"message":"bad"}}')) },
+      [["free-a", 0, 0], ["free-b", 0, 0]],
+    );
+    const r = await chat(t.g.url, t.key, AUTO);
+    assert.equal(r.status, 400);
+    assert.equal(r.headers.get("x-mitrify-trail"), "free-a%3A502,free-b%3A400");
+    await r.text();
+    await t.close();
+  });
+
   it("a named (pinned) call never falls back and is not blocked by a cooldown", async () => {
     const t = await setup(
       { "free-x": (_n, r) => limit(r), "gone": (_n, r) => (r.writeHead(404), r.end('{"error":"nf"}')) },

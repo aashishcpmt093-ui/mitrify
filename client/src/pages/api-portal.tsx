@@ -64,7 +64,7 @@ const btn2 = "rounded-md border px-3 py-1.5 text-sm";
 
 function Notice({ kind, children }: { kind: "error" | "ok"; children: ReactNode }) {
   return (
-    <p className={`rounded-md px-3 py-2 text-sm ${kind === "error" ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"}`} role="status">
+    <p className={`rounded-md px-3 py-2 text-sm whitespace-pre-wrap break-words ${kind === "error" ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"}`} role="status">
       {children}
     </p>
   );
@@ -505,13 +505,31 @@ function TryMessage({ code, onDone }: { code: string; onDone: () => void }) {
       } catch {
         throw new ApiError("The server did not answer properly.");
       }
-      if (!res.ok) throw new ApiError(data?.error?.message || data?.message || `Something went wrong (${res.status}).`);
+      // What each attempt got back, e.g. "model-a:502, model-b:200", so a failure can be understood.
+      const trail = (res.headers.get("x-mitrify-trail") ?? "").split(",").filter(Boolean).map((x) => decodeURIComponent(x));
+      if (!res.ok) {
+        const e = data?.error ?? {};
+        const raw = e.metadata?.raw;
+        const detail = typeof raw === "string" ? raw : raw ? JSON.stringify(raw) : "";
+        throw new ApiError(
+          [
+            `HTTP ${res.status}: ${e.message || data?.message || "something went wrong"}`,
+            e.metadata?.provider_name ? `Provider behind it: ${e.metadata.provider_name}` : "",
+            detail ? `Details: ${detail.slice(0, 300)}` : "",
+            trail.length ? `Tried: ${trail.join(", ")}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        );
+      }
       const u = data.usage;
       setOut({
         reply: data.choices?.[0]?.message?.content ?? "(the model sent no text)",
         provider: res.headers.get("x-mitrify-provider") ?? "",
         model: decodeURIComponent(res.headers.get("x-mitrify-model") ?? ""),
-        tokens: u ? `${u.prompt_tokens ?? "?"} in · ${u.completion_tokens ?? "?"} out` : "usage not reported",
+        tokens:
+          (u ? `${u.prompt_tokens ?? "?"} in · ${u.completion_tokens ?? "?"} out` : "usage not reported") +
+          (trail.length > 1 ? ` · tried: ${trail.join(", ")}` : ""),
       });
       onDone();
     } catch (e2) {

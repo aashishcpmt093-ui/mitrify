@@ -221,9 +221,10 @@ export class Gateway {
     const c = this.cooling.get(key);
     return !!c && c.until > this.now();
   }
-  private coolDown(key: string, retryAfterMs: number | null, kind: "limit" | "missing") {
+  private coolDown(key: string, retryAfterMs: number | null, kind: "limit" | "missing" | "error") {
     const strikes = (this.cooling.get(key)?.strikes ?? 0) + 1;
-    const base = kind === "missing" ? 3600_000 : 60_000 * 5 ** Math.min(strikes - 1, 3);
+    // limit: 1, 5, 25, 125 min. error: 2, 10, 50 min (a model that failed once may only dislike this request).
+    const base = kind === "missing" ? 3600_000 : kind === "error" ? 120_000 * 5 ** Math.min(strikes - 1, 2) : 60_000 * 5 ** Math.min(strikes - 1, 3);
     const wait = Math.min(Math.max(retryAfterMs ?? base, 1000), MAX_COOLDOWN_MS);
     this.cooling.set(key, { until: this.now() + wait, strikes });
   }
@@ -481,6 +482,8 @@ export class Gateway {
 
     let attempts = 0;
     let lastError: { status: number; code: string; message: string; retryAfter?: number } | null = null;
+    // What each attempt got back ("model:status"), reported to the client in X-Mitrify-Trail.
+    const trail: string[] = [];
 
     // Candidates are tried cheapest first. A model that filled up meanwhile (cooling) is skipped without
     // counting as an attempt. The last attempt a request may make prefers a PAID model when one is left,
@@ -553,6 +556,7 @@ export class Gateway {
         });
       } catch (e) {
         cleanup();
+        trail.push(`${cand.upstreamModel}:${abortReason === "client" ? "cancelled" : "unreachable"}`);
         if (abortReason === "client") return this.record(o, cand, attempts, 499, "cancelled", null, null);
         breaker.failure();
         const code = ((e as { cause?: { code?: string } })?.cause?.code ?? "") as string;
@@ -568,18 +572,25 @@ export class Gateway {
           status,
           timedOut ? "upstream_timeout" : "upstream_unreachable",
           timedOut ? "The provider did not answer in time." : "Could not reach the provider.",
-          this.routeHeaders(requestId, cand, mode, attempts),
+          this.routeHeaders(requestId, cand, mode, attempts, trail),
         );
         return this.record(o, cand, attempts, status, timedOut ? "upstream_timeout" : "upstream_error", null, null);
       }
 
+      trail.push(`${cand.upstreamModel}:${up.status}`);
+      // A FREE model that fails before sending anything (a provider error, a bad-request refusal such as a
+      // model that does not take a system prompt, a timeout at its provider) costs nothing, so the automatic
+      // mode moves on to the next model. A paid model is only passed on after a limit, a 503 or a missing
+      // model, never after a 5xx, so a paid request is never run twice by accident.
+      const freeFailure = mode === "auto-cheap" && free(cand) && [400, 408, 500, 502, 504].includes(up.status);
       if (mode === "auto-cheap") {
         const key = this.coolKey(cand);
         if (up.status === 429) this.coolDown(key, parseRetryAfter(up.headers.get("retry-after"), this.now()), "limit");
         else if (up.status === 404) this.coolDown(key, null, "missing");
+        else if (freeFailure) this.coolDown(key, null, "error");
         else if (up.status < 400) this.coolOk(key);
       }
-      const retryable = RETRYABLE_STATUS.has(up.status) || (mode === "auto-cheap" && up.status === 404);
+      const retryable = RETRYABLE_STATUS.has(up.status) || (mode === "auto-cheap" && up.status === 404) || freeFailure;
       if (retryable && !isLast) {
         // Refused before generation started: safe to try the next model in the pool.
         if (up.status === 503) breaker.failure();
@@ -592,7 +603,7 @@ export class Gateway {
 
       // Committed: this response goes back to the client as it is.
       const firstByteMs = this.now() - o.started;
-      const headers: Record<string, string> = this.routeHeaders(requestId, cand, mode, attempts);
+      const headers: Record<string, string> = this.routeHeaders(requestId, cand, mode, attempts, trail);
       const upCt = up.headers.get("content-type");
       if (upCt) headers["content-type"] = upCt;
       headers["cache-control"] = up.headers.get("cache-control") ?? "no-store";
@@ -683,8 +694,10 @@ export class Gateway {
     return this.record(o, last, attempts, err.status, "rejected", null, null);
   }
 
-  private routeHeaders(requestId: string, cand: Candidate, mode: string, attempts: number): Record<string, string> {
+  private routeHeaders(requestId: string, cand: Candidate, mode: string, attempts: number, trail: string[] = []): Record<string, string> {
+    const t = trail.slice(-6).map((x) => encodeURIComponent(x)).join(",");
     return {
+      ...(mode === "auto-cheap" && t && t.length <= 600 ? { "x-mitrify-trail": t } : {}),
       "x-mitrify-request-id": requestId,
       "x-mitrify-provider": cand.provider.id,
       "x-mitrify-model": encodeURIComponent(cand.upstreamModel),
