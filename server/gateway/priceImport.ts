@@ -5,8 +5,7 @@ import type { GatewayStore, PriceEntry } from "./store";
 // the price table up to date from it. Prices come only from that official endpoint; each entry
 // records the address it was read from and when.
 //
-// New models arrive switched OFF and unchecked: the owner decides which models customers and the
-// cheapest pool may use. Models already known keep the owner's switches and only get fresh prices.
+// New models arrive switched OFF for named calls. The automatic mode may still choose them (see catalog.ts). Models already known keep the owner's switches and only get fresh prices.
 
 export interface ImportedModel {
   id: string;
@@ -15,6 +14,8 @@ export interface ImportedModel {
   outputPerMTokUsd: number;
   cachedInputPerMTokUsd: number | null;
   supportsTools: boolean;
+  /** Reads and writes text, as far as the price list says; null when it does not say. */
+  chatCapable: boolean | null;
 }
 
 const MODEL_ID = /^[A-Za-z0-9._:/-]{1,200}$/;
@@ -28,6 +29,20 @@ function perMillion(v: unknown): number | null {
   if (!Number.isFinite(n) || n < 0) return null;
   const m = Math.round(n * 1e6 * 1e6) / 1e6;
   return m <= 99_999_999 ? m : null;
+}
+
+/** Text in, text out? From architecture.input_modalities / output_modalities, or the "a+b->c" string. */
+function chatCapableFrom(arch: any): boolean | null {
+  if (!arch || typeof arch !== "object") return null;
+  const lower = (v: unknown) => (Array.isArray(v) ? v.filter((x) => typeof x === "string").map((x) => x.toLowerCase()) : null);
+  const ins = lower(arch.input_modalities);
+  const outs = lower(arch.output_modalities);
+  if (ins && outs) return ins.includes("text") && outs.includes("text");
+  if (typeof arch.modality === "string" && arch.modality.includes("->")) {
+    const [a, b] = arch.modality.toLowerCase().split("->");
+    return a.includes("text") && b.includes("text");
+  }
+  return null;
 }
 
 export function parseModelList(json: unknown): ImportedModel[] {
@@ -48,6 +63,7 @@ export function parseModelList(json: unknown): ImportedModel[] {
       outputPerMTokUsd: output,
       cachedInputPerMTokUsd: cached,
       supportsTools: Array.isArray(o.supported_parameters) && o.supported_parameters.includes("tools"),
+      chatCapable: chatCapableFrom(o.architecture),
     });
   }
   return out;
@@ -98,9 +114,13 @@ export async function importPrices(
       contextLength: m.contextLength,
       supportsStreaming: old?.supportsStreaming ?? true,
       supportsTools: m.supportsTools,
-      // The owner's choices are kept; new models start switched off.
+      // The owner's choices are kept. New models start switched off for named calls; the automatic mode
+      // may still pick them (free first, then the cheapest) unless the owner skips them.
       qualityPassed: old?.qualityPassed ?? false,
       enabled: old?.enabled ?? false,
+      auto: true,
+      chatCapable: m.chatCapable,
+      blocked: old?.blocked ?? false,
       updatedAt: now,
     };
     await store.upsertPrice(entry);

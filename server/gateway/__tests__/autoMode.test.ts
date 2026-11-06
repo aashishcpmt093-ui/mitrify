@@ -1,0 +1,296 @@
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { describe, it } from "node:test";
+import { buildSnapshot } from "../catalog";
+import { loadConfig } from "../config";
+import { Gateway } from "../gateway";
+import { parseModelList } from "../priceImport";
+import { MemoryStore, type PriceEntry } from "../store";
+import { SETUP_CODE, UPSTREAM_KEY, admin, baseEnv, chat, listen, mockUpstream, price, startGateway, type Seen } from "./helpers";
+
+const OK = '{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":1000,"completion_tokens":1000}}';
+const modelOf = (s: Seen) => (JSON.parse(s.body.toString()) as { model: string }).model;
+const AUTO = '{"model":"mitrify/auto-cheap","messages":[{"role":"user","content":"hi"}]}';
+
+/** A provider whose models behave as scripted. */
+function scripted(rules: Record<string, (n: number, res: import("http").ServerResponse) => void>) {
+  const calls: Record<string, number> = {};
+  return {
+    calls,
+    behaviour: (req: Seen, res: import("http").ServerResponse) => {
+      const m = modelOf(req);
+      calls[m] = (calls[m] ?? 0) + 1;
+      (rules[m] ?? ((_n, r) => (r.writeHead(200, { "content-type": "application/json" }), r.end(OK))))(calls[m], res);
+    },
+  };
+}
+const okRes = (res: import("http").ServerResponse) => (res.writeHead(200, { "content-type": "application/json" }), res.end(OK));
+const limit = (res: import("http").ServerResponse, retryAfter?: string) => (res.writeHead(429, { "content-type": "application/json", ...(retryAfter ? { "retry-after": retryAfter } : {}) }), res.end('{"error":"limit"}'));
+
+async function setup(rules: Parameters<typeof scripted>[0], models: [string, number, number][], env: Record<string, string> = {}) {
+  const s = scripted(rules);
+  const up = await mockUpstream((req, res) => s.behaviour(req, res));
+  const g = await startGateway(
+    baseEnv({
+      MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY,
+      MITRIFY_SURPLUS_BASE_URL: up.url,
+      MITRIFY_SURPLUS_APPROVED: "1",
+      MITRIFY_SURPLUS_MAX_CONCURRENCY: "60",
+      MITRIFY_SURPLUS_MAX_QUEUE: "500",
+      ...env,
+    }),
+  );
+  await admin(g.url, "/admin/prices", { method: "PUT", body: models.map(([m, i, o]) => price("surplus", m, i, o)) });
+  await admin(g.url, "/admin/catalog/refresh", { body: {} });
+  const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+  return { g, up, s, key, close: async () => (await g.close(), await up.close()) };
+}
+
+const entry = (over: Partial<PriceEntry>): PriceEntry => ({
+  provider: "openrouter", upstreamModel: "x/m", inputPerMTokUsd: 0.1, outputPerMTokUsd: 0.2, cachedInputPerMTokUsd: null, currency: "USD",
+  sourceUrl: "https://x", verifiedAt: new Date(), contextLength: 32000, supportsStreaming: true, supportsTools: false,
+  qualityPassed: false, enabled: false, auto: true, chatCapable: true, blocked: false, updatedAt: new Date(), ...over,
+});
+const or = (env: Record<string, string> = {}) => loadConfig({ MITRIFY_OPENROUTER_API_KEY: "k", MITRIFY_OPENROUTER_APPROVED: "1", ...env });
+
+describe("automatic pool rules", () => {
+  it("imported chat models join by themselves: free first, then by price, longer context first on a tie", () => {
+    const snap = buildSnapshot(
+      [
+        entry({ upstreamModel: "a/paid-dear", inputPerMTokUsd: 1, outputPerMTokUsd: 1 }),
+        entry({ upstreamModel: "a/paid-cheap", inputPerMTokUsd: 0.05, outputPerMTokUsd: 0.05 }),
+        entry({ upstreamModel: "a/free-short", inputPerMTokUsd: 0, outputPerMTokUsd: 0, contextLength: 9000 }),
+        entry({ upstreamModel: "a/free-long", inputPerMTokUsd: 0, outputPerMTokUsd: 0, contextLength: 128000 }),
+      ],
+      or(),
+      { input: 0, output: 0 },
+      new Date(),
+    );
+    assert.deepEqual(snap.entries.map((e) => e.upstreamModel), ["a/free-long", "a/free-short", "a/paid-cheap", "a/paid-dear"]);
+    assert.deepEqual(snap.entries.map((e) => e.free), [true, true, false, false]);
+  });
+
+  it("keeps out models that are not for chat, too short, skipped by the owner, or not imported", () => {
+    const snap = buildSnapshot(
+      [
+        entry({ upstreamModel: "a/ok" }),
+        entry({ upstreamModel: "a/music", chatCapable: false }),
+        entry({ upstreamModel: "a/lyria-3-clip", chatCapable: null }), // unknown: the name gives it away
+        entry({ upstreamModel: "a/plain-unknown", chatCapable: null }), // unknown but nothing suspicious: allowed
+        entry({ upstreamModel: "a/tiny-context", contextLength: 2000 }),
+        entry({ upstreamModel: "a/skipped", blocked: true }),
+        entry({ upstreamModel: "a/by-hand", auto: false }), // typed in by hand: needs On + Pool
+        entry({ upstreamModel: "a/by-hand-ticked", auto: false, enabled: true, qualityPassed: true }),
+      ],
+      or(),
+      { input: 0, output: 0 },
+      new Date(),
+    );
+    assert.deepEqual(snap.entries.map((e) => e.upstreamModel).sort(), ["a/by-hand-ticked", "a/ok", "a/plain-unknown"]);
+    const why = Object.fromEntries(snap.excluded.map((e) => [e.upstreamModel, e.reason]));
+    assert.match(why["a/music"], /not a chat model/);
+    assert.match(why["a/lyria-3-clip"], /not a chat model/);
+    assert.match(why["a/tiny-context"], /context shorter/);
+    assert.match(why["a/skipped"], /skipped/);
+    assert.match(why["a/by-hand"], /not switched On/);
+  });
+
+  it("MITRIFY_GATEWAY_AUTO_SELECT=0 turns the automatic choice off", () => {
+    const snap = buildSnapshot([entry({ upstreamModel: "a/ok" })], or({ MITRIFY_GATEWAY_AUTO_SELECT: "0" }), { input: 0, output: 0 }, new Date());
+    assert.deepEqual(snap.entries, []);
+  });
+
+  it("reads what a model reads and writes from the price list", () => {
+    const m = parseModelList({
+      data: [
+        { id: "v/text", pricing: { prompt: "0", completion: "0" }, architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] } },
+        { id: "v/music", pricing: { prompt: "0", completion: "0" }, architecture: { input_modalities: ["text"], output_modalities: ["audio"] } },
+        { id: "v/str", pricing: { prompt: "0", completion: "0" }, architecture: { modality: "text+image->text" } },
+        { id: "v/str-img", pricing: { prompt: "0", completion: "0" }, architecture: { modality: "text->image" } },
+        { id: "v/unknown", pricing: { prompt: "0", completion: "0" } },
+      ],
+    });
+    assert.deepEqual(m.map((x) => [x.id, x.chatCapable]), [["v/text", true], ["v/music", false], ["v/str", true], ["v/str-img", false], ["v/unknown", null]]);
+  });
+});
+
+describe("free first, then the cheapest, when requests arrive in bulk", () => {
+  const quota = (n: number) => (calls: number, res: import("http").ServerResponse) => (calls <= n ? okRes(res) : limit(res));
+
+  it("20 requests in a row: free models answer until each one's limit is reached, then paid ones, and every request succeeds", async () => {
+    const t = await setup(
+      {
+        "free-a": quota(3),
+        "free-b": quota(2),
+        "free-gone": (_n, res) => (res.writeHead(404, { "content-type": "application/json" }), res.end('{"error":"no endpoints"}')),
+      },
+      [["free-a", 0, 0], ["free-b", 0, 0], ["free-gone", 0, 0], ["paid-1", 0.1, 0.2]],
+    );
+    const statuses: number[] = [];
+    const served: string[] = [];
+    for (let i = 0; i < 20; i++) {
+      const r = await chat(t.g.url, t.key, AUTO);
+      statuses.push(r.status);
+      served.push(decodeURIComponent(r.headers.get("x-mitrify-model") ?? ""));
+      await r.text();
+    }
+    assert.deepEqual(statuses, Array(20).fill(200), "no request failed");
+    assert.deepEqual(served.slice(0, 3), ["free-a", "free-a", "free-a"], "free first");
+    assert.equal(served.filter((m) => m === "free-a").length, 3);
+    assert.equal(served.filter((m) => m === "free-b").length, 2);
+    assert.equal(served.filter((m) => m === "paid-1").length, 15, "everything after the free limits went to the paid model");
+    // A full model is not asked again and again: 3 answers + 1 refusal, 2 answers + 1 refusal, one 404.
+    assert.deepEqual([t.s.calls["free-a"], t.s.calls["free-b"], t.s.calls["free-gone"]], [4, 3, 1]);
+    const status = await (await admin(t.g.url, "/admin/status")).json();
+    assert.deepEqual(status.cooling.map((c: { model: string }) => c.model).sort(), ["free-a", "free-b", "free-gone"]);
+    await t.close();
+  });
+
+  it("40 requests at once: all succeed, and no free model goes past its limit", async () => {
+    const t = await setup(
+      { "free-a": quota(3), "free-b": quota(2) },
+      [["free-a", 0, 0], ["free-b", 0, 0], ["paid-1", 0.1, 0.2]],
+    );
+    const results = await Promise.all(Array.from({ length: 40 }, () => chat(t.g.url, t.key, AUTO).then(async (r) => (await r.text(), [r.status, r.headers.get("x-mitrify-model")] as const))));
+    assert.ok(results.every(([s]) => s === 200), "every request got an answer");
+    const byModel = (m: string) => results.filter(([, x]) => x === m).length;
+    assert.equal(byModel("free-a"), 3);
+    assert.equal(byModel("free-b"), 2);
+    assert.equal(byModel("paid-1"), 35);
+    await t.close();
+  });
+
+  it("each request's last attempt goes to a paid model, so it never ends only because free models were full", async () => {
+    const t = await setup(
+      { "free-1": (_n, r) => limit(r), "free-2": (_n, r) => limit(r), "free-3": (_n, r) => limit(r) },
+      [["free-1", 0, 0], ["free-2", 0, 0], ["free-3", 0, 0], ["paid-1", 0.1, 0.2]],
+      { MITRIFY_GATEWAY_MAX_ATTEMPTS: "2" },
+    );
+    const r = await chat(t.g.url, t.key, AUTO);
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get("x-mitrify-model"), "paid-1");
+    assert.equal(r.headers.get("x-mitrify-attempts"), "2");
+    await r.text();
+    assert.deepEqual(t.s.calls, { "free-1": 1, "paid-1": 1 }, "free-2 and free-3 were never asked");
+    await t.close();
+  });
+
+  it("when every model is full the client gets a clear 429 with a wait time, not a hang", async () => {
+    const t = await setup({ "free-x": (_n, r) => limit(r, "90") }, [["free-x", 0, 0]]);
+    const first = await chat(t.g.url, t.key, AUTO);
+    assert.equal(first.status, 429, "the provider's own answer is passed on");
+    await first.text();
+    const second = await chat(t.g.url, t.key, AUTO);
+    assert.equal(second.status, 429);
+    assert.equal((await second.json()).error.type, "all_rate_limited");
+    const wait = Number(second.headers.get("retry-after"));
+    assert.ok(wait > 60 && wait <= 90, `retry-after ${wait}`);
+    assert.equal(t.s.calls["free-x"], 1, "the full model was not asked again");
+    await t.close();
+  });
+
+  it("a named (pinned) call never falls back and is not blocked by a cooldown", async () => {
+    const t = await setup(
+      { "free-x": (_n, r) => limit(r), "gone": (_n, r) => (r.writeHead(404), r.end('{"error":"nf"}')) },
+      [["free-x", 0, 0], ["gone", 0, 0], ["paid-1", 0.1, 0.2]],
+    );
+    await (await chat(t.g.url, t.key, AUTO)).text(); // makes free-x and gone cool down
+    const a = await chat(t.g.url, t.key, '{"model":"free-x","messages":[]}');
+    assert.equal(a.status, 429, "asked for free-x by name: the answer is free-x's own");
+    await a.text();
+    const b = await chat(t.g.url, t.key, '{"model":"gone","messages":[]}');
+    assert.equal(b.status, 404, "a 404 on a named call is passed on, not retried elsewhere");
+    await b.text();
+    assert.equal(t.s.calls["paid-1"], 1);
+    await t.close();
+  });
+
+  it("free answers cost nothing and are recorded", async () => {
+    const t = await setup({}, [["free-a", 0, 0]]);
+    const r = await chat(t.g.url, t.key, AUTO);
+    assert.equal(r.status, 200);
+    await r.text();
+    await new Promise((x) => setTimeout(x, 30));
+    const row = t.g.store.usage.at(-1)!;
+    assert.equal(row.estimatedCostUsd, 0);
+    assert.equal(row.outcome, "completed");
+    assert.equal((await (await admin(t.g.url, "/admin/status")).json()).spentTodayUsd, 0);
+    await t.close();
+  });
+});
+
+describe("cooldown timing", () => {
+  it("waits as long as the provider says, otherwise 1 minute, then 5 minutes, and forgets after a success", async () => {
+    let now = Date.now();
+    let mode: "limit" | "limit-after" | "ok" = "limit";
+    const up = await mockUpstream((_req, res) => (mode === "ok" ? okRes(res) : limit(res, mode === "limit-after" ? "7" : undefined)));
+    const store = new MemoryStore();
+    const gw = new Gateway(
+      loadConfig(baseEnv({ MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY, MITRIFY_SURPLUS_BASE_URL: up.url, MITRIFY_SURPLUS_APPROVED: "1", MITRIFY_GATEWAY_MAX_ATTEMPTS: "1" })),
+      store,
+      { now: () => now, log: () => {} },
+    );
+    await gw.start();
+    const server = createServer((req, res) => void gw.handle(req, res));
+    const url = await listen(server);
+    await admin(url, "/admin/prices", { method: "PUT", body: [price("surplus", "free-x", 0, 0)] });
+    await admin(url, "/admin/catalog/refresh", { body: {} });
+    const key = ((await (await admin(url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+    const left = async () => (await (await admin(url, "/admin/status")).json()).cooling[0] as { secondsLeft: number; strikes: number } | undefined;
+
+    await (await chat(url, key, AUTO)).text();
+    assert.deepEqual(await left(), { provider: "surplus", model: "free-x", secondsLeft: 60, strikes: 1 });
+    now += 61_000;
+    assert.equal(await left(), undefined, "the wait is over");
+    await (await chat(url, key, AUTO)).text();
+    assert.equal((await left())!.secondsLeft, 300, "second refusal in a row waits longer");
+    now += 301_000;
+    mode = "limit-after";
+    await (await chat(url, key, AUTO)).text();
+    assert.equal((await left())!.secondsLeft, 7, "the provider's own Retry-After wins");
+    now += 8_000;
+    mode = "ok";
+    assert.equal((await chat(url, key, AUTO)).status, 200);
+    assert.equal(await left(), undefined, "a success wipes the memory of earlier refusals");
+    server.closeAllConnections();
+    server.close();
+    await up.close();
+  });
+});
+
+describe("first start", () => {
+  it("reads the provider's price list and builds the pool by itself, with nothing to press", async () => {
+    let listCalls = 0;
+    const up = await mockUpstream((req, res) => {
+      if (req.url === "/models") {
+        listCalls++;
+        res.writeHead(200, { "content-type": "application/json" });
+        return void res.end(
+          JSON.stringify({
+            data: [
+              { id: "v/free-one:free", context_length: 64000, pricing: { prompt: "0", completion: "0" }, architecture: { input_modalities: ["text"], output_modalities: ["text"] } },
+              { id: "v/cheap-one", context_length: 64000, pricing: { prompt: "0.0000001", completion: "0.0000002" }, architecture: { input_modalities: ["text"], output_modalities: ["text"] } },
+              { id: "v/music-one", context_length: 64000, pricing: { prompt: "0", completion: "0" }, architecture: { input_modalities: ["text"], output_modalities: ["audio"] } },
+            ],
+          }),
+        );
+      }
+      okRes(res);
+    });
+    const g = await startGateway(baseEnv({ MITRIFY_OPENROUTER_API_KEY: UPSTREAM_KEY, MITRIFY_OPENROUTER_BASE_URL: up.url, MITRIFY_OPENROUTER_APPROVED: "1" }));
+    await g.gw.refreshCatalogIfDue(); // what happens when the server starts
+    assert.equal(listCalls, 1);
+    const snap = await (await admin(g.url, "/admin/catalog")).json();
+    assert.deepEqual(snap.entries.map((e: { upstreamModel: string }) => e.upstreamModel), ["v/free-one:free", "v/cheap-one"]);
+    await g.gw.refreshCatalogIfDue(); // a fresh, non-empty pool is left alone
+    assert.equal(listCalls, 1);
+    const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+    const r = await chat(g.url, key, AUTO);
+    assert.equal(r.status, 200);
+    assert.equal(decodeURIComponent(r.headers.get("x-mitrify-model")!), "v/free-one:free");
+    await r.text();
+    assert.ok(SETUP_CODE.length > 0);
+    await g.close();
+    await up.close();
+  });
+});

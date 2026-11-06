@@ -12,6 +12,7 @@ on:
       - "shared/**"
       - "migrations/0012_ai_gateway*.sql"
       - "migrations/0013_api_portal*.sql"
+      - "migrations/0014_auto_models*.sql"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/gateway-tests.yml"
@@ -21,6 +22,7 @@ on:
       - "shared/**"
       - "migrations/0012_ai_gateway*.sql"
       - "migrations/0013_api_portal*.sql"
+      - "migrations/0014_auto_models*.sql"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/gateway-tests.yml"
@@ -54,13 +56,13 @@ jobs:
         env:
           PGPASSWORD: test
         run: |
-          for f in migrations/0012_ai_gateway.sql migrations/0013_api_portal.sql; do
+          for f in migrations/0012_ai_gateway.sql migrations/0013_api_portal.sql migrations/0014_auto_models.sql; do
             psql -h 127.0.0.1 -U test -d gw -v ON_ERROR_STOP=1 -f $f
           done
-          for f in migrations/0013_api_portal.down.sql migrations/0012_ai_gateway.down.sql; do
+          for f in migrations/0014_auto_models.down.sql migrations/0013_api_portal.down.sql migrations/0012_ai_gateway.down.sql; do
             psql -h 127.0.0.1 -U test -d gw -v ON_ERROR_STOP=1 -f $f
           done
-          for f in migrations/0012_ai_gateway.sql migrations/0013_api_portal.sql; do
+          for f in migrations/0012_ai_gateway.sql migrations/0013_api_portal.sql migrations/0014_auto_models.sql; do
             psql -h 127.0.0.1 -U test -d gw -v ON_ERROR_STOP=1 -f $f
           done
       - run: npm run test:gateway

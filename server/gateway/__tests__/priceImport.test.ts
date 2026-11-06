@@ -104,7 +104,7 @@ describe("OpenRouter in the gateway", () => {
       assert.deepEqual(ids, ["mitrify/auto-cheap"]);
     });
 
-    it("the owner switches models on, and only a checked model reaches the cheapest pool", async () => {
+    it("named calls need On; the automatic pool needs nothing: free first, then the cheapest, and the owner can skip a model", async () => {
       const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k2" } })).json()) as { key: string }).key;
       assert.equal((await admin(g.url, "/admin/prices/flags", { body: { provider: "openrouter", upstreamModel: "vendor/cheap-model", enabled: "yes" } })).status, 400);
       assert.equal((await admin(g.url, "/admin/prices/flags", { body: { provider: "openrouter", upstreamModel: "nope", enabled: true } })).status, 404);
@@ -113,12 +113,19 @@ describe("OpenRouter in the gateway", () => {
       assert.equal(ok.status, 200);
       await ok.text();
 
+      // Nothing was ticked as Pool, yet the imported chat models are in the pool: free first, then by price.
       let snap = await (await admin(g.url, "/admin/catalog/refresh", { body: {} })).json();
-      assert.deepEqual(snap.entries, [], "enabled but not quality-checked: not in the pool");
-      await admin(g.url, "/admin/prices/flags", { body: { provider: "openrouter", upstreamModel: "vendor/cheap-model", qualityPassed: true } });
+      assert.deepEqual(snap.entries.map((e: { upstreamModel: string }) => e.upstreamModel), ["vendor/free-model:free", "vendor/cheap-model", "vendor/pricey-model"]);
+      assert.equal(snap.entries[0].free, true);
+      assert.equal(snap.entries[1].free, false);
+
+      // Skipping a model keeps it out; un-skipping brings it back.
+      assert.equal((await admin(g.url, "/admin/prices/flags", { body: { provider: "openrouter", upstreamModel: "vendor/pricey-model", blocked: true } })).status, 200);
       snap = await (await admin(g.url, "/admin/catalog/refresh", { body: {} })).json();
-      assert.deepEqual(snap.entries.map((e: { upstreamModel: string }) => e.upstreamModel), ["vendor/cheap-model"]);
-      assert.equal(snap.entries[0].inputPerMTokUsd, 0.1);
+      assert.deepEqual(snap.entries.map((e: { upstreamModel: string }) => e.upstreamModel), ["vendor/free-model:free", "vendor/cheap-model"]);
+      assert.ok(snap.excluded.some((x: { upstreamModel: string; reason: string }) => x.upstreamModel === "vendor/pricey-model" && /skipped/.test(x.reason)));
+      await admin(g.url, "/admin/prices/flags", { body: { provider: "openrouter", upstreamModel: "vendor/pricey-model", blocked: false } });
+      await admin(g.url, "/admin/prices/flags", { body: { provider: "openrouter", upstreamModel: "vendor/cheap-model", qualityPassed: true } });
     });
 
     it("importing again updates prices and keeps the owner's switches", async () => {

@@ -71,13 +71,17 @@ describe("PgStore", { skip: !url && "set GATEWAY_TEST_DATABASE_URL to run" }, ()
     const p = {
       provider: "surplus", upstreamModel: "m", inputPerMTokUsd: 0.1, outputPerMTokUsd: 0.2, cachedInputPerMTokUsd: 0.01,
       currency: "USD" as const, sourceUrl: "https://x", verifiedAt: now, contextLength: 1000, supportsStreaming: true,
-      supportsTools: false, qualityPassed: true, enabled: true, updatedAt: now,
+      supportsTools: false, qualityPassed: true, enabled: true, auto: true, chatCapable: false, blocked: true, updatedAt: now,
     };
     await store.upsertPrice(p);
     await store.upsertPrice({ ...p, outputPerMTokUsd: 0.3 });
     const prices = await store.listPrices();
     assert.equal(prices.length, 1);
     assert.equal(prices[0].outputPerMTokUsd, 0.3);
+    assert.deepEqual([prices[0].auto, prices[0].chatCapable, prices[0].blocked], [true, false, true]);
+    await store.upsertPrice({ ...p, chatCapable: null, blocked: false, auto: false });
+    const again = (await store.listPrices())[0];
+    assert.deepEqual([again.auto, again.chatCapable, again.blocked], [false, null, false], "unknown stays unknown");
     const s = await store.saveSnapshot({ createdAt: now, weights: { input: 0.5, output: 0.5, source: "default" }, entries: [], excluded: [] });
     assert.equal((await store.latestSnapshot())!.id, s.id);
     await store.setSetting("kill.global", true);

@@ -56,6 +56,10 @@ export interface GatewayConfig {
   trustProxy: boolean;
   adminIps: string[];
   poolSize: number;
+  /** Models imported from a provider's own price list join the cheapest pool by themselves (free first). */
+  autoSelect: boolean;
+  /** Shortest context (tokens) an automatically chosen model may have. */
+  minContext: number;
   maxPriceAgeDays: number;
   maxAttempts: number;
   keyRotationGraceHours: number;
@@ -204,9 +208,11 @@ export function loadConfig(env: Env = process.env): GatewayConfig {
     requireStreamUsage: env.MITRIFY_GATEWAY_REQUIRE_STREAM_USAGE !== "0",
     trustProxy: env.MITRIFY_GATEWAY_TRUST_PROXY === "1",
     adminIps: list(env.MITRIFY_GATEWAY_ADMIN_IPS),
-    poolSize: int(env, "MITRIFY_GATEWAY_POOL_SIZE", 10, 1),
+    poolSize: int(env, "MITRIFY_GATEWAY_POOL_SIZE", 40, 1),
+    autoSelect: env.MITRIFY_GATEWAY_AUTO_SELECT !== "0",
+    minContext: int(env, "MITRIFY_GATEWAY_MIN_CONTEXT", 8000, 0),
     maxPriceAgeDays: int(env, "MITRIFY_GATEWAY_MAX_PRICE_AGE_DAYS", 30, 1),
-    maxAttempts: Math.min(int(env, "MITRIFY_GATEWAY_MAX_ATTEMPTS", 2, 1), 3),
+    maxAttempts: Math.min(int(env, "MITRIFY_GATEWAY_MAX_ATTEMPTS", 4, 1), 6),
     keyRotationGraceHours: int(env, "MITRIFY_GATEWAY_KEY_ROTATION_GRACE_HOURS", 24, 0),
     portalSecret,
     portalProblem,

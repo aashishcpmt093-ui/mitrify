@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import type { IncomingMessage, ServerResponse } from "http";
-import { AUTO_MODEL, buildSnapshot, validatePriceInput } from "./catalog";
+import { AUTO_MODEL, buildSnapshot, isFreePrice, validatePriceInput } from "./catalog";
 import { describeProvider, type GatewayConfig, type ProviderConfig } from "./config";
 import { BodyTooLargeError, clientIp, readRawBody, sendError, sendJson } from "./http";
 import { JsonScanError, findTopLevelModel, replaceTopLevelModel } from "./jsonModel";
@@ -33,6 +33,17 @@ const RETRYABLE_STATUS = new Set([429, 503]);
 const RETRYABLE_NET = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT"]);
 
 type Log = (msg: string) => void;
+
+const MAX_COOLDOWN_MS = 2 * 3600_000;
+
+/** Retry-After as milliseconds: whole seconds or an HTTP date. null when missing or unusable. */
+export function parseRetryAfter(v: string | null, nowMs: number): number | null {
+  if (!v) return null;
+  const t = v.trim();
+  if (/^\d{1,7}$/.test(t)) return Number(t) * 1000;
+  const d = Date.parse(t);
+  return Number.isFinite(d) && d > nowMs ? d - nowMs : null;
+}
 
 interface Candidate {
   provider: ProviderConfig;
@@ -81,6 +92,13 @@ export interface GatewayDeps {
 
 export class Gateway {
   readonly portal: PortalApi;
+  /**
+   * Models that just said "limit reached" (429) or "no such endpoint" (404) are skipped for a while, so a
+   * burst of requests spreads down the pool: free models first, then the cheapest paid ones, without
+   * every request having to find out again that a free model is full. Each repeat without a success
+   * waits longer (1 min, 5 min, 25 min, up to 2 hours), which is how a daily limit is learned.
+   */
+  private cooling = new Map<string, { until: number; strikes: number }>();
   readonly semaphores = new Map<string, Semaphore>();
   readonly breakers = new Map<string, CircuitBreaker>();
   private rate: RateLimiter;
@@ -194,6 +212,23 @@ export class Gateway {
     const list = await this.store.listPrices();
     this.pricesCache = { at: t, list };
     return list;
+  }
+
+  private coolKey(c: { provider: ProviderConfig; upstreamModel: string }) {
+    return `${c.provider.id}\u0000${c.upstreamModel}`;
+  }
+  private isCooling(key: string) {
+    const c = this.cooling.get(key);
+    return !!c && c.until > this.now();
+  }
+  private coolDown(key: string, retryAfterMs: number | null, kind: "limit" | "missing") {
+    const strikes = (this.cooling.get(key)?.strikes ?? 0) + 1;
+    const base = kind === "missing" ? 3600_000 : 60_000 * 5 ** Math.min(strikes - 1, 3);
+    const wait = Math.min(Math.max(retryAfterMs ?? base, 1000), MAX_COOLDOWN_MS);
+    this.cooling.set(key, { until: this.now() + wait, strikes });
+  }
+  private coolOk(key: string) {
+    if (this.cooling.has(key)) this.cooling.delete(key);
   }
 
   private providerUsable(p: ProviderConfig, disabled: Set<string>) {
@@ -333,7 +368,9 @@ export class Gateway {
     // Choose the route before forwarding. It does not change while the request runs.
     const mode: UsageRow["mode"] = model === AUTO_MODEL ? "auto-cheap" : "pinned";
     const route = await this.route(mode, model, stream, req.headers["x-mitrify-provider"], !!client.customer);
-    if ("error" in route) return sendError(res, route.status, route.code, route.error);
+    if ("error" in route) {
+      return sendError(res, route.status, route.code, route.error, route.retryAfter ? { "retry-after": String(route.retryAfter) } : {});
+    }
 
     if (this.inflight >= this.config.maxInflight) {
       return sendError(res, 503, "gateway_busy", "The gateway is at its connection limit, try again shortly.", { "retry-after": "5" });
@@ -352,26 +389,46 @@ export class Gateway {
     stream: boolean,
     providerHeader: string | string[] | undefined,
     resaleOnly: boolean,
-  ): Promise<{ candidates: Candidate[] } | { status: number; code: string; error: string }> {
+  ): Promise<{ candidates: Candidate[] } | { status: number; code: string; error: string; retryAfter?: number }> {
     const sw = await this.switches();
     const byId = new Map(this.config.providers.map((p) => [p.id, p]));
 
     if (mode === "auto-cheap") {
       const snap = this.snapshot;
       if (!snap || snap.entries.length === 0) {
-        return { status: 503, code: "pool_empty", error: "The cheapest-model pool is empty. The owner must add verified prices." };
+        return {
+          status: 503,
+          code: "pool_empty",
+          error: "The cheapest-model pool is empty. Prices are read from the provider automatically; ask the owner to check the provider is set up.",
+        };
       }
+      // Cheapest first (free, then paid). forward() walks this list, skipping models that fill up meanwhile.
       const candidates: Candidate[] = [];
+      let soonestFree = Infinity;
       for (const e of snap.entries) {
         const p = byId.get(e.provider);
         if (!p || !this.providerUsable(p, sw.disabled)) continue;
         if (resaleOnly && !p.resaleApproved) continue;
         if (stream && !e.supportsStreaming) continue;
         if (!this.breakers.get(p.id)!.available()) continue;
-        candidates.push({ provider: p, upstreamModel: e.upstreamModel, price: e });
-        if (candidates.length >= this.config.maxAttempts) break;
+        const cand = { provider: p, upstreamModel: e.upstreamModel, price: e };
+        const c = this.cooling.get(this.coolKey(cand));
+        if (c && c.until > this.now()) {
+          soonestFree = Math.min(soonestFree, c.until);
+          continue;
+        }
+        candidates.push(cand);
+        if (candidates.length >= 24) break;
       }
       if (candidates.length === 0) {
+        if (soonestFree !== Infinity) {
+          return {
+            status: 429,
+            code: "all_rate_limited",
+            error: "Every model in the pool has reached its limit for now. Try again shortly.",
+            retryAfter: Math.max(1, Math.ceil((soonestFree - this.now()) / 1000)),
+          };
+        }
         return { status: 503, code: "no_provider_available", error: "No model in today's pool is available right now." };
       }
       return { candidates };
@@ -425,9 +482,23 @@ export class Gateway {
     let attempts = 0;
     let lastError: { status: number; code: string; message: string; retryAfter?: number } | null = null;
 
-    for (let i = 0; i < o.candidates.length; i++) {
-      const cand = o.candidates[i];
-      const isLast = i === o.candidates.length - 1;
+    // Candidates are tried cheapest first. A model that filled up meanwhile (cooling) is skipped without
+    // counting as an attempt. The last attempt a request may make prefers a PAID model when one is left,
+    // so a request never ends only because the free models were full.
+    const remaining = [...o.candidates];
+    const maxAttempts = this.config.maxAttempts;
+    const usable = (c: Candidate) =>
+      (mode !== "auto-cheap" || !this.isCooling(this.coolKey(c))) && this.breakers.get(c.provider.id)!.available();
+    const free = (c: Candidate) => !!c.price && isFreePrice(c.price);
+    while (attempts < maxAttempts) {
+      let idx = remaining.findIndex(usable);
+      if (idx < 0) break;
+      if (mode === "auto-cheap" && attempts === maxAttempts - 1 && free(remaining[idx])) {
+        const paid = remaining.findIndex((c) => usable(c) && !free(c));
+        if (paid >= 0) idx = paid;
+      }
+      const cand = remaining.splice(idx, 1)[0];
+      const isLast = attempts + 1 >= maxAttempts || !remaining.some(usable);
       const breaker = this.breakers.get(cand.provider.id)!;
       if (!breaker.allow()) {
         lastError = { status: 503, code: "provider_unavailable", message: "The provider is temporarily unavailable." };
@@ -502,7 +573,14 @@ export class Gateway {
         return this.record(o, cand, attempts, status, timedOut ? "upstream_timeout" : "upstream_error", null, null);
       }
 
-      if (RETRYABLE_STATUS.has(up.status) && !isLast) {
+      if (mode === "auto-cheap") {
+        const key = this.coolKey(cand);
+        if (up.status === 429) this.coolDown(key, parseRetryAfter(up.headers.get("retry-after"), this.now()), "limit");
+        else if (up.status === 404) this.coolDown(key, null, "missing");
+        else if (up.status < 400) this.coolOk(key);
+      }
+      const retryable = RETRYABLE_STATUS.has(up.status) || (mode === "auto-cheap" && up.status === 404);
+      if (retryable && !isLast) {
         // Refused before generation started: safe to try the next model in the pool.
         if (up.status === 503) breaker.failure();
         else breaker.success();
@@ -690,7 +768,8 @@ export class Gateway {
   /** Refreshes when there is no snapshot or the latest is a day old. Keeps the old one on failure. */
   async refreshCatalogIfDue() {
     const latest = this.snapshot;
-    if (latest && this.now() - latest.createdAt.getTime() < 24 * 60 * 60 * 1000) return;
+    // Rebuild when there is no pool, the pool is a day old, or the last one came out empty (retried hourly).
+    if (latest && latest.entries.length > 0 && this.now() - latest.createdAt.getTime() < 24 * 60 * 60 * 1000) return;
     // Fresh prices first (providers that publish them), then the pool. Either step failing keeps the old data.
     for (const p of this.config.providers) {
       if (!supportsImport(p.id) || p.status !== "active") continue;
@@ -824,8 +903,10 @@ export class Gateway {
       try {
         const r = await importPrices(p, this.store, this.fetchImpl, new Date(this.now()));
         this.pricesCache = null;
-        await this.audit("owner", "prices_imported", ip, { provider: p.id, added: r.added, updated: r.updated });
-        return sendJson(res, 200, { ...r, note: "New models are switched off. Switch on the ones you want, then rebuild the pool." });
+        // The cheapest pool is rebuilt at once, so nothing has to be switched on by hand.
+        const snap = await this.refreshCatalog();
+        await this.audit("owner", "prices_imported", ip, { provider: p.id, added: r.added, updated: r.updated, pool: snap.entries.length });
+        return sendJson(res, 200, { ...r, poolModels: snap.entries.length, freeModels: snap.entries.filter((e) => e.free).length });
       } catch (e) {
         return sendError(res, 502, "import_failed", (e as Error).message);
       }
@@ -834,19 +915,20 @@ export class Gateway {
       const b = (body ?? {}) as Record<string, unknown>;
       const cur = (await this.store.listPrices()).find((x) => x.provider === b.provider && x.upstreamModel === b.upstreamModel);
       if (!cur) return sendError(res, 404, "not_found", "No such price entry.");
-      for (const k of ["enabled", "qualityPassed"] as const) {
+      for (const k of ["enabled", "qualityPassed", "blocked"] as const) {
         if (b[k] !== undefined && typeof b[k] !== "boolean") return sendError(res, 400, "invalid_request", `${k} must be true or false.`);
       }
       const next = {
         ...cur,
         enabled: typeof b.enabled === "boolean" ? b.enabled : cur.enabled,
         qualityPassed: typeof b.qualityPassed === "boolean" ? b.qualityPassed : cur.qualityPassed,
+        blocked: typeof b.blocked === "boolean" ? b.blocked : cur.blocked,
         updatedAt: new Date(this.now()),
       };
       await this.store.upsertPrice(next);
       this.pricesCache = null;
       await this.audit("owner", "price_flags_changed", ip, { provider: cur.provider, model: cur.upstreamModel, enabled: next.enabled, qualityPassed: next.qualityPassed });
-      return sendJson(res, 200, { provider: cur.provider, upstreamModel: cur.upstreamModel, enabled: next.enabled, qualityPassed: next.qualityPassed });
+      return sendJson(res, 200, { provider: cur.provider, upstreamModel: cur.upstreamModel, enabled: next.enabled, qualityPassed: next.qualityPassed, blocked: next.blocked });
     }
     if (m === "POST /catalog/refresh") {
       const snap = await this.refreshCatalog();
@@ -903,6 +985,12 @@ export class Gateway {
       catalog: this.snapshot
         ? { snapshot: this.snapshot.id, createdAt: this.snapshot.createdAt, models: this.snapshot.entries.length }
         : null,
+      cooling: [...this.cooling.entries()]
+        .filter(([, c]) => c.until > this.now())
+        .map(([k, c]) => {
+          const [provider, model] = k.split("\u0000");
+          return { provider, model, secondsLeft: Math.ceil((c.until - this.now()) / 1000), strikes: c.strikes };
+        }),
     };
   }
 

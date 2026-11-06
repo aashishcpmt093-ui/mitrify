@@ -94,7 +94,7 @@ describe("catalog", () => {
     assert.deepEqual(snap.entries.map((e) => e.upstreamModel), ["m-cheap", "m-mid"]);
     const reasons = Object.fromEntries(snap.excluded.map((e) => [e.upstreamModel, e.reason]));
     assert.match(reasons["m-unapproved"], /pending_approval/);
-    assert.match(reasons["m-bad-quality"], /quality/);
+    assert.match(reasons["m-bad-quality"], /not switched On/);
     assert.match(reasons["m-stale"], /older/);
     assert.match(reasons["m-out"], /top 2/);
     assert.equal(snap.weights.source, "default");
