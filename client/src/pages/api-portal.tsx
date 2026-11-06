@@ -332,7 +332,7 @@ function Prices({ code, providers, cooling }: { code: string; providers: Obj[]; 
     }
   };
 
-  const importer = providers.find((p) => p.id === "openrouter" && p.status === "active");
+  const importers = providers.filter((p) => p.canImport && p.status === "active");
   const needle = q.trim().toLowerCase();
   const poolKeys = new Set(pool.map((e: Obj) => `${e.provider}/${e.upstreamModel}`));
   const isFree = (p: Obj) => p.inputPerMTokUsd === 0 && p.outputPerMTokUsd === 0;
@@ -377,20 +377,21 @@ function Prices({ code, providers, cooling }: { code: string; providers: Obj[]; 
         in by hand.) Prices are dollars per 1 million tokens.
       </p>
       <div className="flex flex-wrap gap-2">
-        {importer && (
+        {importers.map((p) => (
           <button
+            key={p.id}
             className={btn2}
             disabled={busy}
             onClick={() =>
               run(async () => {
-                const r = await call("/owner/prices/import", { code, body: { provider: "openrouter" } });
-                return `OpenRouter: ${r.added} new models, ${r.updated} updated. The automatic pool now has ${r.poolModels} models (${r.freeModels} free).`;
+                const r = await call("/owner/prices/import", { code, body: { provider: p.id } });
+                return `${p.label}: ${r.added} new models, ${r.updated} updated. The automatic pool now has ${r.poolModels} models (${r.freeModels} free).`;
               })
             }
           >
-            Read prices from OpenRouter now
+            Read prices from {p.label} now
           </button>
-        )}
+        ))}
         <button
           className={btn2}
           disabled={busy}

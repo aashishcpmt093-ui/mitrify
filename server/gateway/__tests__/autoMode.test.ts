@@ -876,3 +876,46 @@ describe("an empty pool", () => {
     }
   });
 });
+
+describe("a provider set up after the pool was built", () => {
+  it("has its price list read by itself, so its models are used without any extra step", async () => {
+    const asked: string[] = [];
+    const up = await mockUpstream((req, res) => {
+      asked.push(req.url);
+      res.writeHead(200, { "content-type": "application/json" });
+      if (req.url === "/models") {
+        return void res.end(
+          JSON.stringify({
+            data: [
+              {
+                id: "openai-gpt-oss-120b",
+                context_length: 128000,
+                architecture: { input_modalities: ["text"], output_modalities: ["text"] },
+                pricing: { prompt: "0.00000007", completion: "0.0000003" },
+                supported_parameters: ["max_tokens", "temperature"],
+              },
+            ],
+          }),
+        );
+      }
+      res.end(OK);
+    });
+    const g = await startGateway(baseEnv({ MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY, MITRIFY_SURPLUS_BASE_URL: up.url, MITRIFY_SURPLUS_APPROVED: "1" }));
+    try {
+      const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+      assert.equal((await (await admin(g.url, "/admin/prices")).json()).prices.length, 0); // nothing imported yet
+      const r = await chat(g.url, key, AUTO);
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get("x-mitrify-provider"), "surplus");
+      assert.equal(r.headers.get("x-mitrify-model"), encodeURIComponent("openai-gpt-oss-120b"));
+      assert.ok(asked.includes("/models"));
+      // The owner page can also ask for it by name.
+      const st = await (await admin(g.url, "/admin/status")).json();
+      assert.equal(st.providers.find((p: { id: string }) => p.id === "surplus").canImport, true);
+      assert.equal(st.providers.find((p: { id: string }) => p.id === "deepinfra").canImport, false);
+    } finally {
+      await g.close();
+      await up.close();
+    }
+  });
+});

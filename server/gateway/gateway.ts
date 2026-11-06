@@ -518,6 +518,7 @@ export class Gateway {
       if ((!snap || snap.entries.length === 0) && this.now() - this.lastEmptyRebuild > 60_000) {
         this.lastEmptyRebuild = this.now();
         try {
+          await this.importMissingPrices();
           snap = await this.refreshCatalog();
         } catch (e) {
           this.log(`pool rebuild on an empty pool failed: ${(e as Error).message}`);
@@ -1049,8 +1050,34 @@ export class Gateway {
     }
   }
 
+  /**
+   * A provider that was just set up has no prices at all, however fresh the pool is. Read its price list now,
+   * so adding a provider needs no extra step. Returns true when something was imported.
+   */
+  async importMissingPrices(): Promise<boolean> {
+    const have = new Set((await this.store.listPrices()).map((x) => x.provider));
+    let any = false;
+    for (const p of this.config.providers) {
+      if (!supportsImport(p.id) || p.status !== "active" || have.has(p.id)) continue;
+      try {
+        const r = await importPrices(p, this.store, this.fetchImpl, new Date(this.now()));
+        this.log(`first price import from ${p.id}: ${r.added} models`);
+        any = true;
+      } catch (e) {
+        this.log(`first price import from ${p.id} failed: ${(e as Error).message}`);
+      }
+    }
+    if (any) this.pricesCache = null;
+    return any;
+  }
+
   /** Refreshes when there is no snapshot or the latest is a day old. Keeps the old one on failure. */
   async refreshCatalogIfDue() {
+    try {
+      if (await this.importMissingPrices()) await this.refreshCatalog();
+    } catch (e) {
+      this.log(`could not read the prices of a new provider: ${(e as Error).message}`);
+    }
     const latest = this.snapshot;
     // Rebuild when there is no pool, the pool is a day old, or the last one came out empty (retried hourly).
     if (latest && latest.entries.length > 0 && this.now() - latest.createdAt.getTime() < 24 * 60 * 60 * 1000) return;
@@ -1238,6 +1265,7 @@ export class Gateway {
       return sendJson(res, 200, { provider: cur.provider, upstreamModel: cur.upstreamModel, enabled: next.enabled, qualityPassed: next.qualityPassed, blocked: next.blocked });
     }
     if (m === "POST /catalog/refresh") {
+      await this.importMissingPrices();
       const snap = await this.refreshCatalog();
       await this.audit("owner", "catalog_refreshed", ip, { snapshot: snap.id });
       return sendJson(res, 200, snap);

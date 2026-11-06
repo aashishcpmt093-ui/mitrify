@@ -269,5 +269,6 @@ export function describeProvider(p: ProviderConfig) {
     priority: p.priority,
     freePerDay: p.freePerDay,
     freePerMinute: p.freePerMinute,
+    canImport: p.id === "openrouter" || p.id === "surplus",
   };
 }
