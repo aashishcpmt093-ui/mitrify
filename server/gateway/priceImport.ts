@@ -31,18 +31,29 @@ function perMillion(v: unknown): number | null {
   return m <= 99_999_999 ? m : null;
 }
 
-/** Text in, text out? From architecture.input_modalities / output_modalities, or the "a+b->c" string. */
-function chatCapableFrom(arch: any): boolean | null {
-  if (!arch || typeof arch !== "object") return null;
-  const lower = (v: unknown) => (Array.isArray(v) ? v.filter((x) => typeof x === "string").map((x) => x.toLowerCase()) : null);
-  const ins = lower(arch.input_modalities);
-  const outs = lower(arch.output_modalities);
-  if (ins && outs) return ins.includes("text") && outs.includes("text");
-  if (typeof arch.modality === "string" && arch.modality.includes("->")) {
-    const [a, b] = arch.modality.toLowerCase().split("->");
-    return a.includes("text") && b.includes("text");
+/**
+ * Is this a general chat model? Both checks must agree, whichever the price list gives:
+ *  - it reads text and writes ONLY text (a music or image model that also writes some text is not a chat model);
+ *  - it takes the usual chat settings (max_tokens or temperature), which task-specific endpoints do not.
+ * null when the list says nothing about either.
+ */
+function chatCapableFrom(arch: any, supported: unknown): boolean | null {
+  let byModality: boolean | null = null;
+  if (arch && typeof arch === "object") {
+    const lower = (v: unknown) => (Array.isArray(v) ? v.filter((x) => typeof x === "string").map((x) => x.toLowerCase()) : null);
+    const ins = lower(arch.input_modalities);
+    const outs = lower(arch.output_modalities);
+    if (ins && outs) byModality = ins.includes("text") && outs.length > 0 && outs.every((x) => x === "text");
+    else if (typeof arch.modality === "string" && arch.modality.includes("->")) {
+      const [a, b] = arch.modality.toLowerCase().split("->");
+      byModality = a.includes("text") && b.trim() === "text";
+    }
   }
-  return null;
+  // An empty list is "unknown", not "supports nothing".
+  const byParams = Array.isArray(supported) && supported.length > 0 ? supported.includes("max_tokens") || supported.includes("temperature") : null;
+  if (byModality === false || byParams === false) return false;
+  if (byModality === null && byParams === null) return null;
+  return true;
 }
 
 export function parseModelList(json: unknown): ImportedModel[] {
@@ -63,7 +74,7 @@ export function parseModelList(json: unknown): ImportedModel[] {
       outputPerMTokUsd: output,
       cachedInputPerMTokUsd: cached,
       supportsTools: Array.isArray(o.supported_parameters) && o.supported_parameters.includes("tools"),
-      chatCapable: chatCapableFrom(o.architecture),
+      chatCapable: chatCapableFrom(o.architecture, o.supported_parameters),
     });
   }
   return out;

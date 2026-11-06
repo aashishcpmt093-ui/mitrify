@@ -35,6 +35,8 @@ const RETRYABLE_NET = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "UND_ER
 type Log = (msg: string) => void;
 
 const MAX_COOLDOWN_MS = 2 * 3600_000;
+/** Bump when the way imported models are judged changes: the lists are then read again once. */
+const IMPORT_RULES_VERSION = 2;
 
 /** The first piece of a stream already says it failed (an error event) or that nothing is coming. */
 export function badStreamStart(chunk: Uint8Array): string | null {
@@ -250,8 +252,9 @@ export class Gateway {
   }
   private coolDown(key: string, retryAfterMs: number | null, kind: "limit" | "missing" | "error") {
     const strikes = (this.cooling.get(key)?.strikes ?? 0) + 1;
-    // limit: 1, 5, 25, 125 min. error: 2, 10, 50 min (a model that failed once may only dislike this request).
-    const base = kind === "missing" ? 3600_000 : kind === "error" ? 120_000 * 5 ** Math.min(strikes - 1, 2) : 60_000 * 5 ** Math.min(strikes - 1, 3);
+    // limit: 1, 5, 25, 125 min. error: 5, 25, 125 min (a model that failed may only dislike this request, but
+    // one that keeps failing should not keep costing every request an attempt).
+    const base = kind === "missing" ? 3600_000 : kind === "error" ? 300_000 * 5 ** Math.min(strikes - 1, 2) : 60_000 * 5 ** Math.min(strikes - 1, 3);
     const wait = Math.min(Math.max(retryAfterMs ?? base, 1000), MAX_COOLDOWN_MS);
     this.cooling.set(key, { until: this.now() + wait, strikes });
   }
@@ -861,6 +864,31 @@ export class Gateway {
     this.pricesCache = null;
     this.log(`catalog snapshot #${snap.id}: ${snap.entries.length} models in the pool (${snap.weights.source} weights)`);
     return snap;
+  }
+
+  /**
+   * The rules for judging imported models changed: read the lists again once and rebuild the pool, so
+   * models judged under old rules are not kept. Runs once per rules version, then remembers.
+   */
+  async refreshIfRulesChanged() {
+    try {
+      if ((await this.store.getSetting<number>("import.rules")) === IMPORT_RULES_VERSION) return;
+      for (const p of this.config.providers) {
+        if (!supportsImport(p.id) || p.status !== "active") continue;
+        try {
+          const r = await importPrices(p, this.store, this.fetchImpl, new Date(this.now()));
+          this.log(`prices from ${p.id} read again under the new rules: ${r.added} new, ${r.updated} updated`);
+        } catch (e) {
+          this.log(`price import from ${p.id} failed, will retry at the next start: ${(e as Error).message}`);
+          return; // not remembered, so it is tried again next time
+        }
+      }
+      this.pricesCache = null;
+      await this.refreshCatalog();
+      await this.store.setSetting("import.rules", IMPORT_RULES_VERSION);
+    } catch (e) {
+      this.log(`could not apply the new rules yet: ${(e as Error).message}`);
+    }
   }
 
   /** Refreshes when there is no snapshot or the latest is a day old. Keeps the old one on failure. */

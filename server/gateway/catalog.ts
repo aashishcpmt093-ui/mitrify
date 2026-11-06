@@ -29,8 +29,15 @@ export function blendedPrice(p: { inputPerMTokUsd: number; outputPerMTokUsd: num
 // when the provider's price list did not say what the model reads and writes.
 const NON_CHAT_NAME = /(lyria|imagen|veo|sora|image|video|audio|tts|whisper|speech|embed|moderation|rerank|guard|safety|transcri|ocr)/i;
 
+// Never chosen automatically, whatever the price list says about them: models that are not for general
+// chat or may not be used on behalf of other people. "stealth/..." models are OpenRouter's secret test
+// models, whose terms forbid using them for third parties. A slug such as "extract" or "summarize" is a
+// single-purpose endpoint that needs its own request format.
+const NEVER_AUTO = /^stealth\/|\/(?:extract|summari[sz]e|classify|moderat\w*|embed\w*|rerank\w*)(?::.*)?$/i;
+
 /** Is this imported model a text chat model? */
 export function looksLikeChatModel(p: Pick<PriceEntry, "upstreamModel" | "chatCapable">): boolean {
+  if (NEVER_AUTO.test(p.upstreamModel)) return false;
   return p.chatCapable === true || (p.chatCapable === null && !NON_CHAT_NAME.test(p.upstreamModel));
 }
 
@@ -81,6 +88,7 @@ export function buildSnapshot(
       supportsStreaming: p.supportsStreaming,
       contextLength: p.contextLength,
       free: isFreePrice(p),
+      supportsTools: p.supportsTools,
       priority: prov!.priority,
     });
   }
@@ -88,7 +96,8 @@ export function buildSnapshot(
   eligible.sort(
     (a, b) =>
       a.blendedPerMTokUsd - b.blendedPerMTokUsd ||
-      // Same price: the longer context first, then the provider's priority.
+      // Same price: models that take tools (a sign of a general assistant) first, then the longer context.
+      Number(!!b.supportsTools) - Number(!!a.supportsTools) ||
       (b.contextLength ?? 0) - (a.contextLength ?? 0) ||
       a.priority - b.priority ||
       a.provider.localeCompare(b.provider) ||

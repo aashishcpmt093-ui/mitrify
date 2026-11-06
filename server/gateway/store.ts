@@ -110,6 +110,7 @@ export interface SnapshotEntry {
   contextLength: number | null;
   /** Both prices are zero. */
   free?: boolean;
+  supportsTools?: boolean;
 }
 
 export interface CatalogSnapshot {

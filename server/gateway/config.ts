@@ -221,7 +221,7 @@ export function loadConfig(env: Env = process.env): GatewayConfig {
     autoSelect: env.MITRIFY_GATEWAY_AUTO_SELECT !== "0",
     minContext: int(env, "MITRIFY_GATEWAY_MIN_CONTEXT", 8000, 0),
     maxPriceAgeDays: int(env, "MITRIFY_GATEWAY_MAX_PRICE_AGE_DAYS", 30, 1),
-    maxAttempts: Math.min(int(env, "MITRIFY_GATEWAY_MAX_ATTEMPTS", 4, 1), 6),
+    maxAttempts: Math.min(int(env, "MITRIFY_GATEWAY_MAX_ATTEMPTS", 5, 1), 8),
     keyRotationGraceHours: int(env, "MITRIFY_GATEWAY_KEY_ROTATION_GRACE_HOURS", 24, 0),
     portalSecret,
     portalProblem,
