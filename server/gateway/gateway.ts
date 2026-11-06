@@ -5,7 +5,7 @@ import { describeProvider, type GatewayConfig, type ProviderConfig } from "./con
 import { BodyTooLargeError, clientIp, readRawBody, sendError, sendJson } from "./http";
 import { JsonScanError, findTopLevelModel, replaceTopLevelModel } from "./jsonModel";
 import { bearerToken, displayPrefix, generateApiKey, hashApiKey, looksLikeApiKey, setupCodeMatches } from "./keys";
-import { CircuitBreaker, Lockout, QueueFullError, QueueTimeoutError, RateLimiter, Semaphore } from "./limits";
+import { CircuitBreaker, FreeQuota, Lockout, QueueFullError, QueueTimeoutError, RateLimiter, Semaphore } from "./limits";
 import { PortalApi } from "./portal";
 import { importPrices, supportsImport } from "./priceImport";
 import type { CatalogSnapshot, ClientRecord, CustomerRecord, GatewayStore, PriceEntry, UsageRow } from "./store";
@@ -130,6 +130,9 @@ export class Gateway {
   private cooling = new Map<string, { until: number; strikes: number }>();
   readonly semaphores = new Map<string, Semaphore>();
   readonly breakers = new Map<string, CircuitBreaker>();
+  /** Calls sent to each provider's free models today and in the last minute. */
+  readonly freeQuota: FreeQuota;
+  private quotaLoaded = false;
   private rate: RateLimiter;
   private lockout: Lockout;
   private fetchImpl: typeof fetch;
@@ -150,6 +153,7 @@ export class Gateway {
   ) {
     this.fetchImpl = deps.fetch ?? fetch;
     this.now = deps.now ?? Date.now;
+    this.freeQuota = new FreeQuota(() => this.now());
     this.log = deps.log ?? ((m) => console.log(`[gateway] ${m}`));
     this.portal = new PortalApi(this);
     this.rate = new RateLimiter(this.now);
@@ -259,6 +263,33 @@ export class Gateway {
    * models are set aside together, instead of every request burning an attempt (and a count of the daily limit,
    * which failed attempts also use) on each free model in turn.
    */
+  /** Brings back today's free-call count after a restart (once). */
+  private async loadFreeQuota() {
+    if (this.quotaLoaded) return;
+    this.quotaLoaded = true;
+    for (const p of this.config.providers) {
+      if (p.freePerDay === null) continue;
+      try {
+        const saved = await this.store.getSetting<{ date: string; n: number }>(`freeQuota.${p.id}`);
+        if (saved && typeof saved.date === "string" && Number.isFinite(saved.n)) this.freeQuota.restore(p.id, saved.date, saved.n);
+      } catch {
+        // Counting restarts from zero: the provider's own limit still protects the account.
+      }
+    }
+  }
+  /** Free calls left today at a provider that has a daily number, or null when none is counted. */
+  private freeLeft(p: ProviderConfig): number | null {
+    return p.freePerDay === null ? null : Math.max(0, p.freePerDay - this.freeQuota.used(p.id).today);
+  }
+  private freeQuotaCheck(p: ProviderConfig) {
+    return this.freeQuota.check(p.id, { perDay: p.freePerDay, perMinute: p.freePerMinute });
+  }
+  private countFreeCall(p: ProviderConfig) {
+    if (p.freePerDay === null && p.freePerMinute === null) return;
+    const r = this.freeQuota.take(p.id);
+    if (p.freePerDay !== null) void this.store.setSetting(`freeQuota.${p.id}`, r).catch(() => {});
+  }
+
   private freeTierKey(providerId: string) {
     return `${providerId}\u0000*free*`;
   }
@@ -455,6 +486,7 @@ export class Gateway {
     providerHeader: string | string[] | undefined,
     resaleOnly: boolean,
   ): Promise<{ candidates: Candidate[] } | { status: number; code: string; error: string; retryAfter?: number }> {
+    await this.loadFreeQuota();
     const sw = await this.switches();
     const byId = new Map(this.config.providers.map((p) => [p.id, p]));
 
@@ -483,6 +515,13 @@ export class Gateway {
         if (c && c.until > this.now()) {
           soonestFree = Math.min(soonestFree, c.until);
           continue;
+        }
+        if (isFreePrice(e)) {
+          const q = this.freeQuotaCheck(p);
+          if (!q.ok) {
+            soonestFree = Math.min(soonestFree, this.now() + q.retryAfterMs);
+            continue;
+          }
         }
         const tier = isFreePrice(e) ? this.cooling.get(this.freeTierKey(p.id)) : undefined;
         if (tier && tier.until > this.now()) {
@@ -571,7 +610,10 @@ export class Gateway {
     const maxAttempts = this.config.maxAttempts;
     const free = (c: Candidate) => !!c.price && isFreePrice(c.price);
     const usable = (c: Candidate) =>
-      (mode !== "auto-cheap" || (!this.isCooling(this.coolKey(c)) && !(free(c) && this.isCooling(this.freeTierKey(c.provider.id))))) &&
+      (mode !== "auto-cheap" ||
+        (!this.isCooling(this.coolKey(c)) &&
+          !(free(c) && this.isCooling(this.freeTierKey(c.provider.id))) &&
+          !(free(c) && !this.freeQuotaCheck(c.provider).ok))) &&
       this.breakers.get(c.provider.id)!.available();
     // In the automatic mode, a failure BEFORE any reply bytes were sent can move on to the next model when the
     // model is free (nothing is spent), or when the owner allowed it for paid ones too (MITRIFY_GATEWAY_RETRY_PAID=1).
@@ -621,6 +663,7 @@ export class Gateway {
       }
 
       attempts++;
+      if (free(cand)) this.countFreeCall(cand.provider);
       const body = mode === "auto-cheap" ? replaceTopLevelModel(raw, cand.upstreamModel) : raw;
       const upstream = new AbortController();
       let abortReason: "client" | "first_byte_timeout" | "idle_timeout" | "total_timeout" | null = null;
@@ -1199,6 +1242,7 @@ export class Gateway {
   }
 
   private async status() {
+    await this.loadFreeQuota();
     const sw = await this.switches();
     const day = startOfUtcDay(this.now());
     return {
@@ -1213,6 +1257,10 @@ export class Gateway {
         ...describeProvider(p),
         disabledByAdmin: sw.disabled.has(p.id),
         freeOnly: sw.freeOnly.has(p.id),
+        freeUsage:
+          p.freePerDay === null && p.freePerMinute === null
+            ? null
+            : { ...this.freeQuota.used(p.id), perDay: p.freePerDay, perMinute: p.freePerMinute, leftToday: this.freeLeft(p) },
         circuit: this.breakers.get(p.id)!.state,
         inUse: this.semaphores.get(p.id)!.inUse,
         queued: this.semaphores.get(p.id)!.queued,

@@ -8,6 +8,7 @@ import { createGatewayMiddleware } from "../index";
 import { findTopLevelModel, replaceTopLevelModel } from "../jsonModel";
 import { MemoryStore } from "../store";
 import { SseWatcher, costUsd, isErrorBody, readUsage } from "../usage";
+import { FreeQuota } from "../limits";
 import {
   SETUP_CODE,
   UPSTREAM_KEY,
@@ -43,6 +44,34 @@ describe("jsonModel", () => {
 });
 
 describe("usage and cost", () => {
+  it("counts free calls per day and per minute, and starts again after midnight UTC", () => {
+    let t = Date.UTC(2026, 10, 6, 23, 59, 0);
+    const q = new FreeQuota(() => t);
+    const lim = { perDay: 3, perMinute: 2 };
+    assert.equal(q.check("p", lim).ok, true);
+    q.take("p");
+    q.take("p");
+    const blocked = q.check("p", lim);
+    assert.equal(blocked.ok, false); // 2 in the last minute
+    assert.ok(blocked.retryAfterMs > 0 && blocked.retryAfterMs <= 60_000);
+    t += 61_000; // past midnight: a new day, a new minute
+    assert.equal(q.used("p").today, 0);
+    assert.equal(q.check("p", lim).ok, true);
+    q.take("p");
+    t += 61_000;
+    q.take("p");
+    t += 61_000;
+    q.take("p");
+    const full = q.check("p", lim);
+    assert.equal(full.ok, false); // 3 today
+    assert.ok(full.retryAfterMs > 3600_000);
+    assert.equal(q.check("p", { perDay: null, perMinute: null }).ok, true);
+    const r = new FreeQuota(() => t);
+    r.restore("p", new Date(t).toISOString().slice(0, 10), 7);
+    assert.equal(r.used("p").today, 7);
+    r.restore("p", "2020-01-01", 99); // an old day is ignored
+    assert.equal(r.used("p").today, 7);
+  });
   it("reads the cost a provider reports itself (Surplus buyer_cost_micro, millionths of a dollar)", () => {
     const u = readUsage({ usage: { prompt_tokens: 10, completion_tokens: 20, buyer_cost_micro: 1234 } })!;
     assert.equal(u.reportedCostUsd, 0.001234);
