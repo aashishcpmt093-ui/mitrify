@@ -34,6 +34,23 @@ describe("price list parsing", () => {
     assert.equal(m[1].supportsTools, false);
     assert.equal(m[2].inputPerMTokUsd, 0);
   });
+  it("reads a Surplus-style list (ids without a slash, per-token prices, modality block)", () => {
+    const m = parseModelList({
+      data: [
+        {
+          id: "openai-gpt-oss-120b", context_length: 128000,
+          architecture: { modality: "text->text", input_modalities: ["text"], output_modalities: ["text"] },
+          pricing: { prompt: "0.0000000700", completion: "0.0000003000", input_cache_read: "0.0000000105" },
+          supported_parameters: ["max_tokens", "temperature", "top_p", "stop"], supported_features: ["streaming", "tools"],
+        },
+      ],
+    });
+    assert.equal(m.length, 1);
+    assert.equal(m[0].id, "openai-gpt-oss-120b");
+    assert.equal(m[0].inputPerMTokUsd, 0.07);
+    assert.equal(m[0].outputPerMTokUsd, 0.3);
+    assert.equal(m[0].chatCapable, true);
+  });
   it("copes with garbage", () => {
     assert.deepEqual(parseModelList(null), []);
     assert.deepEqual(parseModelList({ data: "x" }), []);
@@ -148,7 +165,7 @@ describe("OpenRouter in the gateway", () => {
       assert.equal((await admin(g.url, "/admin/prices/import", { body: { provider: "openrouter" } })).status, 502);
       listBehaviour = "ok";
       assert.equal(JSON.stringify(await prices()), before);
-      assert.equal((await admin(g.url, "/admin/prices/import", { body: { provider: "surplus" } })).status, 400);
+      assert.equal((await admin(g.url, "/admin/prices/import", { body: { provider: "deepinfra" } })).status, 400);
       assert.equal((await admin(g.url, "/admin/prices/import", { body: {} })).status, 400);
     });
 

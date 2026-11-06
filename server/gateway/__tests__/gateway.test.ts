@@ -7,7 +7,7 @@ import { loadConfig } from "../config";
 import { createGatewayMiddleware } from "../index";
 import { findTopLevelModel, replaceTopLevelModel } from "../jsonModel";
 import { MemoryStore } from "../store";
-import { SseWatcher, costUsd } from "../usage";
+import { SseWatcher, costUsd, isErrorBody, readUsage } from "../usage";
 import {
   SETUP_CODE,
   UPSTREAM_KEY,
@@ -43,6 +43,18 @@ describe("jsonModel", () => {
 });
 
 describe("usage and cost", () => {
+  it("reads the cost a provider reports itself (Surplus buyer_cost_micro, millionths of a dollar)", () => {
+    const u = readUsage({ usage: { prompt_tokens: 10, completion_tokens: 20, buyer_cost_micro: 1234 } })!;
+    assert.equal(u.reportedCostUsd, 0.001234);
+    assert.equal(readUsage({ usage: { prompt_tokens: 1, completion_tokens: 1 } })!.reportedCostUsd, undefined);
+    assert.equal(readUsage({ usage: { prompt_tokens: 1, completion_tokens: 1, buyer_cost_micro: -5 } })!.reportedCostUsd, undefined);
+  });
+  it("recognises a 200 reply whose body is an error", () => {
+    assert.equal(isErrorBody({ error: { message: "no_sellers_for_model" } }), true);
+    assert.equal(isErrorBody({ choices: [{}], error: null }), false);
+    assert.equal(isErrorBody({ choices: [{ message: {} }] }), false);
+    assert.equal(isErrorBody(null), false);
+  });
   it("prices cached tokens separately and never adds a markup", () => {
     const c = costUsd({ inputTokens: 1_000_000, outputTokens: 500_000, cachedTokens: 200_000 }, { inputPerMTokUsd: 1, outputPerMTokUsd: 2, cachedInputPerMTokUsd: 0.1 });
     assert.equal(c, 0.8 + 0.02 + 1);

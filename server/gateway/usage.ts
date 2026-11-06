@@ -5,6 +5,8 @@ export interface Usage {
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
+  /** The amount the provider itself says it charged (USD), when it reports one (Surplus: usage.buyer_cost_micro). */
+  reportedCostUsd?: number;
 }
 
 export interface Price {
@@ -25,7 +27,20 @@ export function readUsage(obj: unknown): Usage | null {
   if (input === null || output === null) return null;
   const details = (u.prompt_tokens_details ?? u.input_tokens_details) as Record<string, unknown> | undefined;
   const cached = n(details?.cached_tokens) ?? n(u.cache_read_input_tokens) ?? 0;
-  return { inputTokens: input, outputTokens: output, cachedTokens: Math.min(cached, input) };
+  const micro = n(u.buyer_cost_micro);
+  return {
+    inputTokens: input,
+    outputTokens: output,
+    cachedTokens: Math.min(cached, input),
+    ...(micro !== null ? { reportedCostUsd: Math.round(micro) / 1_000_000 } : {}),
+  };
+}
+
+/** A 200 reply whose body is an error (Surplus does this for long non-streaming calls that fail). */
+export function isErrorBody(obj: unknown): boolean {
+  if (!obj || typeof obj !== "object") return false;
+  const o = obj as Record<string, unknown>;
+  return o.error != null && !Array.isArray(o.choices);
 }
 
 /** Cost in USD (zero markup: exactly the provider's listed price). */
