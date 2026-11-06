@@ -36,6 +36,33 @@ type Log = (msg: string) => void;
 
 const MAX_COOLDOWN_MS = 2 * 3600_000;
 
+/** The first piece of a stream already says it failed (an error event) or that nothing is coming. */
+export function badStreamStart(chunk: Uint8Array): string | null {
+  const text = new TextDecoder().decode(chunk.subarray(0, 2000));
+  const body = text.replace(/^(?:\s*:[^\n]*\n)+/, "").trimStart(); // drop SSE comment lines such as ": keep-alive"
+  if (/^data:\s*\{\s*"error"/.test(body)) return "error-in-stream";
+  if (/^data:\s*\[DONE\]/.test(body)) return "empty";
+  return null;
+}
+
+/** A complete (non-streaming) reply that is not a usable answer: not JSON, an error inside, or no content. */
+export function badJsonReply(buf: Buffer): string | null {
+  let j: any;
+  try {
+    j = JSON.parse(buf.toString("utf8"));
+  } catch {
+    return "not-json";
+  }
+  const choice = Array.isArray(j?.choices) ? j.choices[0] : null;
+  if (j && typeof j === "object" && j.error && !choice) return "error-in-body";
+  if (!choice) return "empty";
+  if (choice.finish_reason === "error") return "error-in-body";
+  const m = choice.message ?? {};
+  const hasText = typeof m.content === "string" ? m.content.trim() !== "" : Array.isArray(m.content) && m.content.length > 0;
+  if (hasText || (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) || m.function_call) return null;
+  return "empty";
+}
+
 /** Retry-After as milliseconds: whole seconds or an HTTP date. null when missing or unusable. */
 export function parseRetryAfter(v: string | null, nowMs: number): number | null {
   if (!v) return null;
@@ -493,6 +520,9 @@ export class Gateway {
     const usable = (c: Candidate) =>
       (mode !== "auto-cheap" || !this.isCooling(this.coolKey(c))) && this.breakers.get(c.provider.id)!.available();
     const free = (c: Candidate) => !!c.price && isFreePrice(c.price);
+    // In the automatic mode, a failure BEFORE any reply bytes were sent can move on to the next model when the
+    // model is free (nothing is spent), or when the owner allowed it for paid ones too (MITRIFY_GATEWAY_RETRY_PAID=1).
+    const lenient = (c: Candidate) => mode === "auto-cheap" && (free(c) || this.config.retryPaid);
     while (attempts < maxAttempts) {
       let idx = remaining.findIndex(usable);
       if (idx < 0) break;
@@ -531,7 +561,8 @@ export class Gateway {
       const onClientGone = () => abort("client");
       clientGone.signal.addEventListener("abort", onClientGone);
       const totalTimer = setTimeout(() => abort("total_timeout"), this.config.totalTimeoutMs);
-      let timer = setTimeout(() => abort("first_byte_timeout"), this.config.firstByteTimeoutMs);
+      const waitMs = mode === "auto-cheap" && free(cand) ? Math.min(this.config.freeFirstByteTimeoutMs, this.config.firstByteTimeoutMs) : this.config.firstByteTimeoutMs;
+      let timer = setTimeout(() => abort("first_byte_timeout"), waitMs);
       const cleanup = () => {
         clearTimeout(timer);
         clearTimeout(totalTimer);
@@ -556,14 +587,18 @@ export class Gateway {
         });
       } catch (e) {
         cleanup();
-        trail.push(`${cand.upstreamModel}:${abortReason === "client" ? "cancelled" : "unreachable"}`);
+        const timedOut = abortReason === "first_byte_timeout" || abortReason === "total_timeout";
+        trail.push(`${cand.upstreamModel}:${abortReason === "client" ? "cancelled" : timedOut ? "timeout" : "unreachable"}`);
         if (abortReason === "client") return this.record(o, cand, attempts, 499, "cancelled", null, null);
         breaker.failure();
         const code = ((e as { cause?: { code?: string } })?.cause?.code ?? "") as string;
-        const timedOut = abortReason === "first_byte_timeout" || abortReason === "total_timeout";
-        // Only failures where the provider certainly never received the request may move on.
-        if (!timedOut && RETRYABLE_NET.has(code) && !isLast) {
-          lastError = { status: 502, code: "upstream_unreachable", message: "Could not reach the provider." };
+        // Failures where the provider certainly never received the request may always move on; for a free
+        // model (or when the owner allowed it) so may any other failure before a reply.
+        if (!isLast && ((!timedOut && RETRYABLE_NET.has(code)) || lenient(cand))) {
+          if (mode === "auto-cheap") this.coolDown(this.coolKey(cand), null, "error");
+          lastError = timedOut
+            ? { status: 504, code: "upstream_timeout", message: "The provider did not answer in time." }
+            : { status: 502, code: "upstream_unreachable", message: "Could not reach the provider." };
           continue;
         }
         const status = timedOut ? 504 : 502;
@@ -582,7 +617,7 @@ export class Gateway {
       // model that does not take a system prompt, a timeout at its provider) costs nothing, so the automatic
       // mode moves on to the next model. A paid model is only passed on after a limit, a 503 or a missing
       // model, never after a 5xx, so a paid request is never run twice by accident.
-      const freeFailure = mode === "auto-cheap" && free(cand) && [400, 408, 500, 502, 504].includes(up.status);
+      const freeFailure = lenient(cand) && [400, 408, 500, 502, 504].includes(up.status);
       if (mode === "auto-cheap") {
         const key = this.coolKey(cand);
         if (up.status === 429) this.coolDown(key, parseRetryAfter(up.headers.get("retry-after"), this.now()), "limit");
@@ -599,6 +634,56 @@ export class Gateway {
         cleanup();
         lastError = { status: up.status, code: "upstream_refused", message: `The provider answered ${up.status}.` };
         continue;
+      }
+
+      // For a model that may be skipped, look at how the reply starts before anything is sent to the client:
+      // a stream whose first event is an error (or that is empty), or a complete answer that is empty, an
+      // error, or not JSON, counts as "no reply" and the next model is tried. What is sent on afterwards is
+      // exactly what was received. The last attempt is never held back.
+      const reader = up.body ? up.body.getReader() : null;
+      const pending: Uint8Array[] = [];
+      if (!isLast && lenient(cand) && up.ok && reader) {
+        let bad: string | null = null;
+        try {
+          if (o.stream) {
+            const first = await reader.read();
+            if (first.done) bad = "empty";
+            else {
+              pending.push(first.value);
+              bad = badStreamStart(first.value);
+            }
+          } else {
+            let size = 0;
+            for (;;) {
+              const r = await reader.read();
+              if (r.done) break;
+              pending.push(r.value);
+              size += r.value.length;
+              if (size > 4 * 1024 * 1024) break; // too large to judge; sent as it is
+            }
+            bad = size > 4 * 1024 * 1024 ? null : badJsonReply(Buffer.concat(pending));
+          }
+        } catch {
+          cleanup();
+          // The attempt's status ("model:200") is replaced by what actually happened.
+          if (abortReason === "client") {
+            trail[trail.length - 1] = `${cand.upstreamModel}:cancelled`;
+            return this.record(o, cand, attempts, 499, "cancelled", null, null);
+          }
+          trail[trail.length - 1] = `${cand.upstreamModel}:timeout`;
+          breaker.failure();
+          this.coolDown(this.coolKey(cand), null, "error");
+          lastError = { status: 504, code: "upstream_timeout", message: "The provider did not answer in time." };
+          continue;
+        }
+        if (bad) {
+          await reader.cancel().catch(() => {});
+          cleanup();
+          trail[trail.length - 1] = `${cand.upstreamModel}:${bad}`;
+          this.coolDown(this.coolKey(cand), null, "error");
+          lastError = { status: 502, code: "empty_reply", message: "The model sent no usable reply." };
+          continue;
+        }
       }
 
       // Committed: this response goes back to the client as it is.
@@ -624,10 +709,10 @@ export class Gateway {
       timer = setTimeout(() => abort("idle_timeout"), this.config.idleTimeoutMs);
 
       try {
-        if (up.body) {
-          const reader = up.body.getReader();
+        if (reader) {
           for (;;) {
-            const { done, value } = await reader.read();
+            const next = pending.length ? { done: false as const, value: pending.shift()! } : await reader.read();
+            const { done, value } = next;
             if (done) break;
             clearTimeout(timer);
             timer = setTimeout(() => abort("idle_timeout"), this.config.idleTimeoutMs);
