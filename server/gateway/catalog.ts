@@ -69,7 +69,9 @@ export function buildSnapshot(
           ? "provider switched off by the owner"
           : freeOnly.has(p.provider) && !isFreePrice(p)
             ? "paid model of a provider limited to free models"
-            : p.blocked
+            : prov.noFreeModels && isFreePrice(p)
+              ? "listed at $0 by a provider with no free models (no seller)"
+              : p.blocked
           ? "skipped by the owner"
           : !(p.enabled && p.qualityPassed) && !(config.autoSelect && p.auto)
             ? "not switched On + Pool, and not an automatic model"

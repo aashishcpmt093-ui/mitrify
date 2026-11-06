@@ -919,3 +919,42 @@ describe("a provider set up after the pool was built", () => {
     }
   });
 });
+
+describe("a provider with no free models", () => {
+  it("Surplus lists unsellable models at $0: they are never picked, and the real ones answer", async () => {
+    const cfg = loadConfig({ MITRIFY_SURPLUS_API_KEY: "k", MITRIFY_SURPLUS_APPROVED: "1", MITRIFY_SURPLUS_BASE_URL: "https://s.example/v1" });
+    assert.equal(cfg.providers.find((p) => p.id === "surplus")!.noFreeModels, true);
+    assert.equal(cfg.providers.find((p) => p.id === "openrouter")!.noFreeModels, false);
+    assert.equal(loadConfig({ MITRIFY_SURPLUS_NO_FREE_MODELS: "0" }).providers.find((p) => p.id === "surplus")!.noFreeModels, false);
+    const snap = buildSnapshot(
+      [
+        entry({ provider: "surplus", upstreamModel: "grok-4", inputPerMTokUsd: 0, outputPerMTokUsd: 0 }),
+        entry({ provider: "surplus", upstreamModel: "gemma-4-e2b", inputPerMTokUsd: 0.05, outputPerMTokUsd: 0.1 }),
+      ],
+      cfg,
+      { input: 0, output: 0 },
+      new Date(),
+    );
+    assert.deepEqual(snap.entries.map((e) => e.upstreamModel), ["gemma-4-e2b"]);
+    assert.ok(snap.excluded.some((x) => x.upstreamModel === "grok-4" && /no free models/.test(x.reason)));
+  });
+
+  it("through the gateway: a $0 Surplus model is not sent a call, and cannot be asked for by name", async () => {
+    const seen: string[] = [];
+    const up = await mockUpstream((req, res) => (seen.push(modelOf(req)), okRes(res)));
+    const g = await startGateway(baseEnv({ MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY, MITRIFY_SURPLUS_BASE_URL: up.url, MITRIFY_SURPLUS_APPROVED: "1", MITRIFY_SURPLUS_NO_FREE_MODELS: "1" }));
+    try {
+      await admin(g.url, "/admin/prices", { method: "PUT", body: [price("surplus", "grok-4", 0, 0, { enabled: true }), price("surplus", "gemma-4-e2b", 0.05, 0.1, { enabled: true })] });
+      await admin(g.url, "/admin/catalog/refresh", { body: {} });
+      const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+      for (let i = 0; i < 3; i++) assert.equal((await chat(g.url, key, AUTO)).status, 200);
+      assert.deepEqual([...new Set(seen)], ["gemma-4-e2b"]);
+      assert.equal((await chat(g.url, key, '{"model":"grok-4","messages":[]}')).status, 404);
+      const ids = (await (await fetch(g.url + "/v1/models", { headers: { authorization: `Bearer ${key}` } })).json()).data.map((m: { id: string }) => m.id);
+      assert.ok(!ids.includes("grok-4") && ids.includes("gemma-4-e2b"));
+    } finally {
+      await g.close();
+      await up.close();
+    }
+  });
+});
