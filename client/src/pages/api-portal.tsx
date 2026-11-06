@@ -905,6 +905,13 @@ function Owner({ code, onLeave }: { code: string; onLeave: () => void }) {
                     {p.freeOnly ? "Free only: ON" : "Free only: off"}
                   </button>
                 )}
+                {p.freeUsage && (
+                  <span className="block text-xs text-muted-foreground">
+                    Free calls today: {p.freeUsage.today}
+                    {p.freeUsage.perDay !== null ? ` of ${p.freeUsage.perDay} (${p.freeUsage.leftToday} left)` : ""} · last minute: {p.freeUsage.lastMinute}
+                    {p.freeUsage.perMinute !== null ? ` of ${p.freeUsage.perMinute}` : ""} · resets at midnight UTC (5:30 am India)
+                  </span>
+                )}
               </li>
             ))}
           </ul>

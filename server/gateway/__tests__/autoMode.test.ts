@@ -800,3 +800,41 @@ describe("a provider limited to its free models", () => {
     }
   });
 });
+
+describe("daily count of free calls", () => {
+  it("stops sending to free models when the day's number is used up, and shows what is left", async () => {
+    const seen: string[] = [];
+    const up = await mockUpstream((req, res) => (seen.push(modelOf(req)), okRes(res)));
+    const g = await startGateway(
+      baseEnv({
+        MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY,
+        MITRIFY_SURPLUS_BASE_URL: up.url,
+        MITRIFY_SURPLUS_APPROVED: "1",
+        MITRIFY_ROUTERONE_API_KEY: UPSTREAM_KEY,
+        MITRIFY_ROUTERONE_BASE_URL: up.url,
+        MITRIFY_ROUTERONE_APPROVED: "1",
+        MITRIFY_ROUTERONE_FREE_PER_DAY: "2",
+        MITRIFY_ROUTERONE_FREE_PER_MINUTE: "50",
+      }),
+    );
+    try {
+      await admin(g.url, "/admin/prices", {
+        method: "PUT",
+        body: [price("routerone", "free-m", 0, 0, { enabled: true, qualityPassed: true }), price("surplus", "paid-m", 1, 1, { enabled: true, qualityPassed: true })],
+      });
+      await admin(g.url, "/admin/catalog/refresh", { body: {} });
+      const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+      const who: (string | null)[] = [];
+      for (let i = 0; i < 4; i++) who.push((await chat(g.url, key, AUTO)).headers.get("x-mitrify-provider"));
+      assert.deepEqual(who, ["routerone", "routerone", "surplus", "surplus"]);
+      assert.equal(seen.filter((m) => m === "free-m").length, 2); // the free model was never sent a third call
+      const st = await (await admin(g.url, "/admin/status")).json();
+      const r1 = st.providers.find((p: { id: string }) => p.id === "routerone");
+      assert.deepEqual([r1.freeUsage.today, r1.freeUsage.perDay, r1.freeUsage.leftToday], [2, 2, 0]);
+      assert.equal(st.providers.find((p: { id: string }) => p.id === "surplus").freeUsage, null);
+    } finally {
+      await g.close();
+      await up.close();
+    }
+  });
+});

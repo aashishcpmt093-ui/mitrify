@@ -219,3 +219,60 @@ export class Lockout {
     this.perIp.delete(ip);
   }
 }
+
+/**
+ * Counts the calls sent to a provider's FREE models: per UTC day and over the last minute. The provider
+ * enforces these limits for the whole account (and counts refused tries too), so a request is not sent to
+ * free models once the count says they are used up.
+ */
+export class FreeQuota {
+  private minute = new Map<string, number[]>();
+  private day = new Map<string, { date: string; n: number }>();
+
+  constructor(private now: () => number = Date.now) {}
+
+  private today() {
+    return new Date(this.now()).toISOString().slice(0, 10);
+  }
+
+  /** Restores the day's count after a restart. */
+  restore(id: string, date: string, n: number) {
+    if (date === this.today() && n > (this.day.get(id)?.n ?? 0)) this.day.set(id, { date, n });
+  }
+
+  used(id: string): { today: number; lastMinute: number } {
+    const t = this.now();
+    const d = this.day.get(id);
+    const m = (this.minute.get(id) ?? []).filter((x) => t - x < 60_000);
+    return { today: d && d.date === this.today() ? d.n : 0, lastMinute: m.length };
+  }
+
+  /** May one more free call be sent now? When not, how long until it may. */
+  check(id: string, limits: { perDay: number | null; perMinute: number | null }): { ok: boolean; retryAfterMs: number } {
+    const t = this.now();
+    const u = this.used(id);
+    if (limits.perDay !== null && u.today >= limits.perDay) {
+      const next = new Date(t);
+      next.setUTCHours(24, 0, 0, 0);
+      return { ok: false, retryAfterMs: Math.max(1000, next.getTime() - t) };
+    }
+    if (limits.perMinute !== null && u.lastMinute >= limits.perMinute) {
+      const oldest = Math.min(...(this.minute.get(id) ?? []).filter((x) => t - x < 60_000));
+      return { ok: false, retryAfterMs: Math.max(1000, oldest + 60_000 - t) };
+    }
+    return { ok: true, retryAfterMs: 0 };
+  }
+
+  /** One free call is being sent. Returns the day's count including it. */
+  take(id: string): { date: string; n: number } {
+    const t = this.now();
+    const date = this.today();
+    const m = (this.minute.get(id) ?? []).filter((x) => t - x < 60_000);
+    m.push(t);
+    this.minute.set(id, m);
+    const d = this.day.get(id);
+    const n = d && d.date === date ? d.n + 1 : 1;
+    this.day.set(id, { date, n });
+    return { date, n };
+  }
+}

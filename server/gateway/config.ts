@@ -30,6 +30,9 @@ export interface ProviderConfig {
   maxQueue: number;
   /** Optional path for an active health probe, e.g. "/models". Empty = passive health only. */
   healthPath: string | null;
+  /** Free-model calls this provider allows per day (UTC) and per minute for the whole account; null = no local count. */
+  freePerDay: number | null;
+  freePerMinute: number | null;
   /** Lower number = preferred when two entries cost the same. */
   priority: number;
   status: ProviderStatus;
@@ -108,6 +111,14 @@ function int(env: Env, name: string, fallback: number, min = 0): number {
   return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
 }
 
+function limitOrNull(env: Env, name: string, fallback: number | null): number | null {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return n === 0 ? null : Math.floor(n);
+}
+
 function num(env: Env, name: string): number | null {
   const raw = env[name];
   if (raw === undefined || raw.trim() === "") return null;
@@ -172,6 +183,11 @@ export function loadProvider(env: Env, id: string, index: number): ProviderConfi
     maxConcurrency: int(env, `MITRIFY_${up}_MAX_CONCURRENCY`, 32, 1),
     maxQueue: int(env, `MITRIFY_${up}_MAX_QUEUE`, 1000, 0),
     healthPath: env[`MITRIFY_${up}_HEALTH_PATH`]?.trim() || null,
+    // OpenRouter: 1000 free calls a day once $10 of credit was bought (50 before), and 20 a minute. The
+    // provider enforces these itself (and counts refused tries); counting here keeps requests from being
+    // sent only to be refused. Set MITRIFY_<ID>_FREE_PER_DAY / _FREE_PER_MINUTE (0 = do not count).
+    freePerDay: limitOrNull(env, `MITRIFY_${up}_FREE_PER_DAY`, id === "openrouter" ? 1000 : null),
+    freePerMinute: limitOrNull(env, `MITRIFY_${up}_FREE_PER_MINUTE`, id === "openrouter" ? 20 : null),
     priority: int(env, `MITRIFY_${up}_PRIORITY`, index + 1, 0),
     status,
     statusReason,
@@ -251,5 +267,7 @@ export function describeProvider(p: ProviderConfig) {
     maxConcurrency: p.maxConcurrency,
     maxQueue: p.maxQueue,
     priority: p.priority,
+    freePerDay: p.freePerDay,
+    freePerMinute: p.freePerMinute,
   };
 }
