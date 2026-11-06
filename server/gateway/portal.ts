@@ -54,20 +54,22 @@ export class PortalApi {
 
   async handle(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
     const cfg = this.gw.config;
-    if (!cfg.portalSecret) {
-      return sendError(res, 503, "portal_disabled", cfg.portalProblem ?? "API portal accounts are off.");
-    }
     const sub = path.slice("/portal-api".length) || "/";
     const method = req.method ?? "GET";
     const ip = clientIp(req, cfg.trustProxy);
 
-    if (method === "POST" && sub === "/login") return this.login(req, res, ip);
-
-    // The owner's tools, reachable from the portal page on any host. Same rules as /admin: the
-    // setup code header, the lockout and the optional IP allowlist all apply.
+    // The owner's tools, reachable from the portal page on any host. Same rules as /admin: the setup code
+    // header, the lockout and the optional IP allowlist all apply. They do not depend on customer accounts
+    // being switched on.
     if (sub === "/owner" || sub.startsWith("/owner/")) {
       return this.gw.handleAdmin(req, res, "/admin" + sub.slice("/owner".length));
     }
+
+    if (!cfg.portalSecret) {
+      return sendError(res, 503, "portal_disabled", cfg.portalProblem ?? "API portal accounts are off.");
+    }
+
+    if (method === "POST" && sub === "/login") return this.login(req, res, ip);
 
     const token = bearerToken(req.headers.authorization);
     const id = token ? verifyToken(token, cfg.portalSecret, this.gw.now()) : null;

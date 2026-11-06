@@ -50,10 +50,14 @@ export function createGatewayMiddleware(opts: { config?: GatewayConfig; store?: 
   ready = attempt();
 
   return (req: IncomingMessage, res: ServerResponse, next: Next) => {
-    // The API portal page (mitrify.com/?portal=api) calls /portal-api on whatever host it was opened on.
+    // Two paths are answered on ANY host, so no new address has to be set up first:
+    //  - /portal-api: what the API portal page (mitrify.com/?portal=api) calls;
+    //  - /v1: the OpenAI-compatible API itself (https://mitrify.com/v1), which always needs an API key.
+    // Everything else (the admin paths, /healthz) is answered only on the gateway host, and the
+    // marketplace keeps all its own paths.
     const path = (req.url ?? "/").split("?")[0];
-    const portalApi = path === "/portal-api" || path.startsWith("/portal-api/");
-    if (!portalApi && !config.hosts.includes(hostOf(req))) return next();
+    const anywhere = path === "/portal-api" || path.startsWith("/portal-api/") || path === "/v1" || path.startsWith("/v1/");
+    if (!anywhere && !config.hosts.includes(hostOf(req))) return next();
     void (async () => {
       await ready;
       if (!gateway) return sendError(res, 503, "gateway_unavailable", "The gateway is starting or its database is unreachable. See the server log.");
