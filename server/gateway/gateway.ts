@@ -9,7 +9,7 @@ import { CircuitBreaker, Lockout, QueueFullError, QueueTimeoutError, RateLimiter
 import { PortalApi } from "./portal";
 import { importPrices, supportsImport } from "./priceImport";
 import type { CatalogSnapshot, ClientRecord, CustomerRecord, GatewayStore, PriceEntry, UsageRow } from "./store";
-import { SseWatcher, costUsd, readUsage, type Usage } from "./usage";
+import { SseWatcher, costUsd, isErrorBody, readUsage, type Usage } from "./usage";
 
 // The Mitrify AI Gateway.
 //
@@ -834,7 +834,14 @@ export class Gateway {
         if (up.ok && !watcher.sawDone && !watcher.sawFinishReason) outcome = "ended_without_done";
       } else if (up.ok) {
         try {
-          usage = readUsage(JSON.parse(Buffer.concat(copy).toString("utf8")));
+          const parsed = JSON.parse(Buffer.concat(copy).toString("utf8"));
+          usage = readUsage(parsed);
+          // HTTP 200 with an error inside is a failed call, not a success.
+          if (isErrorBody(parsed)) {
+            outcome = "upstream_error";
+            usage = null;
+            breaker.failure();
+          }
         } catch {
           usage = null;
         }
@@ -873,7 +880,9 @@ export class Gateway {
     usage: Usage | null,
     firstByteMs: number | null,
   ) {
-    const est = usage && cand.price ? costUsd(usage, cand.price) : null;
+    // A cost the provider reports itself beats a price-table estimate (prices can move with the market).
+    const reported = usage?.reportedCostUsd ?? null;
+    const est = reported ?? (usage && cand.price ? costUsd(usage, cand.price) : null);
     const row: UsageRow = {
       requestId: o.requestId,
       clientId: o.client.record.id,
@@ -888,10 +897,10 @@ export class Gateway {
       cachedTokens: usage?.cachedTokens ?? null,
       usageSource: usage ? "upstream" : "missing",
       estimatedCostUsd: est,
-      reconciledCostUsd: null,
+      reconciledCostUsd: reported,
       billedCostUsd: null,
       currency: "USD",
-      billingStatus: est === null ? "unknown" : "estimated",
+      billingStatus: est === null ? "unknown" : reported !== null ? "reconciled" : "estimated",
       latencyMs: this.now() - o.started,
       firstByteMs,
       attempts,

@@ -81,7 +81,8 @@ export function parseModelList(json: unknown): ImportedModel[] {
 }
 
 export function supportsImport(providerId: string): boolean {
-  return providerId === "openrouter";
+  // Both publish an OpenAI/OpenRouter-style GET <base>/models with per-token prices.
+  return providerId === "openrouter" || providerId === "surplus";
 }
 
 export async function importPrices(
