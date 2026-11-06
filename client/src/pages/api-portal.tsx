@@ -294,6 +294,10 @@ function Prices({ code, providers, cooling }: { code: string; providers: Obj[]; 
   const [prices, setPrices] = useState<Obj[]>([]);
   const [pool, setPool] = useState<Obj[]>([]);
   const [q, setQ] = useState("");
+  const [provFilter, setProvFilter] = useState("");
+  const [kind, setKind] = useState("all");
+  const [sortBy, setSortBy] = useState("cheap");
+  const [limit, setLimit] = useState(40);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -330,10 +334,27 @@ function Prices({ code, providers, cooling }: { code: string; providers: Obj[]; 
 
   const importer = providers.find((p) => p.id === "openrouter" && p.status === "active");
   const needle = q.trim().toLowerCase();
-  const shown = prices
+  const poolKeys = new Set(pool.map((e: Obj) => `${e.provider}/${e.upstreamModel}`));
+  const isFree = (p: Obj) => p.inputPerMTokUsd === 0 && p.outputPerMTokUsd === 0;
+  const price = (p: Obj) => p.inputPerMTokUsd + p.outputPerMTokUsd;
+  const matching = prices
     .filter((p) => !needle || `${p.provider} ${p.upstreamModel}`.toLowerCase().includes(needle))
-    .sort((a, b) => a.inputPerMTokUsd + a.outputPerMTokUsd - (b.inputPerMTokUsd + b.outputPerMTokUsd))
-    .slice(0, 40);
+    .filter((p) => !provFilter || p.provider === provFilter)
+    .filter((p) => {
+      if (kind === "free") return isFree(p);
+      if (kind === "paid") return !isFree(p);
+      if (kind === "pool") return poolKeys.has(`${p.provider}/${p.upstreamModel}`);
+      if (kind === "skipped") return !!p.blocked;
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === "dear") return price(b) - price(a);
+      if (sortBy === "name") return a.upstreamModel.localeCompare(b.upstreamModel);
+      if (sortBy === "context") return (b.contextLength ?? 0) - (a.contextLength ?? 0);
+      return price(a) - price(b);
+    });
+  const shown = matching.slice(0, limit);
+  const providerIds = [...new Set(prices.map((p) => p.provider as string))].sort();
   // The box changes at once; if the server refuses, the list is reloaded and the box goes back.
   const flag = (p: Obj, key: "enabled" | "qualityPassed" | "blocked", value: boolean) => {
     setPrices((prev) => prev.map((x) => (x.provider === p.provider && x.upstreamModel === p.upstreamModel ? { ...x, [key]: value } : x)));
@@ -407,7 +428,31 @@ function Prices({ code, providers, cooling }: { code: string; providers: Obj[]; 
         </div>
       )}
 
-      <input className={input} placeholder="Search models (name or provider)" value={q} onChange={(e) => setQ(e.target.value)} />
+      <input className={input} placeholder="Search models (name or provider)" value={q} onChange={(e) => { setQ(e.target.value); setLimit(40); }} />
+      <div className="grid grid-cols-3 gap-2">
+        <select className={input} aria-label="Provider" value={provFilter} onChange={(e) => { setProvFilter(e.target.value); setLimit(40); }}>
+          <option value="">All providers</option>
+          {providerIds.map((id) => (
+            <option key={id} value={id}>
+              {providers.find((x) => x.id === id)?.label ?? id}
+            </option>
+          ))}
+        </select>
+        <select className={input} aria-label="Show" value={kind} onChange={(e) => { setKind(e.target.value); setLimit(40); }}>
+          <option value="all">All</option>
+          <option value="pool">In the pool</option>
+          <option value="free">Free</option>
+          <option value="paid">Paid</option>
+          <option value="skipped">Skipped</option>
+        </select>
+        <select className={input} aria-label="Sort" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+          <option value="cheap">Cheapest first</option>
+          <option value="dear">Dearest first</option>
+          <option value="name">Name A–Z</option>
+          <option value="context">Longest context</option>
+        </select>
+      </div>
+      <p className="text-xs text-muted-foreground">{matching.length} of {prices.length} models</p>
       <ul className="space-y-2">
         {shown.map((p) => (
           <li key={`${p.provider}/${p.upstreamModel}`} className="rounded border p-2 text-sm">
@@ -433,7 +478,11 @@ function Prices({ code, providers, cooling }: { code: string; providers: Obj[]; 
         ))}
         {!shown.length && <li className="text-sm text-muted-foreground">{prices.length ? "No model matches." : "No prices yet. Import them, or add one by hand."}</li>}
       </ul>
-      {prices.length > shown.length && <p className="text-xs text-muted-foreground">Showing the cheapest {shown.length}. Type in the search box to find others.</p>}
+      {matching.length > shown.length && (
+        <button className={btn2} onClick={() => setLimit((n) => n + 40)}>
+          Show 40 more ({matching.length - shown.length} left)
+        </button>
+      )}
 
       <button className="text-sm underline" onClick={() => setManual(!manual)}>
         {manual ? "Hide" : "Add a price by hand"}
