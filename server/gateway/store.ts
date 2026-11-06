@@ -90,6 +90,12 @@ export interface PriceEntry {
   /** Set by the owner after the model passed the chat quality check. */
   qualityPassed: boolean;
   enabled: boolean;
+  /** Came from the provider's own price list: the automatic mode may pick it without the owner ticking it. */
+  auto: boolean;
+  /** Reads and writes text (a chat model). null = the price list did not say. */
+  chatCapable: boolean | null;
+  /** The owner never wants this model chosen automatically. */
+  blocked: boolean;
   updatedAt: Date;
 }
 
@@ -102,6 +108,8 @@ export interface SnapshotEntry {
   cachedInputPerMTokUsd: number | null;
   supportsStreaming: boolean;
   contextLength: number | null;
+  /** Both prices are zero. */
+  free?: boolean;
 }
 
 export interface CatalogSnapshot {

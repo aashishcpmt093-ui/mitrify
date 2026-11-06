@@ -25,6 +25,17 @@ export function blendedPrice(p: { inputPerMTokUsd: number; outputPerMTokUsd: num
   return p.inputPerMTokUsd * w.input + p.outputPerMTokUsd * w.output;
 }
 
+// Models whose names say they are not for chat (music, images, speech, safety filters...). Only used
+// when the provider's price list did not say what the model reads and writes.
+const NON_CHAT_NAME = /(lyria|imagen|veo|sora|image|video|audio|tts|whisper|speech|embed|moderation|rerank|guard|safety|transcri|ocr)/i;
+
+/** Is this imported model a text chat model? */
+export function looksLikeChatModel(p: Pick<PriceEntry, "upstreamModel" | "chatCapable">): boolean {
+  return p.chatCapable === true || (p.chatCapable === null && !NON_CHAT_NAME.test(p.upstreamModel));
+}
+
+export const isFreePrice = (p: { inputPerMTokUsd: number; outputPerMTokUsd: number }) => p.inputPerMTokUsd === 0 && p.outputPerMTokUsd === 0;
+
 export function buildSnapshot(
   prices: PriceEntry[],
   config: GatewayConfig,
@@ -43,15 +54,19 @@ export function buildSnapshot(
       ? "unknown provider"
       : prov.status !== "active"
         ? `provider ${prov.status}`
-        : !p.enabled
-          ? "disabled"
-          : !p.qualityPassed
-            ? "quality check not passed"
-            : now.getTime() - p.verifiedAt.getTime() > maxAgeMs
-              ? `price older than ${config.maxPriceAgeDays} days`
-              : !(p.inputPerMTokUsd >= 0 && p.outputPerMTokUsd >= 0)
-                ? "invalid price"
-                : null;
+        : p.blocked
+          ? "skipped by the owner"
+          : !(p.enabled && p.qualityPassed) && !(config.autoSelect && p.auto)
+            ? "not switched On + Pool, and not an automatic model"
+            : !(p.enabled && p.qualityPassed) && !looksLikeChatModel(p)
+              ? "not a chat model"
+              : !(p.enabled && p.qualityPassed) && p.contextLength !== null && p.contextLength < config.minContext
+                ? `context shorter than ${config.minContext} tokens`
+                : now.getTime() - p.verifiedAt.getTime() > maxAgeMs
+                  ? `price older than ${config.maxPriceAgeDays} days`
+                  : !(p.inputPerMTokUsd >= 0 && p.outputPerMTokUsd >= 0)
+                    ? "invalid price"
+                    : null;
     if (reason) {
       excluded.push({ provider: p.provider, upstreamModel: p.upstreamModel, reason });
       continue;
@@ -65,6 +80,7 @@ export function buildSnapshot(
       cachedInputPerMTokUsd: p.cachedInputPerMTokUsd,
       supportsStreaming: p.supportsStreaming,
       contextLength: p.contextLength,
+      free: isFreePrice(p),
       priority: prov!.priority,
     });
   }
@@ -72,6 +88,8 @@ export function buildSnapshot(
   eligible.sort(
     (a, b) =>
       a.blendedPerMTokUsd - b.blendedPerMTokUsd ||
+      // Same price: the longer context first, then the provider's priority.
+      (b.contextLength ?? 0) - (a.contextLength ?? 0) ||
       a.priority - b.priority ||
       a.provider.localeCompare(b.provider) ||
       a.upstreamModel.localeCompare(b.upstreamModel),
@@ -119,6 +137,9 @@ export function validatePriceInput(body: unknown): { entry?: Omit<PriceEntry, "u
       supportsTools: b.supportsTools === true,
       qualityPassed: b.qualityPassed === true,
       enabled: b.enabled !== false,
+      auto: false,
+      chatCapable: null,
+      blocked: b.blocked === true,
     },
   };
 }

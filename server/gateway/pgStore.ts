@@ -122,6 +122,11 @@ CREATE INDEX IF NOT EXISTS gateway_ledger_customer_idx ON gateway_ledger (custom
 ALTER TABLE gateway_clients ADD COLUMN IF NOT EXISTS customer_id uuid;
 CREATE INDEX IF NOT EXISTS gateway_clients_customer_idx ON gateway_clients (customer_id);
 ALTER TABLE gateway_usage ADD COLUMN IF NOT EXISTS billed_cost_usd numeric(18,8);
+
+-- Automatic model choice (added later; safe to repeat).
+ALTER TABLE gateway_prices ADD COLUMN IF NOT EXISTS auto boolean NOT NULL DEFAULT false;
+ALTER TABLE gateway_prices ADD COLUMN IF NOT EXISTS chat_capable boolean;
+ALTER TABLE gateway_prices ADD COLUMN IF NOT EXISTS blocked boolean NOT NULL DEFAULT false;
 `;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -212,6 +217,9 @@ function price(r: any): PriceEntry {
     supportsTools: r.supports_tools,
     qualityPassed: r.quality_passed,
     enabled: r.enabled,
+    auto: r.auto === true,
+    chatCapable: r.chat_capable === null || r.chat_capable === undefined ? null : r.chat_capable === true,
+    blocked: r.blocked === true,
     updatedAt: new Date(r.updated_at),
   };
 }
@@ -402,17 +410,20 @@ export class PgStore implements GatewayStore {
   async upsertPrice(p: PriceEntry) {
     await this.pool.query(
       `INSERT INTO gateway_prices (provider, upstream_model, input_per_mtok_usd, output_per_mtok_usd, cached_input_per_mtok_usd,
-         currency, source_url, verified_at, context_length, supports_streaming, supports_tools, quality_passed, enabled, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         currency, source_url, verified_at, context_length, supports_streaming, supports_tools, quality_passed, enabled, updated_at,
+         auto, chat_capable, blocked)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        ON CONFLICT (provider, upstream_model) DO UPDATE SET
          input_per_mtok_usd = EXCLUDED.input_per_mtok_usd, output_per_mtok_usd = EXCLUDED.output_per_mtok_usd,
          cached_input_per_mtok_usd = EXCLUDED.cached_input_per_mtok_usd, currency = EXCLUDED.currency,
          source_url = EXCLUDED.source_url, verified_at = EXCLUDED.verified_at, context_length = EXCLUDED.context_length,
          supports_streaming = EXCLUDED.supports_streaming, supports_tools = EXCLUDED.supports_tools,
-         quality_passed = EXCLUDED.quality_passed, enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at`,
+         quality_passed = EXCLUDED.quality_passed, enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at,
+         auto = EXCLUDED.auto, chat_capable = EXCLUDED.chat_capable, blocked = EXCLUDED.blocked`,
       [
         p.provider, p.upstreamModel, p.inputPerMTokUsd, p.outputPerMTokUsd, p.cachedInputPerMTokUsd, p.currency, p.sourceUrl,
         p.verifiedAt, p.contextLength, p.supportsStreaming, p.supportsTools, p.qualityPassed, p.enabled, p.updatedAt,
+        p.auto, p.chatCapable, p.blocked,
       ],
     );
   }

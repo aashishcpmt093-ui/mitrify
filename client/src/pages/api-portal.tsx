@@ -277,7 +277,7 @@ function Customer({ token, onSignOut }: { token: string; onSignOut: () => void }
 
 // ── Owner: prices and models ─────────────────────────────────────────────────────────────────────
 
-function Prices({ code, providers }: { code: string; providers: Obj[] }) {
+function Prices({ code, providers, cooling }: { code: string; providers: Obj[]; cooling: Obj[] }) {
   const [prices, setPrices] = useState<Obj[]>([]);
   const [pool, setPool] = useState<Obj[]>([]);
   const [q, setQ] = useState("");
@@ -322,7 +322,7 @@ function Prices({ code, providers }: { code: string; providers: Obj[] }) {
     .sort((a, b) => a.inputPerMTokUsd + a.outputPerMTokUsd - (b.inputPerMTokUsd + b.outputPerMTokUsd))
     .slice(0, 40);
   // The box changes at once; if the server refuses, the list is reloaded and the box goes back.
-  const flag = (p: Obj, key: "enabled" | "qualityPassed", value: boolean) => {
+  const flag = (p: Obj, key: "enabled" | "qualityPassed" | "blocked", value: boolean) => {
     setPrices((prev) => prev.map((x) => (x.provider === p.provider && x.upstreamModel === p.upstreamModel ? { ...x, [key]: value } : x)));
     return run(async () => void (await call("/owner/prices/flags", { code, body: { provider: p.provider, upstreamModel: p.upstreamModel, [key]: value } })));
   };
@@ -331,8 +331,16 @@ function Prices({ code, providers }: { code: string; providers: Obj[] }) {
     <Card title={`Prices and models (${prices.length})`}>
       {err && <Notice kind="error">{err}</Notice>}
       {msg && <Notice kind="ok">{msg}</Notice>}
+      <div className="rounded-md bg-green-50 text-green-900 p-3 text-sm space-y-1">
+        <p className="font-medium">Automatic: nothing to pick by hand</p>
+        <p>
+          Send <b>mitrify/auto-cheap</b>. Free models answer first. When a free model's limit is reached it is set aside for a while and the next
+          one answers; when the free ones are full, the cheapest paid models answer. Prices are read from the provider every day.
+        </p>
+      </div>
       <p className="text-sm text-muted-foreground">
-        <b>On</b>: the model can be called and is listed. <b>Pool</b>: you checked its quality, so "cheapest" may choose it. Prices are dollars per 1 million tokens.
+        <b>On</b> lets you call a model by its exact name. <b>Skip</b> keeps a model out of the automatic choice. (<b>Pool</b> is only for prices you typed
+        in by hand.) Prices are dollars per 1 million tokens.
       </p>
       <div className="flex flex-wrap gap-2">
         {importer && (
@@ -342,11 +350,11 @@ function Prices({ code, providers }: { code: string; providers: Obj[] }) {
             onClick={() =>
               run(async () => {
                 const r = await call("/owner/prices/import", { code, body: { provider: "openrouter" } });
-                return `OpenRouter: ${r.added} new models (switched off), ${r.updated} updated.`;
+                return `OpenRouter: ${r.added} new models, ${r.updated} updated. The automatic pool now has ${r.poolModels} models (${r.freeModels} free).`;
               })
             }
           >
-            Import prices from OpenRouter
+            Read prices from OpenRouter now
           </button>
         )}
         <button
@@ -355,22 +363,29 @@ function Prices({ code, providers }: { code: string; providers: Obj[] }) {
           onClick={() =>
             run(async () => {
               const r = await call("/owner/catalog/refresh", { code, body: {} });
-              return `Cheapest pool rebuilt: ${r.entries.length} models.`;
+              return `Pool rebuilt: ${r.entries.length} models (${r.entries.filter((e: Obj) => e.free).length} free).`;
             })
           }
         >
-          Rebuild cheapest pool
+          Rebuild the pool now
         </button>
       </div>
 
       {pool.length > 0 && (
         <div className="rounded border p-2 text-xs space-y-1">
-          <p className="font-medium">Cheapest pool today</p>
-          {pool.map((e: Obj) => (
-            <p key={`${e.provider}/${e.upstreamModel}`} className="break-all">
-              {e.upstreamModel} · {e.provider} · {usd(e.blendedPerMTokUsd)}
-            </p>
-          ))}
+          <p className="font-medium">
+            Order used today ({pool.filter((e: Obj) => e.free).length} free, then {pool.filter((e: Obj) => !e.free).length} paid)
+          </p>
+          {pool.slice(0, 15).map((e: Obj) => {
+            const c = cooling.find((x) => x.provider === e.provider && x.model === e.upstreamModel);
+            return (
+              <p key={`${e.provider}/${e.upstreamModel}`} className="break-all">
+                {e.free ? "FREE" : usd(e.blendedPerMTokUsd)} · {e.upstreamModel}
+                {c ? ` · limit reached, back in ${Math.ceil(c.secondsLeft / 60)} min` : ""}
+              </p>
+            );
+          })}
+          {pool.length > 15 && <p className="text-muted-foreground">...and {pool.length - 15} more paid models after these.</p>}
         </div>
       )}
 
@@ -386,9 +401,15 @@ function Prices({ code, providers }: { code: string; providers: Obj[] }) {
               <label className="flex items-center gap-1">
                 <input type="checkbox" checked={!!p.enabled} disabled={busy} onChange={(e) => flag(p, "enabled", e.target.checked)} /> On
               </label>
-              <label className="flex items-center gap-1">
-                <input type="checkbox" checked={!!p.qualityPassed} disabled={busy} onChange={(e) => flag(p, "qualityPassed", e.target.checked)} /> Pool
-              </label>
+              {p.auto ? (
+                <label className="flex items-center gap-1">
+                  <input type="checkbox" checked={!!p.blocked} disabled={busy} onChange={(e) => flag(p, "blocked", e.target.checked)} /> Skip
+                </label>
+              ) : (
+                <label className="flex items-center gap-1">
+                  <input type="checkbox" checked={!!p.qualityPassed} disabled={busy} onChange={(e) => flag(p, "qualityPassed", e.target.checked)} /> Pool
+                </label>
+              )}
             </div>
           </li>
         ))}
@@ -607,7 +628,7 @@ function Owner({ code, onLeave }: { code: string; onLeave: () => void }) {
         </Card>
       )}
 
-      {status && <Prices code={code} providers={status.providers} />}
+      {status && <Prices code={code} providers={status.providers} cooling={status.cooling ?? []} />}
       {status && <TryMessage code={code} onDone={load} />}
 
       <Card title={`Customers (${customers.length})`}>
