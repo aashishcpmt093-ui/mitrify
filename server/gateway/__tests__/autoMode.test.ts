@@ -838,3 +838,41 @@ describe("daily count of free calls", () => {
     }
   });
 });
+
+describe("an empty pool", () => {
+  it("is rebuilt on the spot when it was only out of date", async () => {
+    const up = await mockUpstream((_req, res) => okRes(res));
+    const g = await startGateway(baseEnv({ MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY, MITRIFY_SURPLUS_BASE_URL: up.url, MITRIFY_SURPLUS_APPROVED: "1" }));
+    try {
+      const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+      await admin(g.url, "/admin/prices", { method: "PUT", body: [price("surplus", "m-1", 0.1, 0.1)] }); // no pool rebuild after this
+      const r = await chat(g.url, key, AUTO);
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get("x-mitrify-provider"), "surplus");
+    } finally {
+      await g.close();
+      await up.close();
+    }
+  });
+
+  it("says why when nothing can be used", async () => {
+    const up = await mockUpstream((_req, res) => okRes(res));
+    const g = await startGateway(
+      baseEnv({ MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY, MITRIFY_SURPLUS_BASE_URL: up.url, MITRIFY_SURPLUS_APPROVED: "1", MITRIFY_ROUTERONE_API_KEY: UPSTREAM_KEY, MITRIFY_ROUTERONE_BASE_URL: up.url, MITRIFY_ROUTERONE_APPROVED: "1" }),
+    );
+    try {
+      const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+      await admin(g.url, "/admin/prices", { method: "PUT", body: [price("surplus", "x/embed", 0.1, 0.1, { enabled: false, qualityPassed: false, auto: true, chatCapable: false })] });
+      await admin(g.url, "/admin/providers/routerone/disable", { body: { disabled: true } });
+      const r = await chat(g.url, key, AUTO);
+      assert.equal(r.status, 503);
+      const msg: string = (await r.json()).error.message;
+      assert.match(msg, /Surplus Intelligence: all left out \(1 x not switched On \+ Pool, and not an automatic model\)/);
+      assert.match(msg, /Router One: switched off/);
+      assert.ok(!msg.includes(UPSTREAM_KEY));
+    } finally {
+      await g.close();
+      await up.close();
+    }
+  });
+});
