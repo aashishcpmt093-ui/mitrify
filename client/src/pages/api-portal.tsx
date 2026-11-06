@@ -124,7 +124,8 @@ function Customer({ token, onSignOut }: { token: string; onSignOut: () => void }
   };
 
   if (!me) return <p className="text-muted-foreground">{err || "Loading..."}</p>;
-  const example = `curl ${me.apiBaseUrl}/chat/completions \\
+  const apiBase: string = me.apiBaseUrl ?? `${window.location.origin}/v1`;
+  const example = `curl ${apiBase}/chat/completions \\
   -H "Authorization: Bearer YOUR_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"mitrify/auto-cheap","messages":[{"role":"user","content":"Hello"}]}'`;
@@ -150,7 +151,7 @@ function Customer({ token, onSignOut }: { token: string; onSignOut: () => void }
 
       <Card title="Connect">
         <p className="text-sm">API address (OpenAI-compatible)</p>
-        <code className="block break-all rounded bg-muted p-2 text-sm select-all">{me.apiBaseUrl}</code>
+        <code className="block break-all rounded bg-muted p-2 text-sm select-all">{apiBase}</code>
         <pre className="overflow-x-auto rounded bg-muted p-2 text-xs">{example}</pre>
         <p className="text-sm text-muted-foreground">
           Use <b>mitrify/auto-cheap</b> to let Mitrify pick the cheapest model, or send a model name from <code>/models</code>. For streaming, also send{" "}
@@ -476,6 +477,7 @@ function TryMessage({ code, onDone }: { code: string; onDone: () => void }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [stream, setStream] = useState(false);
   const [out, setOut] = useState<{ reply: string; provider: string; model: string; tokens: string } | null>(null);
 
   // The list is read again whenever the box is opened, so a model switched On a moment ago shows up.
@@ -496,8 +498,65 @@ function TryMessage({ code, onDone }: { code: string; onDone: () => void }) {
       const res = await fetch("/portal-api/owner/try", {
         method: "POST",
         headers: { "content-type": "application/json", "x-mitrify-setup-code": code },
-        body: JSON.stringify({ model, messages: [{ role: "user", content: text }], max_tokens: 300 }),
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: text }],
+          max_tokens: 300,
+          ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
+        }),
       });
+      // Streaming: show the words as they arrive, and measure whether they really do (a proxy or CDN in
+      // front of the site that holds everything back until the end would show up as "all at once").
+      if (stream && res.ok && res.body) {
+        const t0 = performance.now();
+        const trail0 = (res.headers.get("x-mitrify-trail") ?? "").split(",").filter(Boolean).map((x) => decodeURIComponent(x));
+        const head = { provider: res.headers.get("x-mitrify-provider") ?? "", model: decodeURIComponent(res.headers.get("x-mitrify-model") ?? "") };
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        let words = "";
+        let first = 0;
+        let parts = 0;
+        let usage: Obj | null = null;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let nl: number;
+          while ((nl = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, nl).trim();
+            buf = buf.slice(nl + 1);
+            if (!line.startsWith("data:")) continue;
+            const d = line.slice(5).trim();
+            if (d === "[DONE]") continue;
+            try {
+              const j = JSON.parse(d);
+              const piece = j.choices?.[0]?.delta?.content;
+              if (typeof piece === "string" && piece) {
+                if (!first) first = performance.now() - t0;
+                parts++;
+                words += piece;
+                setOut({ reply: words, ...head, tokens: "streaming..." });
+              }
+              if (j.usage) usage = j.usage;
+            } catch {
+              /* a line that is not JSON */
+            }
+          }
+        }
+        const total = performance.now() - t0;
+        const spread = parts > 1 && total - first > 300 ? "words arrived one after another" : "WARNING: everything arrived at once (something in front of the site may be holding the stream back)";
+        setOut({
+          reply: words || "(the model sent no text)",
+          ...head,
+          tokens:
+            (usage ? `${usage.prompt_tokens ?? "?"} in · ${usage.completion_tokens ?? "?"} out` : "usage not reported") +
+            ` · first words after ${Math.round(first)} ms, done in ${Math.round(total)} ms, ${parts} parts · ${spread}` +
+            (trail0.length > 1 ? ` · tried: ${trail0.join(", ")}` : ""),
+        });
+        onDone();
+        return;
+      }
       const raw = await res.text();
       let data: Obj = {};
       try {
@@ -554,6 +613,9 @@ function TryMessage({ code, onDone }: { code: string; onDone: () => void }) {
           ))}
         </select>
         <textarea className={input} rows={3} placeholder="Write a short message, e.g. Say hello in Hindi" value={text} onChange={(e) => setText(e.target.value)} required />
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={stream} onChange={(e) => setStream(e.target.checked)} /> Stream (shows the words as they arrive; tests that streaming works through the site)
+        </label>
         <button className={btn} type="submit" disabled={busy}>
           {busy ? "Waiting for the model..." : "Send"}
         </button>
@@ -567,6 +629,114 @@ function TryMessage({ code, onDone }: { code: string; onDone: () => void }) {
           </p>
         </div>
       )}
+    </Card>
+  );
+}
+
+// ── Owner: API keys (for NavBharatAI and other apps of yours) ────────────────────────────────────
+
+function OwnerKeys({ code }: { code: string }) {
+  const [keys, setKeys] = useState<Obj[]>([]);
+  const [name, setName] = useState("");
+  const [budget, setBudget] = useState("");
+  const [fresh, setFresh] = useState<{ label: string; value: string } | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const base = `${window.location.origin}/v1`;
+
+  const load = useCallback(async () => {
+    try {
+      const r = await call("/owner/keys", { code });
+      // Customers' keys and the built-in test key are not listed here.
+      setKeys(r.keys.filter((k: Obj) => !k.customerId && k.name !== "owner-test (page)"));
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }, [code]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setErr("");
+    try {
+      await fn();
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="Your API keys (for NavBharatAI)">
+      <p className="text-sm text-muted-foreground">
+        Put these in the other app's <b>server</b> settings: address <code>{base}</code>, the key, and model <code>mitrify/auto-cheap</code>. Never in an app or a web page.
+      </p>
+      {err && <Notice kind="error">{err}</Notice>}
+      {fresh && <Secret label={fresh.label} value={fresh.value} />}
+      <ul className="space-y-2">
+        {keys.map((k) => (
+          <li key={k.id} className="rounded border p-2 text-sm space-y-1">
+            <p>
+              <b>{k.name}</b> <code className="text-xs">{k.keyPrefix}…</code> {k.revokedAt && <span className="text-red-700">· revoked</span>}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {k.revokedAt ? "Stopped" : `Last used ${when(k.lastUsedAt)}`}
+              {k.dailyBudgetUsd ? ` · limit ${usd(k.dailyBudgetUsd)}/day` : ""} · {k.rpm} requests/min
+            </p>
+            {!k.revokedAt && (
+              <div className="flex gap-2">
+                <button
+                  className={btn2}
+                  disabled={busy}
+                  onClick={() =>
+                    confirm(`Make a new key to replace "${k.name}"? The old one keeps working for 24 hours, then stops.`) &&
+                    run(async () => {
+                      const r = await call(`/owner/keys/${k.id}/rotate`, { code, body: {} });
+                      setFresh({ label: `New key for ${k.name}. Shown only once. Copy it now.`, value: r.key });
+                    })
+                  }
+                >
+                  New key
+                </button>
+                <button
+                  className={`${btn2} border-red-500 text-red-700`}
+                  disabled={busy}
+                  onClick={() =>
+                    confirm(`Stop "${k.name}" right now? Apps using it stop working at once.`) &&
+                    run(async () => void (await call(`/owner/keys/${k.id}/revoke`, { code, body: {} })))
+                  }
+                >
+                  Stop now
+                </button>
+              </div>
+            )}
+          </li>
+        ))}
+        {!keys.length && <li className="text-sm text-muted-foreground">No keys yet.</li>}
+      </ul>
+      <form
+        className="space-y-2 border-t pt-3"
+        onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          void run(async () => {
+            const r = await call("/owner/keys", { code, body: { name, ...(budget ? { dailyBudgetUsd: Number(budget) } : {}) } });
+            setFresh({ label: `New key "${name}". Shown only once. Copy it now.`, value: r.key });
+            setName("");
+            setBudget("");
+          });
+        }}
+      >
+        <p className="text-sm font-medium">New key</p>
+        <input className={input} placeholder="Name, e.g. navbharatai-chat" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required />
+        <input className={input} placeholder="Daily spending limit in $ (optional)" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} />
+        <button className={btn} type="submit" disabled={busy}>
+          Create key
+        </button>
+      </form>
     </Card>
   );
 }
@@ -648,6 +818,7 @@ function Owner({ code, onLeave }: { code: string; onLeave: () => void }) {
 
       {status && <Prices code={code} providers={status.providers} cooling={status.cooling ?? []} />}
       {status && <TryMessage code={code} onDone={load} />}
+      {status && <OwnerKeys code={code} />}
 
       <Card title={`Customers (${customers.length})`}>
         <ul className="space-y-3">

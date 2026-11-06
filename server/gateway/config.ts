@@ -75,7 +75,7 @@ export interface GatewayConfig {
   /** Extra percent added to the provider's listed price for portal customers. 0 = same price. */
   resaleMarkupPercent: number;
   /** Shown to customers as the API address. */
-  publicBaseUrl: string;
+  publicBaseUrl: string | null;
   maxKeysPerCustomer: number;
   providers: ProviderConfig[];
 }
@@ -226,7 +226,8 @@ export function loadConfig(env: Env = process.env): GatewayConfig {
     portalSecret,
     portalProblem,
     resaleMarkupPercent: markup !== null && markup <= 1000 ? markup : 0,
-    publicBaseUrl: env.MITRIFY_GATEWAY_PUBLIC_URL?.trim() || `https://${list(env.MITRIFY_GATEWAY_HOST || "gateway.mitrify.com")[0]}/v1`,
+    // null: the portal page shows the address it was opened on, plus /v1.
+    publicBaseUrl: env.MITRIFY_GATEWAY_PUBLIC_URL?.trim() || null,
     maxKeysPerCustomer: int(env, "MITRIFY_PORTAL_MAX_KEYS", 5, 1),
     providers: ids.map((id, i) => loadProvider(env, id, i)),
   };
