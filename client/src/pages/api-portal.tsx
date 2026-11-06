@@ -447,6 +447,91 @@ function Prices({ code, providers }: { code: string; providers: Obj[] }) {
   );
 }
 
+// ── Owner: try a message ─────────────────────────────────────────────────────────────────────────
+
+function TryMessage({ code, onDone }: { code: string; onDone: () => void }) {
+  const [models, setModels] = useState<string[]>([]);
+  const [model, setModel] = useState("mitrify/auto-cheap");
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [out, setOut] = useState<{ reply: string; provider: string; model: string; tokens: string } | null>(null);
+
+  // The list is read again whenever the box is opened, so a model switched On a moment ago shows up.
+  const loadModels = useCallback(() => {
+    call("/owner/prices", { code })
+      .then((p) => setModels(p.prices.filter((x: Obj) => x.enabled).map((x: Obj) => x.upstreamModel)))
+      .catch(() => {});
+  }, [code]);
+  useEffect(loadModels, [loadModels]);
+
+  const send = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setErr("");
+    setOut(null);
+    try {
+      // A normal chat request. It goes through the real gateway path, so cost and usage are recorded.
+      const res = await fetch("/portal-api/owner/try", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-mitrify-setup-code": code },
+        body: JSON.stringify({ model, messages: [{ role: "user", content: text }], max_tokens: 300 }),
+      });
+      const raw = await res.text();
+      let data: Obj = {};
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        throw new ApiError("The server did not answer properly.");
+      }
+      if (!res.ok) throw new ApiError(data?.error?.message || data?.message || `Something went wrong (${res.status}).`);
+      const u = data.usage;
+      setOut({
+        reply: data.choices?.[0]?.message?.content ?? "(the model sent no text)",
+        provider: res.headers.get("x-mitrify-provider") ?? "",
+        model: decodeURIComponent(res.headers.get("x-mitrify-model") ?? ""),
+        tokens: u ? `${u.prompt_tokens ?? "?"} in · ${u.completion_tokens ?? "?"} out` : "usage not reported",
+      });
+      onDone();
+    } catch (e2) {
+      setErr((e2 as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="Try a message">
+      <p className="text-sm text-muted-foreground">
+        Sends one short message (up to 300 tokens of reply) through the real gateway, so the cost is counted in "Spent today".
+      </p>
+      <form className="space-y-2" onSubmit={send}>
+        <select className={input} value={model} onFocus={loadModels} onChange={(e) => setModel(e.target.value)}>
+          <option value="mitrify/auto-cheap">mitrify/auto-cheap (the cheapest in the pool)</option>
+          {models.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+        <textarea className={input} rows={3} placeholder="Write a short message, e.g. Say hello in Hindi" value={text} onChange={(e) => setText(e.target.value)} required />
+        <button className={btn} type="submit" disabled={busy}>
+          {busy ? "Waiting for the model..." : "Send"}
+        </button>
+      </form>
+      {err && <Notice kind="error">{err}</Notice>}
+      {out && (
+        <div className="rounded border p-3 space-y-1 text-sm">
+          <p className="whitespace-pre-wrap">{out.reply}</p>
+          <p className="text-xs text-muted-foreground break-all">
+            {out.provider} · {out.model} · {out.tokens}
+          </p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ── Owner ────────────────────────────────────────────────────────────────────────────────────────
 
 function Owner({ code, onLeave }: { code: string; onLeave: () => void }) {
@@ -523,6 +608,7 @@ function Owner({ code, onLeave }: { code: string; onLeave: () => void }) {
       )}
 
       {status && <Prices code={code} providers={status.providers} />}
+      {status && <TryMessage code={code} onDone={load} />}
 
       <Card title={`Customers (${customers.length})`}>
         <ul className="space-y-3">
