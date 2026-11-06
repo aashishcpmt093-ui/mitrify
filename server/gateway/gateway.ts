@@ -250,6 +250,29 @@ export class Gateway {
     const c = this.cooling.get(key);
     return !!c && c.until > this.now();
   }
+  /**
+   * OpenRouter's free-model limits (per minute and per day) belong to the ACCOUNT, not to one model. So when two
+   * different free models of a provider say "limit reached" within a few seconds, all of that provider's free
+   * models are set aside together, instead of every request burning an attempt (and a count of the daily limit,
+   * which failed attempts also use) on each free model in turn.
+   */
+  private freeTierKey(providerId: string) {
+    return `${providerId}\u0000*free*`;
+  }
+  private recent429 = new Map<string, { model: string; at: number }[]>();
+  private noteFreeLimit(providerId: string, model: string, retryAfterMs: number | null) {
+    const now = this.now();
+    const list = (this.recent429.get(providerId) ?? []).filter((x) => now - x.at < 20_000);
+    list.push({ model, at: now });
+    this.recent429.set(providerId, list);
+    if (new Set(list.map((x) => x.model)).size >= 2 && !this.isCooling(this.freeTierKey(providerId))) {
+      this.coolDown(this.freeTierKey(providerId), retryAfterMs, "limit");
+    }
+  }
+  private freeTierOk(providerId: string) {
+    this.coolOk(this.freeTierKey(providerId));
+    this.recent429.delete(providerId);
+  }
   private coolDown(key: string, retryAfterMs: number | null, kind: "limit" | "missing" | "error") {
     const strikes = (this.cooling.get(key)?.strikes ?? 0) + 1;
     // limit: 1, 5, 25, 125 min. error: 5, 25, 125 min (a model that failed may only dislike this request, but
@@ -448,6 +471,11 @@ export class Gateway {
           soonestFree = Math.min(soonestFree, c.until);
           continue;
         }
+        const tier = isFreePrice(e) ? this.cooling.get(this.freeTierKey(p.id)) : undefined;
+        if (tier && tier.until > this.now()) {
+          soonestFree = Math.min(soonestFree, tier.until);
+          continue;
+        }
         candidates.push(cand);
         if (candidates.length >= 24) break;
       }
@@ -520,9 +548,10 @@ export class Gateway {
     // so a request never ends only because the free models were full.
     const remaining = [...o.candidates];
     const maxAttempts = this.config.maxAttempts;
-    const usable = (c: Candidate) =>
-      (mode !== "auto-cheap" || !this.isCooling(this.coolKey(c))) && this.breakers.get(c.provider.id)!.available();
     const free = (c: Candidate) => !!c.price && isFreePrice(c.price);
+    const usable = (c: Candidate) =>
+      (mode !== "auto-cheap" || (!this.isCooling(this.coolKey(c)) && !(free(c) && this.isCooling(this.freeTierKey(c.provider.id))))) &&
+      this.breakers.get(c.provider.id)!.available();
     // In the automatic mode, a failure BEFORE any reply bytes were sent can move on to the next model when the
     // model is free (nothing is spent), or when the owner allowed it for paid ones too (MITRIFY_GATEWAY_RETRY_PAID=1).
     const lenient = (c: Candidate) => mode === "auto-cheap" && (free(c) || this.config.retryPaid);
@@ -623,10 +652,16 @@ export class Gateway {
       const freeFailure = lenient(cand) && [400, 408, 500, 502, 504].includes(up.status);
       if (mode === "auto-cheap") {
         const key = this.coolKey(cand);
-        if (up.status === 429) this.coolDown(key, parseRetryAfter(up.headers.get("retry-after"), this.now()), "limit");
-        else if (up.status === 404) this.coolDown(key, null, "missing");
+        if (up.status === 429) {
+          const wait = parseRetryAfter(up.headers.get("retry-after"), this.now());
+          this.coolDown(key, wait, "limit");
+          if (free(cand)) this.noteFreeLimit(cand.provider.id, cand.upstreamModel, wait);
+        } else if (up.status === 404) this.coolDown(key, null, "missing");
         else if (freeFailure) this.coolDown(key, null, "error");
-        else if (up.status < 400) this.coolOk(key);
+        else if (up.status < 400) {
+          this.coolOk(key);
+          if (free(cand)) this.freeTierOk(cand.provider.id);
+        }
       }
       const retryable = RETRYABLE_STATUS.has(up.status) || (mode === "auto-cheap" && up.status === 404) || freeFailure;
       if (retryable && !isLast) {
@@ -1115,7 +1150,7 @@ export class Gateway {
         .filter(([, c]) => c.until > this.now())
         .map(([k, c]) => {
           const [provider, model] = k.split("\u0000");
-          return { provider, model, secondsLeft: Math.ceil((c.until - this.now()) / 1000), strikes: c.strikes };
+          return { provider, model: model === "*free*" ? "*free*" : model, secondsLeft: Math.ceil((c.until - this.now()) / 1000), strikes: c.strikes };
         }),
     };
   }
