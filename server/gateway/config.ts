@@ -56,6 +56,12 @@ export interface GatewayConfig {
   trustProxy: boolean;
   adminIps: string[];
   poolSize: number;
+  /** Places in the pool always kept for paid models, behind the free ones. */
+  poolPaid: number;
+  /** A free model that has not started answering after this long is skipped (automatic mode). */
+  freeFirstByteTimeoutMs: number;
+  /** Also move on from a PAID model that failed before answering (could, rarely, run a paid job twice). */
+  retryPaid: boolean;
   /** Models imported from a provider's own price list join the cheapest pool by themselves (free first). */
   autoSelect: boolean;
   /** Shortest context (tokens) an automatically chosen model may have. */
@@ -209,6 +215,9 @@ export function loadConfig(env: Env = process.env): GatewayConfig {
     trustProxy: env.MITRIFY_GATEWAY_TRUST_PROXY === "1",
     adminIps: list(env.MITRIFY_GATEWAY_ADMIN_IPS),
     poolSize: int(env, "MITRIFY_GATEWAY_POOL_SIZE", 40, 1),
+    poolPaid: int(env, "MITRIFY_GATEWAY_POOL_PAID", 8, 0),
+    freeFirstByteTimeoutMs: int(env, "MITRIFY_GATEWAY_FREE_FIRST_BYTE_TIMEOUT_MS", 45_000, 200),
+    retryPaid: env.MITRIFY_GATEWAY_RETRY_PAID === "1",
     autoSelect: env.MITRIFY_GATEWAY_AUTO_SELECT !== "0",
     minContext: int(env, "MITRIFY_GATEWAY_MIN_CONTEXT", 8000, 0),
     maxPriceAgeDays: int(env, "MITRIFY_GATEWAY_MAX_PRICE_AGE_DAYS", 30, 1),
