@@ -822,6 +822,23 @@ function Owner({ code, onLeave }: { code: string; onLeave: () => void }) {
               <li key={p.id}>
                 <b>{p.label}</b>: {p.status.replace("_", " ")}
                 {p.disabledByAdmin ? " (switched off)" : ""} · resale {p.resaleApproved ? "approved" : "not approved"}
+                {(p.status === "active" || p.disabledByAdmin) && (
+                  <button
+                    className={`${btn2} ml-2`}
+                    onClick={() =>
+                      confirm(
+                        p.disabledByAdmin
+                          ? `Switch ${p.label} back on?`
+                          : `Switch ${p.label} OFF? No call will be sent to it, not even in automatic mode.`,
+                      ) &&
+                      run(async () => {
+                        await call(`/owner/providers/${p.id}/disable`, { code, body: { disabled: !p.disabledByAdmin } });
+                      })
+                    }
+                  >
+                    {p.disabledByAdmin ? "Switch on" : "Switch off"}
+                  </button>
+                )}
               </li>
             ))}
           </ul>
