@@ -644,6 +644,7 @@ function OwnerKeys({ code }: { code: string }) {
   const [keys, setKeys] = useState<Obj[]>([]);
   const [name, setName] = useState("");
   const [budget, setBudget] = useState("");
+  const [rpm, setRpm] = useState("");
   const [fresh, setFresh] = useState<{ label: string; value: string } | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -728,16 +729,21 @@ function OwnerKeys({ code }: { code: string }) {
         onSubmit={(e: FormEvent) => {
           e.preventDefault();
           void run(async () => {
-            const r = await call("/owner/keys", { code, body: { name, ...(budget ? { dailyBudgetUsd: Number(budget) } : {}) } });
+            const r = await call("/owner/keys", {
+              code,
+              body: { name, ...(budget ? { dailyBudgetUsd: Number(budget) } : {}), ...(rpm ? { rpm: Number(rpm) } : {}) },
+            });
             setFresh({ label: `New key "${name}". Shown only once. Copy it now.`, value: r.key });
             setName("");
             setBudget("");
+            setRpm("");
           });
         }}
       >
         <p className="text-sm font-medium">New key</p>
         <input className={input} placeholder="Name, e.g. navbharatai-chat" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required />
         <input className={input} placeholder="Daily spending limit in $ (optional)" inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} />
+        <input className={input} placeholder="Requests per minute (default 600; for a thousand at once use 6000)" inputMode="numeric" value={rpm} onChange={(e) => setRpm(e.target.value)} />
         <button className={btn} type="submit" disabled={busy}>
           Create key
         </button>
