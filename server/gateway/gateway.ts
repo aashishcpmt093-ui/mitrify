@@ -938,7 +938,8 @@ export class Gateway {
     const t = this.now();
     const prices = await this.store.listPrices();
     const totals = await this.store.tokenTotalsSince(new Date(t - 7 * 24 * 60 * 60 * 1000));
-    const snap = await this.store.saveSnapshot(buildSnapshot(prices, this.config, totals, new Date(t)));
+    const off = (await this.switches()).disabled;
+    const snap = await this.store.saveSnapshot(buildSnapshot(prices, this.config, totals, new Date(t), off));
     this.snapshot = snap;
     this.pricesCache = null;
     this.log(`catalog snapshot #${snap.id}: ${snap.entries.length} models in the pool (${snap.weights.source} weights)`);
@@ -1077,7 +1078,14 @@ export class Gateway {
       await this.store.setSetting(`provider.disabled.${p.id}`, on);
       this.invalidateCaches();
       await this.audit("owner", on ? "provider_disabled" : "provider_enabled", ip, { provider: p.id });
-      return sendJson(res, 200, { provider: p.id, disabled: on });
+      // The automatic pool is rebuilt at once, so the remaining providers' models fill the places.
+      let pool: number | null = null;
+      try {
+        pool = (await this.refreshCatalog()).entries.length;
+      } catch (e) {
+        this.log(`pool rebuild after switching ${p.id} failed: ${(e as Error).message}`);
+      }
+      return sendJson(res, 200, { provider: p.id, disabled: on, poolModels: pool });
     }
     if (seg[1] === "providers" && seg[2] && seg[3] === "health" && req.method === "POST") {
       const p = this.config.providers.find((x) => x.id === seg[2]);

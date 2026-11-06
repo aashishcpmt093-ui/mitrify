@@ -703,6 +703,20 @@ describe("the free limit belongs to the account", () => {
 });
 
 describe("switching a provider off", () => {
+  it("a switched-off provider's models do not take places in the pool, so the others' models fill them", () => {
+    const cheap = Array.from({ length: 80 }, (_, i) => entry({ provider: "openrouter", upstreamModel: `v/cheap-${i}`, inputPerMTokUsd: 0.01 + i / 1000, outputPerMTokUsd: 0.01 + i / 1000 }));
+    const dear = Array.from({ length: 5 }, (_, i) => entry({ provider: "surplus", upstreamModel: `s-model-${i}`, inputPerMTokUsd: 1 + i, outputPerMTokUsd: 1 + i }));
+    const cfg = loadConfig({ MITRIFY_OPENROUTER_API_KEY: "k", MITRIFY_OPENROUTER_APPROVED: "1", MITRIFY_SURPLUS_API_KEY: "k", MITRIFY_SURPLUS_APPROVED: "1", MITRIFY_SURPLUS_BASE_URL: "https://s.example/v1" });
+    const totals = { input: 0, output: 0 };
+    const before = buildSnapshot([...cheap, ...dear], cfg, totals, new Date());
+    // Without switching anything off, the cheap models fill the pool and the dearer provider's models may be left out.
+    assert.ok(before.entries.filter((e) => e.provider === "openrouter").length > before.entries.filter((e) => e.provider === "surplus").length);
+    const after = buildSnapshot([...cheap, ...dear], cfg, totals, new Date(), new Set(["openrouter"]));
+    assert.equal(after.entries.length, 5);
+    assert.ok(after.entries.every((e) => e.provider === "surplus"));
+    assert.ok(after.excluded.some((x) => x.reason === "provider switched off by the owner"));
+  });
+
   it("automatic mode skips a provider the owner switched off, and uses it again when switched on", async () => {
     const up = await mockUpstream((_req, res) => okRes(res));
     const g = await startGateway(
@@ -720,7 +734,9 @@ describe("switching a provider off", () => {
       await admin(g.url, "/admin/catalog/refresh", { body: {} });
       const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
       assert.equal((await chat(g.url, key, AUTO)).headers.get("x-mitrify-provider"), "routerone");
-      assert.equal((await admin(g.url, "/admin/providers/routerone/disable", { body: { disabled: true } })).status, 200);
+      const off = await admin(g.url, "/admin/providers/routerone/disable", { body: { disabled: true } });
+      assert.equal(off.status, 200);
+      assert.equal((await off.json()).poolModels, 1);
       const r = await chat(g.url, key, AUTO);
       assert.equal(r.status, 200);
       assert.equal(r.headers.get("x-mitrify-provider"), "surplus");
