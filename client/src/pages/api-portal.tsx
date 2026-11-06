@@ -377,6 +377,11 @@ function Prices({ code, providers, cooling }: { code: string; providers: Obj[]; 
           <p className="font-medium">
             Order used today ({pool.filter((e: Obj) => e.free).length} free, then {pool.filter((e: Obj) => !e.free).length} paid)
           </p>
+          {cooling.find((x) => x.model === "*free*") && (
+            <p className="rounded bg-amber-100 text-amber-900 p-1">
+              The free limit of the account is reached: all free models wait, back in about {Math.ceil(cooling.find((x) => x.model === "*free*")!.secondsLeft / 60)} min. Paid models answer meanwhile.
+            </p>
+          )}
           {pool.slice(0, 15).map((e: Obj) => {
             const c = cooling.find((x) => x.provider === e.provider && x.model === e.upstreamModel);
             return (

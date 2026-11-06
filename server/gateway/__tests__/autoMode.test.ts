@@ -159,6 +159,7 @@ describe("free first, then the cheapest, when requests arrive in bulk", () => {
     assert.equal(served.filter((m) => m === "free-b").length, 2);
     assert.equal(served.filter((m) => m === "paid-1").length, 15, "everything after the free limits went to the paid model");
     // A full model is not asked again and again: 3 answers + 1 refusal, 2 answers + 1 refusal, one 404.
+    // (free-b answered right after free-a refused, so that was not an account-wide limit: no wholesale rest.)
     assert.deepEqual([t.s.calls["free-a"], t.s.calls["free-b"], t.s.calls["free-gone"]], [4, 3, 1]);
     const status = await (await admin(t.g.url, "/admin/status")).json();
     assert.deepEqual(status.cooling.map((c: { model: string }) => c.model).sort(), ["free-a", "free-b", "free-gone"]);
@@ -617,6 +618,86 @@ describe("applying new rules to models judged under old ones", () => {
     assert.equal(listCalls, 2, "tried again");
     assert.deepEqual((await (await admin(g.url, "/admin/catalog")).json()).entries.map((e: { upstreamModel: string }) => e.upstreamModel), ["v/chat-one"]);
     await g.close();
+    await up.close();
+  });
+});
+
+
+describe("the free limit belongs to the account", () => {
+  const always429 = (_n: number, r: import("http").ServerResponse) => limit(r);
+
+  it("when two different free models hit their limit, all free models rest together and nobody else burns attempts on them", async () => {
+    const t = await setup(
+      { "free-a": always429, "free-b": always429, "free-c": always429, "free-d": always429 },
+      [["free-a", 0, 0], ["free-b", 0, 0], ["free-c", 0, 0], ["free-d", 0, 0], ["paid-1", 0.1, 0.2]],
+    );
+    const r = await chat(t.g.url, t.key, AUTO);
+    assert.equal(r.status, 200);
+    assert.equal(decodeURIComponent(r.headers.get("x-mitrify-model")!), "paid-1");
+    assert.equal(r.headers.get("x-mitrify-trail"), "free-a%3A429,free-b%3A429,paid-1%3A200", "free-c and free-d were not tried");
+    await r.text();
+    for (let i = 0; i < 5; i++) await (await chat(t.g.url, t.key, AUTO)).text();
+    assert.deepEqual(t.s.calls, { "free-a": 1, "free-b": 1, "paid-1": 6 }, "later requests went straight to the paid model");
+    const status = await (await admin(t.g.url, "/admin/status")).json();
+    assert.ok(status.cooling.some((c: { model: string; secondsLeft: number }) => c.model === "*free*" && c.secondsLeft <= 60));
+    await t.close();
+  });
+
+  it("one free model refusing on its own does not rest the others", async () => {
+    const t = await setup({ "free-a": always429 }, [["free-a", 0, 0], ["free-b", 0, 0], ["paid-1", 0.1, 0.2]]);
+    for (let i = 0; i < 4; i++) {
+      const r = await chat(t.g.url, t.key, AUTO);
+      assert.equal(decodeURIComponent(r.headers.get("x-mitrify-model")!), "free-b");
+      await r.text();
+    }
+    assert.equal(t.s.calls["free-a"], 1);
+    assert.equal(t.s.calls["free-b"], 4);
+    assert.equal(t.s.calls["paid-1"], undefined);
+    const status = await (await admin(t.g.url, "/admin/status")).json();
+    assert.ok(!status.cooling.some((c: { model: string }) => c.model === "*free*"));
+    await t.close();
+  });
+
+  it("after the rest the free models are tried again, a repeat rests them longer, and a free answer clears it", async () => {
+    let now = Date.now();
+    let open = false;
+    const up = await mockUpstream((req, res) => {
+      const m = modelOf(req);
+      if (open && m === "free-b") return okRes(res);
+      m.startsWith("free") ? limit(res) : okRes(res);
+    });
+    const gw = new Gateway(
+      loadConfig(baseEnv({ MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY, MITRIFY_SURPLUS_BASE_URL: up.url, MITRIFY_SURPLUS_APPROVED: "1" })),
+      new MemoryStore(),
+      { now: () => now, log: () => {} },
+    );
+    await gw.start();
+    const server = createServer((req, res) => void gw.handle(req, res));
+    const url = await listen(server);
+    await admin(url, "/admin/prices", { method: "PUT", body: [price("surplus", "free-a", 0, 0), price("surplus", "free-b", 0, 0), price("surplus", "paid-1", 0.1, 0.2)] });
+    await admin(url, "/admin/catalog/refresh", { body: {} });
+    const key = ((await (await admin(url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+    const tier = async () => ((await (await admin(url, "/admin/status")).json()).cooling as { model: string; secondsLeft: number }[]).find((c) => c.model === "*free*");
+
+    await (await chat(url, key, AUTO)).text();
+    assert.equal((await tier())!.secondsLeft, 60);
+    now += 61_000;
+    assert.equal(await tier(), undefined, "the rest is over");
+    await (await chat(url, key, AUTO)).text();
+    assert.equal((await tier())!.secondsLeft, 300, "refused again: rests longer");
+    now += 301_000;
+    open = true; // free-b answers again
+    const r = await chat(url, key, AUTO);
+    assert.equal(r.status, 200);
+    await r.text();
+    assert.equal(await tier(), undefined, "an answer from a free model clears the rest");
+    // ...and the memory of earlier refusals: the next rest starts short again (60 s, not the 25 minutes it would be).
+    now += 1_600_000; // free-a's own rest is over too
+    open = false;
+    await (await chat(url, key, AUTO)).text();
+    assert.equal((await tier())!.secondsLeft, 60, "a success wipes the memory");
+    server.closeAllConnections();
+    server.close();
     await up.close();
   });
 });
