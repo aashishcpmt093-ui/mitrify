@@ -48,6 +48,8 @@ export function buildSnapshot(
   config: GatewayConfig,
   totals: { input: number; output: number },
   now: Date,
+  /** Providers the owner has switched off: their models are not counted, so they cannot crowd others out of the pool. */
+  switchedOff: ReadonlySet<string> = new Set(),
 ): Omit<CatalogSnapshot, "id"> {
   const weights = rankingWeights(totals);
   const providers = new Map(config.providers.map((p) => [p.id, p]));
@@ -61,7 +63,9 @@ export function buildSnapshot(
       ? "unknown provider"
       : prov.status !== "active"
         ? `provider ${prov.status}`
-        : p.blocked
+        : switchedOff.has(p.provider)
+          ? "provider switched off by the owner"
+          : p.blocked
           ? "skipped by the owner"
           : !(p.enabled && p.qualityPassed) && !(config.autoSelect && p.auto)
             ? "not switched On + Pool, and not an automatic model"
