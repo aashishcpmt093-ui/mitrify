@@ -701,3 +701,34 @@ describe("the free limit belongs to the account", () => {
     await up.close();
   });
 });
+
+describe("switching a provider off", () => {
+  it("automatic mode skips a provider the owner switched off, and uses it again when switched on", async () => {
+    const up = await mockUpstream((_req, res) => okRes(res));
+    const g = await startGateway(
+      baseEnv({
+        MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY,
+        MITRIFY_SURPLUS_BASE_URL: up.url,
+        MITRIFY_SURPLUS_APPROVED: "1",
+        MITRIFY_ROUTERONE_API_KEY: UPSTREAM_KEY,
+        MITRIFY_ROUTERONE_BASE_URL: up.url,
+        MITRIFY_ROUTERONE_APPROVED: "1",
+      }),
+    );
+    try {
+      await admin(g.url, "/admin/prices", { method: "PUT", body: [price("routerone", "cheap-model", 0.01, 0.01), price("surplus", "dear-model", 1, 1)] });
+      await admin(g.url, "/admin/catalog/refresh", { body: {} });
+      const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+      assert.equal((await chat(g.url, key, AUTO)).headers.get("x-mitrify-provider"), "routerone");
+      assert.equal((await admin(g.url, "/admin/providers/routerone/disable", { body: { disabled: true } })).status, 200);
+      const r = await chat(g.url, key, AUTO);
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get("x-mitrify-provider"), "surplus");
+      await admin(g.url, "/admin/providers/routerone/disable", { body: { disabled: false } });
+      assert.equal((await chat(g.url, key, AUTO)).headers.get("x-mitrify-provider"), "routerone");
+    } finally {
+      await g.close();
+      await up.close();
+    }
+  });
+});
