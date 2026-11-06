@@ -24,6 +24,7 @@ export function createGatewayMiddleware(opts: { config?: GatewayConfig; store?: 
     const store = opts.store ?? new PgStore((await import("../db")).pool);
     const gw = new Gateway(config, store);
     await gw.start();
+    await gw.refreshIfRulesChanged();
     await gw.refreshCatalogIfDue();
     // Daily pool refresh (checked hourly) and optional active health probes every 5 minutes.
     setInterval(() => void gw.refreshCatalogIfDue(), 60 * 60_000).unref();

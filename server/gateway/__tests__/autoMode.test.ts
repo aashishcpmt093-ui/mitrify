@@ -385,8 +385,8 @@ describe("no reply: try again on the next model", () => {
     const r = await chat(t.g.url, t.key, AUTO);
     assert.equal(r.status, 200);
     assert.equal(await r.text(), OK, "the good model's answer arrives unchanged");
-    // Three free models gave no reply; the fourth (last) attempt goes to a paid model, by design.
-    assert.equal(r.headers.get("x-mitrify-trail"), "free-empty%3Aempty,free-err%3Aerror-in-body,free-notjson%3Anot-json,paid-1%3A200");
+    // Three free models gave no reply; the fourth is the next free one, which answers (the fifth and last would go to a paid model).
+    assert.equal(r.headers.get("x-mitrify-trail"), "free-empty%3Aempty,free-err%3Aerror-in-body,free-notjson%3Anot-json,free-ok%3A200");
     await t.close();
   });
 
@@ -487,5 +487,136 @@ describe("no reply: try again on the next model", () => {
     assert.equal(await named.text(), EMPTY);
     assert.equal(named.headers.get("x-mitrify-trail"), null);
     await t.close();
+  });
+});
+
+
+describe("only real chat models are chosen automatically", () => {
+  const P = { prompt: "0", completion: "0" };
+  it("a model that also writes audio or images, or lacks the usual chat settings, is not a chat model", () => {
+    const m = parseModelList({
+      data: [
+        { id: "google/lyria-3-clip-preview", pricing: P, architecture: { input_modalities: ["text"], output_modalities: ["text", "audio"] }, supported_parameters: ["max_tokens"] },
+        { id: "x/image-maker", pricing: P, architecture: { input_modalities: ["text"], output_modalities: ["image", "text"] } },
+        { id: "x/task-only", pricing: P, architecture: { input_modalities: ["text"], output_modalities: ["text"] }, supported_parameters: ["response_format", "structured_outputs"] },
+        { id: "x/real-chat", pricing: P, architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] }, supported_parameters: ["max_tokens", "temperature", "tools"] },
+        { id: "x/modality-only", pricing: P, architecture: { modality: "text->text" } },
+        { id: "x/modality-audio", pricing: P, architecture: { modality: "text->text+audio" } },
+        { id: "x/empty-params", pricing: P, architecture: { input_modalities: ["text"], output_modalities: ["text"] }, supported_parameters: [] },
+        { id: "x/params-only", pricing: P, supported_parameters: ["temperature"] },
+      ],
+    });
+    assert.deepEqual(
+      m.map((x) => [x.id, x.chatCapable]),
+      [["google/lyria-3-clip-preview", false], ["x/image-maker", false], ["x/task-only", false], ["x/real-chat", true], ["x/modality-only", true], ["x/modality-audio", false], ["x/empty-params", true], ["x/params-only", true]],
+    );
+  });
+
+  it("stealth models and single-purpose endpoints are never chosen, even when the list calls them chat models", () => {
+    const snap = buildSnapshot(
+      [
+        entry({ upstreamModel: "stealth/crouton-alpha", inputPerMTokUsd: 0, outputPerMTokUsd: 0 }),
+        entry({ upstreamModel: "scaledown/extract", inputPerMTokUsd: 0.04, outputPerMTokUsd: 0 }),
+        entry({ upstreamModel: "scaledown/summarize", inputPerMTokUsd: 0.04, outputPerMTokUsd: 0 }),
+        entry({ upstreamModel: "acme/extractor-pro", inputPerMTokUsd: 0.05, outputPerMTokUsd: 0.05 }), // a real chat model whose name only contains the word
+        entry({ upstreamModel: "acme/chat-1", inputPerMTokUsd: 0.06, outputPerMTokUsd: 0.06 }),
+      ],
+      or(),
+      { input: 0, output: 0 },
+      new Date(),
+    );
+    assert.deepEqual(snap.entries.map((e) => e.upstreamModel), ["acme/extractor-pro", "acme/chat-1"]);
+  });
+
+  it("among free models, those that take tools (general assistants) come first, then the longer context", () => {
+    const snap = buildSnapshot(
+      [
+        entry({ upstreamModel: "f/plain-long", inputPerMTokUsd: 0, outputPerMTokUsd: 0, contextLength: 200000, supportsTools: false }),
+        entry({ upstreamModel: "f/tools-short", inputPerMTokUsd: 0, outputPerMTokUsd: 0, contextLength: 16000, supportsTools: true }),
+        entry({ upstreamModel: "f/tools-long", inputPerMTokUsd: 0, outputPerMTokUsd: 0, contextLength: 128000, supportsTools: true }),
+      ],
+      or(),
+      { input: 0, output: 0 },
+      new Date(),
+    );
+    assert.deepEqual(snap.entries.map((e) => e.upstreamModel), ["f/tools-long", "f/tools-short", "f/plain-long"]);
+  });
+
+  it("a model that failed is rested for 5 minutes, then 25", async () => {
+    let now = Date.now();
+    const up = await mockUpstream((_req, res) => (res.writeHead(502, { "content-type": "application/json" }), res.end('{"error":{"message":"Provider returned error"}}')));
+    const gw = new Gateway(
+      loadConfig(baseEnv({ MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY, MITRIFY_SURPLUS_BASE_URL: up.url, MITRIFY_SURPLUS_APPROVED: "1", MITRIFY_GATEWAY_MAX_ATTEMPTS: "2" })),
+      new MemoryStore(),
+      { now: () => now, log: () => {} },
+    );
+    await gw.start();
+    const server = createServer((req, res) => void gw.handle(req, res));
+    const url = await listen(server);
+    await admin(url, "/admin/prices", { method: "PUT", body: [price("surplus", "free-a", 0, 0), price("surplus", "free-b", 0, 0)] });
+    await admin(url, "/admin/catalog/refresh", { body: {} });
+    const key = ((await (await admin(url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+    await (await chat(url, key, AUTO)).text();
+    let cooling = (await (await admin(url, "/admin/status")).json()).cooling as { model: string; secondsLeft: number }[];
+    assert.ok(cooling.length >= 1 && cooling.every((c) => c.secondsLeft === 300), JSON.stringify(cooling));
+    server.closeAllConnections();
+    server.close();
+    await up.close();
+  });
+});
+
+describe("applying new rules to models judged under old ones", () => {
+  it("reads the lists again once, drops models that no longer qualify, and then leaves things alone", async () => {
+    let listCalls = 0;
+    const up = await mockUpstream((req, res) => {
+      if (req.url === "/models") {
+        listCalls++;
+        res.writeHead(200, { "content-type": "application/json" });
+        return void res.end(
+          JSON.stringify({
+            data: [
+              { id: "v/chat-one", context_length: 64000, pricing: { prompt: "0", completion: "0" }, architecture: { input_modalities: ["text"], output_modalities: ["text"] }, supported_parameters: ["max_tokens"] },
+              { id: "v/music-one", context_length: 64000, pricing: { prompt: "0", completion: "0" }, architecture: { input_modalities: ["text"], output_modalities: ["text", "audio"] } },
+            ],
+          }),
+        );
+      }
+      okRes(res);
+    });
+    const store = new MemoryStore();
+    // What an earlier version stored: the music model wrongly marked as a chat model.
+    await store.upsertPrice(entry({ provider: "openrouter", upstreamModel: "v/music-one", inputPerMTokUsd: 0, outputPerMTokUsd: 0, chatCapable: true }));
+    const g = await startGateway(baseEnv({ MITRIFY_OPENROUTER_API_KEY: UPSTREAM_KEY, MITRIFY_OPENROUTER_BASE_URL: up.url, MITRIFY_OPENROUTER_APPROVED: "1" }), store);
+    await g.gw.refreshIfRulesChanged();
+    assert.equal(listCalls, 1);
+    const snap = await (await admin(g.url, "/admin/catalog")).json();
+    assert.deepEqual(snap.entries.map((e: { upstreamModel: string }) => e.upstreamModel), ["v/chat-one"]);
+    await g.gw.refreshIfRulesChanged();
+    assert.equal(listCalls, 1, "remembered: not read again");
+    await g.close();
+    await up.close();
+  });
+
+  it("if the list cannot be read it is tried again next time, not remembered", async () => {
+    let fail = true;
+    let listCalls = 0;
+    const up = await mockUpstream((req, res) => {
+      if (req.url === "/models") {
+        listCalls++;
+        if (fail) return void (res.writeHead(500), res.end("boom"));
+        res.writeHead(200, { "content-type": "application/json" });
+        return void res.end(JSON.stringify({ data: [{ id: "v/chat-one", context_length: 64000, pricing: { prompt: "0", completion: "0" }, supported_parameters: ["max_tokens"] }] }));
+      }
+      okRes(res);
+    });
+    const g = await startGateway(baseEnv({ MITRIFY_OPENROUTER_API_KEY: UPSTREAM_KEY, MITRIFY_OPENROUTER_BASE_URL: up.url, MITRIFY_OPENROUTER_APPROVED: "1" }));
+    await g.gw.refreshIfRulesChanged();
+    assert.equal(listCalls, 1);
+    fail = false;
+    await g.gw.refreshIfRulesChanged();
+    assert.equal(listCalls, 2, "tried again");
+    assert.deepEqual((await (await admin(g.url, "/admin/catalog")).json()).entries.map((e: { upstreamModel: string }) => e.upstreamModel), ["v/chat-one"]);
+    await g.close();
+    await up.close();
   });
 });
