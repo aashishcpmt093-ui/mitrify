@@ -888,6 +888,23 @@ function Owner({ code, onLeave }: { code: string; onLeave: () => void }) {
                     {p.disabledByAdmin ? "Switch on" : "Switch off"}
                   </button>
                 )}
+                {p.status === "active" && !p.disabledByAdmin && (
+                  <button
+                    className={`${btn2} ml-2`}
+                    onClick={() =>
+                      confirm(
+                        p.freeOnly
+                          ? `Let ${p.label} use its paid models again?`
+                          : `Limit ${p.label} to its FREE models only? Paid calls will go to the other providers.`,
+                      ) &&
+                      run(async () => {
+                        await call(`/owner/providers/${p.id}/free-only`, { code, body: { freeOnly: !p.freeOnly } });
+                      })
+                    }
+                  >
+                    {p.freeOnly ? "Free only: ON" : "Free only: off"}
+                  </button>
+                )}
               </li>
             ))}
           </ul>

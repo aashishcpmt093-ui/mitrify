@@ -748,3 +748,55 @@ describe("switching a provider off", () => {
     }
   });
 });
+
+describe("a provider limited to its free models", () => {
+  it("only its free models are used; paid calls go to the other provider", async () => {
+    const seen: string[] = [];
+    const up = await mockUpstream((req, res) => {
+      seen.push(modelOf(req));
+      if (modelOf(req) === "free-m") return limit(res, "3600");
+      okRes(res);
+    });
+    const g = await startGateway(
+      baseEnv({
+        MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY,
+        MITRIFY_SURPLUS_BASE_URL: up.url,
+        MITRIFY_SURPLUS_APPROVED: "1",
+        MITRIFY_ROUTERONE_API_KEY: UPSTREAM_KEY,
+        MITRIFY_ROUTERONE_BASE_URL: up.url,
+        MITRIFY_ROUTERONE_APPROVED: "1",
+      }),
+    );
+    try {
+      await admin(g.url, "/admin/prices", {
+        method: "PUT",
+        body: [
+          price("routerone", "free-m", 0, 0, { enabled: true, qualityPassed: true }),
+          price("routerone", "cheap-paid", 0.01, 0.01, { enabled: true, qualityPassed: true }),
+          price("surplus", "dear-paid", 1, 1, { enabled: true, qualityPassed: true }),
+        ],
+      });
+      await admin(g.url, "/admin/catalog/refresh", { body: {} });
+      const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+      const set = await admin(g.url, "/admin/providers/routerone/free-only", { body: { freeOnly: true } });
+      assert.equal(set.status, 200);
+      assert.equal((await set.json()).poolModels, 2); // free-m and dear-paid; cheap-paid is left out
+      // The free model is full (429): the answer comes from the other provider, never from routerone's paid model.
+      const r = await chat(g.url, key, AUTO);
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get("x-mitrify-provider"), "surplus");
+      assert.ok(!seen.includes("cheap-paid"));
+      // Asking for the paid model by name is refused too.
+      const named = await chat(g.url, key, '{"model":"cheap-paid","messages":[]}');
+      assert.equal(named.status, 404);
+      // Switched back: the cheaper paid model is usable again.
+      await admin(g.url, "/admin/providers/routerone/free-only", { body: { freeOnly: false } });
+      assert.equal((await chat(g.url, key, '{"model":"cheap-paid","messages":[]}')).status, 200);
+      assert.equal((await admin(g.url, "/admin/providers/nope/free-only", { body: { freeOnly: true } })).status, 404);
+      assert.equal((await admin(g.url, "/admin/providers/routerone/free-only", { body: { freeOnly: "yes" } })).status, 400);
+    } finally {
+      await g.close();
+      await up.close();
+    }
+  });
+});

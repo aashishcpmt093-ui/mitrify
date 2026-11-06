@@ -50,6 +50,8 @@ export function buildSnapshot(
   now: Date,
   /** Providers the owner has switched off: their models are not counted, so they cannot crowd others out of the pool. */
   switchedOff: ReadonlySet<string> = new Set(),
+  /** Providers the owner limited to their free models: paid models of these providers are left out. */
+  freeOnly: ReadonlySet<string> = new Set(),
 ): Omit<CatalogSnapshot, "id"> {
   const weights = rankingWeights(totals);
   const providers = new Map(config.providers.map((p) => [p.id, p]));
@@ -65,7 +67,9 @@ export function buildSnapshot(
         ? `provider ${prov.status}`
         : switchedOff.has(p.provider)
           ? "provider switched off by the owner"
-          : p.blocked
+          : freeOnly.has(p.provider) && !isFreePrice(p)
+            ? "paid model of a provider limited to free models"
+            : p.blocked
           ? "skipped by the owner"
           : !(p.enabled && p.qualityPassed) && !(config.autoSelect && p.auto)
             ? "not switched On + Pool, and not an automatic model"

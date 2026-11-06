@@ -139,7 +139,7 @@ export class Gateway {
   private inflightBytes = 0;
   private snapshot: CatalogSnapshot | null = null;
   private clientCache = new Map<string, { at: number; rec: ClientRecord | null }>();
-  private settingsCache: { at: number; kill: boolean; disabled: Set<string> } | null = null;
+  private settingsCache: { at: number; kill: boolean; disabled: Set<string>; freeOnly: Set<string> } | null = null;
   private spend: { day: number; at: number; global: number; perClient: Map<string, number> } | null = null;
   private pricesCache: { at: number; list: PriceEntry[] } | null = null;
 
@@ -189,10 +189,12 @@ export class Gateway {
     if (this.settingsCache && t - this.settingsCache.at < 5_000) return this.settingsCache;
     const kill = (await this.store.getSetting<boolean>("kill.global")) === true;
     const disabled = new Set<string>();
+    const freeOnly = new Set<string>();
     for (const p of this.config.providers) {
       if ((await this.store.getSetting<boolean>(`provider.disabled.${p.id}`)) === true) disabled.add(p.id);
+      if ((await this.store.getSetting<boolean>(`provider.freeOnly.${p.id}`)) === true) freeOnly.add(p.id);
     }
-    this.settingsCache = { at: t, kill, disabled };
+    this.settingsCache = { at: t, kill, disabled, freeOnly };
     return this.settingsCache;
   }
 
@@ -355,7 +357,7 @@ export class Gateway {
       this.config.providers.filter((p) => this.providerUsable(p, sw.disabled) && (!resale || p.resaleApproved)).map((p) => [p.id, p]),
     );
     const data = (await this.prices())
-      .filter((p) => p.enabled && usable.has(p.provider))
+      .filter((p) => p.enabled && usable.has(p.provider) && !(sw.freeOnly.has(p.provider) && !isFreePrice(p)))
       .map((p) => ({ id: p.upstreamModel, object: "model", owned_by: p.provider, mitrify_provider: p.provider }));
     data.unshift({ id: AUTO_MODEL, object: "model", owned_by: "mitrify", mitrify_provider: "auto" });
     sendJson(res, 200, { object: "list", data });
@@ -521,6 +523,7 @@ export class Gateway {
         (!wanted || p.provider === wanted) &&
         byId.has(p.provider) &&
         this.providerUsable(byId.get(p.provider)!, sw.disabled) &&
+        !(sw.freeOnly.has(p.provider) && !isFreePrice(p)) &&
         (!resaleOnly || byId.get(p.provider)!.resaleApproved),
     );
     if (matches.length === 0) {
@@ -938,8 +941,9 @@ export class Gateway {
     const t = this.now();
     const prices = await this.store.listPrices();
     const totals = await this.store.tokenTotalsSince(new Date(t - 7 * 24 * 60 * 60 * 1000));
-    const off = (await this.switches()).disabled;
-    const snap = await this.store.saveSnapshot(buildSnapshot(prices, this.config, totals, new Date(t), off));
+    const sw = await this.switches();
+    const off = sw.disabled;
+    const snap = await this.store.saveSnapshot(buildSnapshot(prices, this.config, totals, new Date(t), off, sw.freeOnly));
     this.snapshot = snap;
     this.pricesCache = null;
     this.log(`catalog snapshot #${snap.id}: ${snap.entries.length} models in the pool (${snap.weights.source} weights)`);
@@ -1087,6 +1091,22 @@ export class Gateway {
       }
       return sendJson(res, 200, { provider: p.id, disabled: on, poolModels: pool });
     }
+    if (seg[1] === "providers" && seg[2] && seg[3] === "free-only" && req.method === "POST") {
+      const p = this.config.providers.find((x) => x.id === seg[2]);
+      const on = (body as { freeOnly?: unknown })?.freeOnly;
+      if (!p) return sendError(res, 404, "not_found", "Unknown provider.");
+      if (typeof on !== "boolean") return sendError(res, 400, "invalid_request", 'Send {"freeOnly": true} or false.');
+      await this.store.setSetting(`provider.freeOnly.${p.id}`, on);
+      this.invalidateCaches();
+      await this.audit("owner", on ? "provider_free_only_on" : "provider_free_only_off", ip, { provider: p.id });
+      let pool: number | null = null;
+      try {
+        pool = (await this.refreshCatalog()).entries.length;
+      } catch (e) {
+        this.log(`pool rebuild after free-only change for ${p.id} failed: ${(e as Error).message}`);
+      }
+      return sendJson(res, 200, { provider: p.id, freeOnly: on, poolModels: pool });
+    }
     if (seg[1] === "providers" && seg[2] && seg[3] === "health" && req.method === "POST") {
       const p = this.config.providers.find((x) => x.id === seg[2]);
       if (!p) return sendError(res, 404, "not_found", "Unknown provider.");
@@ -1192,6 +1212,7 @@ export class Gateway {
       providers: this.config.providers.map((p) => ({
         ...describeProvider(p),
         disabledByAdmin: sw.disabled.has(p.id),
+        freeOnly: sw.freeOnly.has(p.id),
         circuit: this.breakers.get(p.id)!.state,
         inUse: this.semaphores.get(p.id)!.inUse,
         queued: this.semaphores.get(p.id)!.queued,
