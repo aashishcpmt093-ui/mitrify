@@ -958,3 +958,53 @@ describe("a provider with no free models", () => {
     }
   });
 });
+
+describe("answer time budget", () => {
+  const hangThenAnswer = (res: import("http").ServerResponse) => setTimeout(() => (res.writableEnded || okRes(res)), 9_000);
+
+  async function budgetSetup(models: [string, number, number][], handler: (m: string, res: import("http").ServerResponse) => void) {
+    const up = await mockUpstream((req, res) => handler(modelOf(req), res));
+    const g = await startGateway(
+      baseEnv({
+        MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY,
+        MITRIFY_SURPLUS_BASE_URL: up.url,
+        MITRIFY_SURPLUS_APPROVED: "1",
+        MITRIFY_SURPLUS_NO_FREE_MODELS: "0",
+        MITRIFY_GATEWAY_ANSWER_BUDGET_MS: "6000",
+        MITRIFY_GATEWAY_LAST_RESORT_MS: "3000",
+      }),
+    );
+    await admin(g.url, "/admin/prices", { method: "PUT", body: models.map(([m, i, o]) => price("surplus", m, i, o, { enabled: true })) });
+    await admin(g.url, "/admin/catalog/refresh", { body: {} });
+    const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+    return { g, up, key, close: async () => (await g.close(), await up.close()) };
+  }
+
+  it("slow free models cannot use up the time: a paid model keeps its share and answers within the budget", async () => {
+    const t = await budgetSetup([["free-1", 0, 0], ["free-2", 0, 0], ["paid-1", 0.1, 0.1]], (m, res) => (m.startsWith("free") ? hangThenAnswer(res) : okRes(res)));
+    try {
+      const t0 = Date.now();
+      const r = await chat(t.g.url, t.key, AUTO);
+      const took = Date.now() - t0;
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get("x-mitrify-model"), "paid-1");
+      assert.ok(took < 5500, `took ${took} ms`);
+      assert.match(r.headers.get("x-mitrify-trail") ?? "", /free-1%3Atimeout|free-1:timeout/);
+    } finally {
+      await t.close();
+    }
+  });
+
+  it("with only slow free models the request ends with a clear 504 within the budget, not after every model's own timeout", async () => {
+    const t = await budgetSetup([["free-1", 0, 0], ["free-2", 0, 0], ["free-3", 0, 0]], (_m, res) => hangThenAnswer(res));
+    try {
+      const t0 = Date.now();
+      const r = await chat(t.g.url, t.key, AUTO);
+      const took = Date.now() - t0;
+      assert.equal(r.status, 504);
+      assert.ok(took < 8000, `took ${took} ms`);
+    } finally {
+      await t.close();
+    }
+  });
+});
