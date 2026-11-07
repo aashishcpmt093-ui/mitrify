@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 import { UPSTREAM_KEY, admin, baseEnv, chat, createKey, mockUpstream, price, startGateway } from "./helpers";
 
@@ -86,4 +87,61 @@ describe("long and slow replies arrive whole", () => {
       }
     });
   }
+});
+
+describe("huge replies arrive whole", () => {
+  const sha = (b: string | Buffer) => createHash("sha256").update(b).digest("hex");
+
+  async function huge(model: string, run: (t: Awaited<ReturnType<typeof setup>>) => Promise<void>, handler: Parameters<typeof mockUpstream>[0]) {
+    const t = await setup(model, 0.1, 0.2, handler);
+    try {
+      await run(t);
+    } finally {
+      await t.close();
+    }
+  }
+
+  it("a one-million-word plain reply (about 7 MB), byte for byte, and billed from its usage", async () => {
+    const text = Array.from({ length: 1_000_000 }, (_, i) => `w${i}`).join(" ");
+    const body = JSON.stringify({ choices: [{ message: { content: text }, finish_reason: "stop" }], usage: { prompt_tokens: 5, completion_tokens: 1_000_000 } });
+    const want = sha(body);
+    await huge("m-big", async (t) => {
+      const r = await chat(t.g.url, t.key, '{"model":"m-big","messages":[]}');
+      assert.equal(r.status, 200);
+      assert.equal(sha(Buffer.from(await r.arrayBuffer())), want);
+      assert.equal(t.g.store.usage.at(-1)!.outputTokens, 1_000_000);
+    }, (_req, res) => (res.writeHead(200, { "content-type": "application/json" }), res.end(body)));
+  });
+
+  it("a one-million-word streamed reply (100,000 events), byte for byte and in order", async () => {
+    const events: string[] = [];
+    for (let i = 0; i < 100_000; i++) events.push(`data: {"choices":[{"delta":{"content":"${Array.from({ length: 10 }, (_, j) => `w${i * 10 + j}`).join(" ")} "}}]}\n\n`);
+    events.push('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n', 'data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":1000000}}\n\n', "data: [DONE]\n\n");
+    const all = events.join("");
+    const want = sha(all);
+    await huge("m-big", async (t) => {
+      const r = await chat(t.g.url, t.key, '{"model":"mitrify/auto-cheap","stream":true,"stream_options":{"include_usage":true},"messages":[]}');
+      assert.equal(r.status, 200);
+      assert.equal(sha(Buffer.from(await r.arrayBuffer())), want);
+      assert.equal(t.g.store.usage.at(-1)!.outputTokens, 1_000_000);
+      assert.equal(t.g.store.usage.at(-1)!.outcome, "completed");
+    }, async (_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      for (let i = 0; i < events.length; i += 2000) {
+        if (!res.write(events.slice(i, i + 2000).join(""))) await new Promise((r) => res.once("drain", r));
+      }
+      res.end();
+    });
+  });
+
+  it("a plain reply bigger than the 32 MB the gateway keeps a copy of for billing still arrives whole", async () => {
+    const big = "x".repeat(40 * 1024 * 1024);
+    const body = `{"choices":[{"message":{"content":"${big}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":10000000}}`;
+    const want = sha(body);
+    await huge("m-big", async (t) => {
+      const r = await chat(t.g.url, t.key, '{"model":"m-big","messages":[]}');
+      assert.equal(r.status, 200);
+      assert.equal(sha(Buffer.from(await r.arrayBuffer())), want);
+    }, (_req, res) => (res.writeHead(200, { "content-type": "application/json" }), res.end(body)));
+  });
 });
