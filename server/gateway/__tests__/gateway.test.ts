@@ -608,3 +608,37 @@ describe("config", () => {
     assert.equal(e.providers[0].status, "pending_approval");
   });
 });
+
+describe("recent calls for the owner", () => {
+  it("lists calls to /v1 with how they ended, including ones refused at the door, without prompts or keys", async () => {
+    const up = await mockUpstream((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"choices":[{"message":{"content":"SECRET-REPLY"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}');
+    });
+    const g = await startGateway(baseEnv({ MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY, MITRIFY_SURPLUS_BASE_URL: up.url, MITRIFY_SURPLUS_APPROVED: "1" }));
+    try {
+      await admin(g.url, "/admin/prices", { method: "PUT", body: [price("surplus", "m-1", 0.1, 0.1, { enabled: true })] });
+      const key = await createKey(g.url, { name: "navbharatai-chat" });
+      const k = (key as { key: string }).key;
+      assert.equal((await chat(g.url, k, '{"model":"m-1","messages":[{"role":"user","content":"SECRET-PROMPT"}]}')).status, 200);
+      assert.equal((await chat(g.url, "mtf_live_" + "x".repeat(40), '{"model":"m-1","messages":[]}')).status, 401);
+      assert.equal((await chat(g.url, k, '{"model":"m-1","stream":true,"messages":[]}')).status, 400); // refused at the door: stream without usage
+      const r = await admin(g.url, "/admin/recent");
+      assert.equal(r.status, 200);
+      const text = await r.text();
+      const calls = JSON.parse(text).calls as { client: string | null; status: number; error: string | null; provider: string | null; model: string | null }[];
+      assert.equal(calls.length, 3);
+      assert.deepEqual(calls.map((c) => c.status), [400, 401, 200]); // newest first
+      assert.equal(calls[0].client, "navbharatai-chat");
+      assert.equal(calls[0].error, "usage_required");
+      assert.equal(calls[1].client, null);
+      assert.equal(calls[1].error, "invalid_api_key");
+      assert.deepEqual([calls[2].provider, calls[2].model], ["surplus", "m-1"]);
+      assert.ok(!text.includes("SECRET-PROMPT") && !text.includes("SECRET-REPLY") && !text.includes(k) && !text.includes(UPSTREAM_KEY));
+      assert.equal((await fetch(g.url + "/admin/recent")).status >= 400, true); // not open to the public
+    } finally {
+      await g.close();
+      await up.close();
+    }
+  });
+});

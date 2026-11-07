@@ -388,17 +388,75 @@ export class Gateway {
     return { record: rec, customer };
   }
 
+  /**
+   * The last calls to /v1, kept in memory for the owner page (lost on restart): what came in, who sent it, and
+   * how it ended, including calls that were refused before anything was sent on. No prompts, replies or keys.
+   */
+  private recentCalls: {
+    at: string;
+    path: string;
+    client: string | null;
+    status: number;
+    error: string | null;
+    provider: string | null;
+    model: string | null;
+    attempts: number | null;
+    ms: number;
+  }[] = [];
+
+  private watchCall(res: ServerResponse, path: string, who: { name: string | null }) {
+    const t0 = this.now();
+    // The route headers are given to writeHead directly (getHeader cannot see those), so read them on the way.
+    const seen: Record<string, string> = {};
+    const writeHead = res.writeHead.bind(res) as (...a: unknown[]) => ServerResponse;
+    res.writeHead = ((status: unknown, ...rest: unknown[]) => {
+      const hs = rest.find((x) => x && typeof x === "object" && !Array.isArray(x)) as Record<string, unknown> | undefined;
+      for (const [k, v] of Object.entries(hs ?? {})) if (k.toLowerCase().startsWith("x-mitrify-") && typeof v === "string") seen[k.toLowerCase()] = v;
+      return writeHead(status, ...rest);
+    }) as typeof res.writeHead;
+    res.on("close", () => {
+      const h = (n: string) => {
+        const v = seen[n] ?? res.getHeader(n);
+        return typeof v === "string" ? v : null;
+      };
+      let model: string | null = null;
+      try {
+        const m = h("x-mitrify-model");
+        model = m ? decodeURIComponent(m) : null;
+      } catch {
+        model = null;
+      }
+      const attempts = Number(h("x-mitrify-attempts"));
+      this.recentCalls.push({
+        at: new Date(t0).toISOString(),
+        path,
+        client: who.name,
+        status: res.statusCode,
+        error: h("x-mitrify-error"),
+        provider: h("x-mitrify-provider"),
+        model,
+        attempts: Number.isFinite(attempts) && attempts > 0 ? attempts : null,
+        ms: this.now() - t0,
+      });
+      if (this.recentCalls.length > 100) this.recentCalls.splice(0, this.recentCalls.length - 100);
+    });
+  }
+
   private async handleClient(req: IncomingMessage, res: ServerResponse, path: string) {
+    const who = { name: null as string | null };
+    if (path === "/v1/models" || path === "/v1/chat/completions") this.watchCall(res, path, who);
     if (path === "/v1/models") {
       if (req.method !== "GET") return sendError(res, 405, "method_not_allowed", "Use GET.");
       const c = await this.authenticateClient(req, res, "models:read");
       if (!c) return;
+      who.name = c.record.name + (c.customer ? " (customer)" : "");
       return this.listModels(res, !!c.customer);
     }
     if (path === "/v1/chat/completions") {
       if (req.method !== "POST") return sendError(res, 405, "method_not_allowed", "Use POST.");
       const c = await this.authenticateClient(req, res, "chat:write");
       if (!c) return;
+      who.name = c.record.name + (c.customer ? " (customer)" : "");
       return this.chat(req, res, c);
     }
     return sendError(res, 404, "not_found", "Only /v1/chat/completions and /v1/models are available in this pilot.");
@@ -1164,6 +1222,7 @@ export class Gateway {
     const m = `${req.method} /${seg.slice(1).join("/")}`;
 
     if (m === "GET /status") return sendJson(res, 200, await this.status());
+    if (m === "GET /recent") return sendJson(res, 200, { calls: [...this.recentCalls].reverse().slice(0, 50) });
     if (m === "GET /keys") return sendJson(res, 200, { keys: (await this.store.listClients()).map(publicClient) });
     if (m === "POST /keys") return this.createKey(res, body, ip);
     if (seg[1] === "keys" && seg[2] && seg[3] === "revoke" && req.method === "POST") return this.revokeKey(res, seg[2], ip);
