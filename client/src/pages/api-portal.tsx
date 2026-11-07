@@ -702,6 +702,56 @@ function TryMessage({ code, onDone }: { code: string; onDone: () => void }) {
 
 // ── Owner: API keys (for NavBharatAI and other apps of yours) ────────────────────────────────────
 
+function RecentCalls({ code }: { code: string }) {
+  const [calls, setCalls] = useState<Obj[] | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      setCalls((await call("/owner/recent", { code })).calls ?? []);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, [code]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const time = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour12: false });
+  return (
+    <Card title="Recent calls (from apps like NavBharatAI)" collapsible defaultOpen={false}>
+      <p className="text-sm text-muted-foreground">
+        The last 50 calls to mitrify.com/v1 since the site last started, with how each ended. Refused calls show the reason. No messages or keys are
+        kept here.
+      </p>
+      <button className={btn2} disabled={busy} onClick={() => void load()}>
+        Refresh
+      </button>
+      {err && <Notice kind="error">{err}</Notice>}
+      <ul className="space-y-2">
+        {(calls ?? []).map((c, i) => (
+          <li key={i} className="rounded border p-2 text-xs break-all">
+            <p className="font-medium">
+              {time(c.at)} · {c.client ?? "unknown key"} · {c.path.replace("/v1/", "")} ·{" "}
+              <span className={c.status < 400 ? "text-green-700" : "text-red-700"}>HTTP {c.status}</span>
+            </p>
+            <p className="text-muted-foreground">
+              {c.error ? `reason: ${c.error} · ` : ""}
+              {c.provider ? `${c.provider} / ${c.model ?? "?"} · ` : ""}
+              {c.attempts ? `${c.attempts} tries · ` : ""}
+              {c.ms} ms
+            </p>
+          </li>
+        ))}
+        {calls && calls.length === 0 && <li className="text-sm text-muted-foreground">No calls yet since the last start.</li>}
+      </ul>
+    </Card>
+  );
+}
+
 function OwnerKeys({ code }: { code: string }) {
   const [keys, setKeys] = useState<Obj[]>([]);
   const [name, setName] = useState("");
@@ -932,6 +982,7 @@ function Owner({ code, onLeave }: { code: string; onLeave: () => void }) {
 
       {status && <Prices code={code} providers={status.providers} cooling={status.cooling ?? []} />}
       {status && <TryMessage code={code} onDone={load} />}
+      {status && <RecentCalls code={code} />}
       {status && <OwnerKeys code={code} />}
 
       <Card title={`Customers (${customers.length})`}>
