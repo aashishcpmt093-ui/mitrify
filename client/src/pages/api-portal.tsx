@@ -742,6 +742,10 @@ function RecentCalls({ code }: { code: string }) {
               {c.error ? `reason: ${c.error} · ` : ""}
               {c.provider ? `${c.provider} / ${c.model ?? "?"} · ` : ""}
               {c.attempts ? `${c.attempts} tries · ` : ""}
+              {c.finish ? `ended: ${c.finish}${c.finish === "length" ? " (CUT at the app's max_tokens limit)" : ""} · ` : ""}
+              {c.outputTokens !== null && c.outputTokens !== undefined ? `reply ${c.outputTokens} tokens · ` : ""}
+              {c.maxTokens !== null && c.maxTokens !== undefined ? `app's limit ${c.maxTokens} · ` : c.status < 400 && c.path.endsWith("completions") ? "app sent no limit · " : ""}
+              {c.outcome && c.outcome !== "completed" ? `outcome: ${c.outcome} · ` : ""}
               {c.ms} ms
             </p>
           </li>

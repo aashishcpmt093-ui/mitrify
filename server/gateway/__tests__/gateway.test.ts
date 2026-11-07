@@ -642,3 +642,38 @@ describe("recent calls for the owner", () => {
     }
   });
 });
+
+describe("why a reply ended", () => {
+  it("Recent calls show the finish reason and the app's own max_tokens limit, for plain and streamed replies", async () => {
+    const up = await mockUpstream((req, res) => {
+      const stream = JSON.parse(req.body.toString()).stream === true;
+      if (stream) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write('data: {"choices":[{"delta":{"content":"a"}}]}\n\n');
+        res.write('data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n');
+        res.write('data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":9}}\n\n');
+        res.end("data: [DONE]\n\n");
+      } else {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end('{"choices":[{"message":{"content":"a"},"finish_reason":"length"}],"usage":{"prompt_tokens":3,"completion_tokens":7}}');
+      }
+    });
+    const g = await startGateway(baseEnv({ MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY, MITRIFY_SURPLUS_BASE_URL: up.url, MITRIFY_SURPLUS_APPROVED: "1" }));
+    try {
+      await admin(g.url, "/admin/prices", { method: "PUT", body: [price("surplus", "m-1", 0.1, 0.1, { enabled: true })] });
+      const k = (await createKey(g.url)).key;
+      assert.equal((await (await chat(g.url, k, '{"model":"m-1","max_tokens":7,"messages":[]}')).text()).includes("length"), true);
+      const s = await chat(g.url, k, '{"model":"m-1","stream":true,"max_completion_tokens":9,"stream_options":{"include_usage":true},"messages":[]}');
+      await s.text();
+      await new Promise((r) => setTimeout(r, 50));
+      const calls = (await (await admin(g.url, "/admin/recent")).json()).calls as { finish: string | null; outputTokens: number | null; maxTokens: number | null; outcome: string | null }[];
+      assert.deepEqual(calls.map((c) => [c.finish, c.outputTokens, c.maxTokens, c.outcome]), [
+        ["length", 9, 9, "completed"],
+        ["length", 7, 7, "completed"],
+      ]);
+    } finally {
+      await g.close();
+      await up.close();
+    }
+  });
+});

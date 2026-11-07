@@ -402,6 +402,10 @@ export class Gateway {
     model: string | null;
     attempts: number | null;
     ms: number;
+    finish: string | null;
+    outputTokens: number | null;
+    maxTokens: number | null;
+    outcome: string | null;
   }[] = [];
 
   private watchCall(res: ServerResponse, path: string, who: { name: string | null }) {
@@ -427,7 +431,12 @@ export class Gateway {
         model = null;
       }
       const attempts = Number(h("x-mitrify-attempts"));
+      const info = (res as unknown as { mitrifyInfo?: { finish: string | null; outputTokens: number | null; maxTokens: number | null; outcome: string | null } }).mitrifyInfo;
       this.recentCalls.push({
+        finish: info?.finish ?? null,
+        outputTokens: info?.outputTokens ?? null,
+        maxTokens: info?.maxTokens ?? null,
+        outcome: info?.outcome ?? null,
         at: new Date(t0).toISOString(),
         path,
         client: who.name,
@@ -552,7 +561,8 @@ export class Gateway {
     this.inflight++;
     this.inflightBytes += raw.length;
     try {
-      await this.forward({ req, res, client, raw, requestId, model, mode, stream, started, candidates: route.candidates });
+      const mt = parsed.max_tokens ?? parsed.max_completion_tokens;
+      await this.forward({ req, res, client, raw, requestId, model, mode, stream, started, candidates: route.candidates, maxTokens: typeof mt === "number" ? mt : null });
     } finally {
       this.inflight--;
       this.inflightBytes -= raw.length;
@@ -681,6 +691,8 @@ export class Gateway {
     stream: boolean;
     started: number;
     candidates: Candidate[];
+    /** The reply-length limit the client asked for (read only, for the owner's Recent calls). */
+    maxTokens?: number | null;
   }) {
     const { req, res, client, raw, requestId, mode } = o;
     const clientGone = new AbortController();
@@ -965,14 +977,18 @@ export class Gateway {
 
       res.end();
       let usage: Usage | null = null;
+      let finish: string | null = null;
       if (watcher) {
         watcher.end();
         usage = watcher.usage;
+        finish = watcher.finishReason;
         if (up.ok && !watcher.sawDone && !watcher.sawFinishReason) outcome = "ended_without_done";
       } else if (up.ok) {
         try {
           const parsed = JSON.parse(Buffer.concat(copy).toString("utf8"));
           usage = readUsage(parsed);
+          const f = (parsed as { choices?: { finish_reason?: unknown }[] })?.choices?.[0]?.finish_reason;
+          if (typeof f === "string") finish = f.slice(0, 40);
           // HTTP 200 with an error inside is a failed call, not a success.
           if (isErrorBody(parsed)) {
             outcome = "upstream_error";
@@ -986,6 +1002,7 @@ export class Gateway {
       if (!up.ok) outcome = "upstream_error";
       if (up.status >= 500) breaker.failure();
       else breaker.success();
+      (res as unknown as { mitrifyInfo?: unknown }).mitrifyInfo = { finish, outputTokens: usage?.outputTokens ?? null, maxTokens: o.maxTokens ?? null, outcome };
       return this.record(o, cand, attempts, up.status, outcome, usage, firstByteMs);
     }
 
