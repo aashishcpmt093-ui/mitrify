@@ -712,12 +712,18 @@ export class Gateway {
     const remaining = [...o.candidates];
     const maxAttempts = this.config.maxAttempts;
     const free = (c: Candidate) => !!c.price && isFreePrice(c.price);
-    const usable = (c: Candidate) =>
+    const usableNow = (c: Candidate) =>
       (mode !== "auto-cheap" ||
         (!this.isCooling(this.coolKey(c)) &&
           !(free(c) && this.isCooling(this.freeTierKey(c.provider.id))) &&
           !(free(c) && !this.freeQuotaCheck(c.provider).ok))) &&
       this.breakers.get(c.provider.id)!.available();
+    // Time: a request has a budget to find a model that starts answering. Free models may only use the part of
+    // it that leaves the reserve for a paid model (when one is left), so slow free models cannot eat all the time.
+    const deadline = o.started + this.config.answerBudgetMs;
+    const timeLeft = () => deadline - this.now();
+    const freeRoom = () => (remaining.some((c) => !free(c) && usableNow(c)) ? timeLeft() - this.config.lastResortReserveMs : timeLeft());
+    const usable = (c: Candidate) => usableNow(c) && !(mode === "auto-cheap" && free(c) && freeRoom() < 500);
     // In the automatic mode, a failure BEFORE any reply bytes were sent can move on to the next model when the
     // model is free (nothing is spent), or when the owner allowed it for paid ones too (MITRIFY_GATEWAY_RETRY_PAID=1).
     const lenient = (c: Candidate) => mode === "auto-cheap" && (free(c) || this.config.retryPaid);
@@ -739,6 +745,10 @@ export class Gateway {
       return best;
     };
     while (attempts < maxAttempts) {
+      if (mode === "auto-cheap" && attempts > 0 && timeLeft() < 500) {
+        lastError = { status: 504, code: "answer_budget_used", message: "No model started answering in time. Please try again." };
+        break;
+      }
       let idx = pick(usable);
       if (idx < 0) break;
       if (mode === "auto-cheap" && attempts === maxAttempts - 1 && free(remaining[idx])) {
@@ -777,7 +787,12 @@ export class Gateway {
       const onClientGone = () => abort("client");
       clientGone.signal.addEventListener("abort", onClientGone);
       const totalTimer = setTimeout(() => abort("total_timeout"), this.config.totalTimeoutMs);
-      const waitMs = mode === "auto-cheap" && free(cand) ? Math.min(this.config.freeFirstByteTimeoutMs, this.config.firstByteTimeoutMs) : this.config.firstByteTimeoutMs;
+      const waitMs =
+        mode !== "auto-cheap"
+          ? this.config.firstByteTimeoutMs
+          : free(cand)
+            ? Math.min(this.config.freeFirstByteTimeoutMs, this.config.firstByteTimeoutMs, Math.max(500, freeRoom()))
+            : Math.min(this.config.firstByteTimeoutMs, Math.max(1000, timeLeft()));
       let timer = setTimeout(() => abort("first_byte_timeout"), waitMs);
       const cleanup = () => {
         clearTimeout(timer);

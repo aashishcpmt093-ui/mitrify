@@ -70,6 +70,13 @@ export interface GatewayConfig {
   poolPaid: number;
   /** A free model that has not started answering after this long is skipped (automatic mode). */
   freeFirstByteTimeoutMs: number;
+  /**
+   * Automatic mode: the time a request has, from arrival, to find a model that starts answering. Attempts share
+   * it, so a run of slow free models cannot use it all up (and make the app or the web front time out first).
+   */
+  answerBudgetMs: number;
+  /** Part of that time always kept for a paid model, when one is left in the pool. */
+  lastResortReserveMs: number;
   /** Also move on from a PAID model that failed before answering (could, rarely, run a paid job twice). */
   retryPaid: boolean;
   /** Models imported from a provider's own price list join the cheapest pool by themselves (free first). */
@@ -243,6 +250,8 @@ export function loadConfig(env: Env = process.env): GatewayConfig {
     poolSize: int(env, "MITRIFY_GATEWAY_POOL_SIZE", 40, 1),
     poolPaid: int(env, "MITRIFY_GATEWAY_POOL_PAID", 8, 0),
     freeFirstByteTimeoutMs: int(env, "MITRIFY_GATEWAY_FREE_FIRST_BYTE_TIMEOUT_MS", 45_000, 200),
+    answerBudgetMs: int(env, "MITRIFY_GATEWAY_ANSWER_BUDGET_MS", 100_000, 1000),
+    lastResortReserveMs: int(env, "MITRIFY_GATEWAY_LAST_RESORT_MS", 45_000, 0),
     retryPaid: env.MITRIFY_GATEWAY_RETRY_PAID === "1",
     autoSelect: env.MITRIFY_GATEWAY_AUTO_SELECT !== "0",
     minContext: int(env, "MITRIFY_GATEWAY_MIN_CONTEXT", 8000, 0),
