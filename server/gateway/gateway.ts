@@ -312,6 +312,10 @@ export class Gateway {
     if (p.freePerDay !== null) void this.store.setSetting(`freeQuota.${p.id}`, r).catch(() => {});
   }
 
+  /** A provider refused Mitrify's own account (bad key, no credit): set aside as a whole for a while. */
+  private providerKey(providerId: string) {
+    return `${providerId}\u0000*provider*`;
+  }
   private freeTierKey(providerId: string) {
     return `${providerId}\u0000*free*`;
   }
@@ -610,6 +614,7 @@ export class Gateway {
         if (resaleOnly && !p.resaleApproved) continue;
         if (stream && !e.supportsStreaming) continue;
         if (!this.breakers.get(p.id)!.available()) continue;
+        if (this.isCooling(this.providerKey(p.id))) continue;
         const cand = { provider: p, upstreamModel: e.upstreamModel, price: e };
         const c = this.cooling.get(this.coolKey(cand));
         if (c && c.until > this.now()) {
@@ -715,6 +720,7 @@ export class Gateway {
     const usableNow = (c: Candidate) =>
       (mode !== "auto-cheap" ||
         (!this.isCooling(this.coolKey(c)) &&
+          !this.isCooling(this.providerKey(c.provider.id)) &&
           !(free(c) && this.isCooling(this.freeTierKey(c.provider.id))) &&
           !(free(c) && !this.freeQuotaCheck(c.provider).ok))) &&
       this.breakers.get(c.provider.id)!.available();
@@ -844,6 +850,18 @@ export class Gateway {
       }
 
       trail.push(`${cand.upstreamModel}:${up.status}`);
+      // The provider refused Mitrify's OWN account (wrong key, no credit left). That says nothing about this
+      // request, so the whole provider is set aside for a while and the next provider answers instead. The app
+      // never sees a 401/402 meant for the owner (a 402 would look like the app's own credit running out).
+      if (mode === "auto-cheap" && (up.status === 401 || up.status === 402)) {
+        this.coolDown(this.providerKey(cand.provider.id), 10 * 60_000, "error");
+        this.log(`${cand.provider.id} answered ${up.status}: key or credit problem, set aside for 10 minutes`);
+        breaker.success();
+        await up.body?.cancel().catch(() => {});
+        cleanup();
+        lastError = { status: 503, code: "provider_account_problem", message: "A provider refused Mitrify's account (key or credit). Other providers are tried first." };
+        continue;
+      }
       // A FREE model that fails before sending anything (a provider error, a bad-request refusal such as a
       // model that does not take a system prompt, a timeout at its provider) costs nothing, so the automatic
       // mode moves on to the next model. A paid model is only passed on after a limit, a 503 or a missing
@@ -1408,6 +1426,7 @@ export class Gateway {
         ...describeProvider(p),
         disabledByAdmin: sw.disabled.has(p.id),
         freeOnly: sw.freeOnly.has(p.id),
+        pausedSeconds: this.isCooling(this.providerKey(p.id)) ? Math.ceil((this.cooling.get(this.providerKey(p.id))!.until - this.now()) / 1000) : 0,
         freeUsage:
           p.freePerDay === null && p.freePerMinute === null
             ? null

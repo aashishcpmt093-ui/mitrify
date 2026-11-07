@@ -925,7 +925,8 @@ function Owner({ code, onLeave }: { code: string; onLeave: () => void }) {
             {status.providers.map((p: Obj) => (
               <li key={p.id}>
                 <b>{p.label}</b>: {p.status.replace("_", " ")}
-                {p.disabledByAdmin ? " (switched off)" : ""} · resale {p.resaleApproved ? "approved" : "not approved"}
+                {p.disabledByAdmin ? " (switched off)" : ""}
+                {p.pausedSeconds > 0 ? ` (PAUSED ${Math.ceil(p.pausedSeconds / 60)} min: it refused our key or credit, check its balance)` : ""} · resale {p.resaleApproved ? "approved" : "not approved"}
                 {(p.status === "active" || p.disabledByAdmin) && (
                   <button
                     className={`${btn2} ml-2`}

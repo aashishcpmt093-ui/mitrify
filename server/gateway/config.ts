@@ -252,7 +252,9 @@ export function loadConfig(env: Env = process.env): GatewayConfig {
     freeFirstByteTimeoutMs: int(env, "MITRIFY_GATEWAY_FREE_FIRST_BYTE_TIMEOUT_MS", 45_000, 200),
     answerBudgetMs: int(env, "MITRIFY_GATEWAY_ANSWER_BUDGET_MS", 100_000, 1000),
     lastResortReserveMs: int(env, "MITRIFY_GATEWAY_LAST_RESORT_MS", 45_000, 0),
-    retryPaid: env.MITRIFY_GATEWAY_RETRY_PAID === "1",
+    // On by default: a paid model that failed before sending any reply (5xx, silence, an error or empty body) moves
+    // on to the next model. Set MITRIFY_GATEWAY_RETRY_PAID=0 to never run a paid request twice.
+    retryPaid: env.MITRIFY_GATEWAY_RETRY_PAID !== "0",
     autoSelect: env.MITRIFY_GATEWAY_AUTO_SELECT !== "0",
     minContext: int(env, "MITRIFY_GATEWAY_MIN_CONTEXT", 8000, 0),
     maxPriceAgeDays: int(env, "MITRIFY_GATEWAY_MAX_PRICE_AGE_DAYS", 30, 1),
