@@ -1008,3 +1008,77 @@ describe("answer time budget", () => {
     }
   });
 });
+
+describe("when a provider refuses our account, and when a paid model fails", () => {
+  it("a 402 or 401 from a provider sets that provider aside and the other one answers; the app never sees the 402", async () => {
+    let aCalls = 0;
+    const a = await mockUpstream((_req, res) => (aCalls++, res.writeHead(402, { "content-type": "application/json" }), res.end('{"error":{"code":"insufficient_credit"}}')));
+    const b = await mockUpstream((_req, res) => okRes(res));
+    const g = await startGateway(
+      baseEnv({
+        MITRIFY_ROUTERONE_API_KEY: UPSTREAM_KEY, MITRIFY_ROUTERONE_BASE_URL: a.url, MITRIFY_ROUTERONE_APPROVED: "1",
+        MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY, MITRIFY_SURPLUS_BASE_URL: b.url, MITRIFY_SURPLUS_APPROVED: "1",
+      }),
+    );
+    try {
+      await admin(g.url, "/admin/prices", { method: "PUT", body: [price("routerone", "cheap-a", 0.01, 0.01, { enabled: true }), price("surplus", "dear-b", 1, 1, { enabled: true })] });
+      await admin(g.url, "/admin/catalog/refresh", { body: {} });
+      const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+      const r1 = await chat(g.url, key, AUTO);
+      assert.equal(r1.status, 200);
+      assert.equal(r1.headers.get("x-mitrify-provider"), "surplus");
+      assert.match(decodeURIComponent(r1.headers.get("x-mitrify-trail") ?? ""), /cheap-a:402/);
+      const r2 = await chat(g.url, key, AUTO);
+      assert.equal(r2.status, 200);
+      assert.equal(aCalls, 1); // set aside: not asked again
+      const st = await (await admin(g.url, "/admin/status")).json();
+      assert.ok(st.providers.find((p: { id: string }) => p.id === "routerone").pausedSeconds > 0);
+      assert.equal(st.providers.find((p: { id: string }) => p.id === "surplus").pausedSeconds, 0);
+    } finally {
+      await g.close();
+      await a.close();
+      await b.close();
+    }
+  });
+
+  it("if the only provider refuses our account the app gets a 503, not a 402 that looks like its own credit", async () => {
+    const a = await mockUpstream((_req, res) => (res.writeHead(402, { "content-type": "application/json" }), res.end('{"error":"no credit"}')));
+    const g = await startGateway(baseEnv({ MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY, MITRIFY_SURPLUS_BASE_URL: a.url, MITRIFY_SURPLUS_APPROVED: "1" }));
+    try {
+      await admin(g.url, "/admin/prices", { method: "PUT", body: [price("surplus", "m", 0.1, 0.1, { enabled: true })] });
+      await admin(g.url, "/admin/catalog/refresh", { body: {} });
+      const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+      const r = await chat(g.url, key, AUTO);
+      assert.equal(r.status, 503);
+      assert.equal((await r.json()).error.type, "provider_account_problem");
+    } finally {
+      await g.close();
+      await a.close();
+    }
+  });
+
+  it("a paid model that fails with a server error moves on to the next model by default, and not when switched off", async () => {
+    assert.equal(loadConfig({}).retryPaid, true);
+    assert.equal(loadConfig({ MITRIFY_GATEWAY_RETRY_PAID: "0" }).retryPaid, false);
+    for (const [flag, want] of [["", 200], ["0", 500]] as const) {
+      const seen: string[] = [];
+      const up = await mockUpstream((req, res) => {
+        seen.push(modelOf(req));
+        if (modelOf(req) === "paid-a") return void (res.writeHead(500, { "content-type": "application/json" }), res.end('{"error":"boom"}'));
+        okRes(res);
+      });
+      const g = await startGateway(baseEnv({ MITRIFY_SURPLUS_API_KEY: UPSTREAM_KEY, MITRIFY_SURPLUS_BASE_URL: up.url, MITRIFY_SURPLUS_APPROVED: "1", MITRIFY_GATEWAY_RETRY_PAID: flag }));
+      try {
+        await admin(g.url, "/admin/prices", { method: "PUT", body: [price("surplus", "paid-a", 0.1, 0.1, { enabled: true }), price("surplus", "paid-b", 0.5, 0.5, { enabled: true })] });
+        await admin(g.url, "/admin/catalog/refresh", { body: {} });
+        const key = ((await (await admin(g.url, "/admin/keys", { body: { name: "k" } })).json()) as { key: string }).key;
+        const r = await chat(g.url, key, AUTO);
+        assert.equal(r.status, want, `RETRY_PAID="${flag}"`);
+        if (want === 200) assert.equal(r.headers.get("x-mitrify-model"), "paid-b");
+      } finally {
+        await g.close();
+        await up.close();
+      }
+    }
+  });
+});

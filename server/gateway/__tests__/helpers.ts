@@ -51,6 +51,8 @@ export function baseEnv(extra: Record<string, string> = {}): Record<string, stri
     MITRIFY_GATEWAY_ALLOW_HTTP_UPSTREAM: "1",
     // Tests use "surplus" as a stand-in provider that may have free models; the real rule has its own test.
     MITRIFY_SURPLUS_NO_FREE_MODELS: "0",
+    // Older tests assume a paid request is never repeated; the real default (on) has its own tests.
+    MITRIFY_GATEWAY_RETRY_PAID: "0",
     ...extra,
   };
 }
