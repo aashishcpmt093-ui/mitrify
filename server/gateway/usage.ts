@@ -61,6 +61,8 @@ export class SseWatcher {
   usage: Usage | null = null;
   sawDone = false;
   sawFinishReason = false;
+  /** Why the reply ended, as the provider said ("stop", "length" = cut at the max_tokens limit, ...). */
+  finishReason: string | null = null;
   private decoder = new TextDecoder("utf-8");
   private pending = "";
   private skipping = false;
@@ -109,7 +111,11 @@ export class SseWatcher {
       const u = readUsage(obj);
       if (u) this.usage = u;
       const choices = (obj as { choices?: { finish_reason?: unknown }[] }).choices;
-      if (Array.isArray(choices) && choices.some((c) => c && c.finish_reason != null)) this.sawFinishReason = true;
+      if (Array.isArray(choices) && choices.some((c) => c && c.finish_reason != null)) {
+        this.sawFinishReason = true;
+        const f = choices.find((c) => c && c.finish_reason != null)?.finish_reason;
+        if (typeof f === "string") this.finishReason = f.slice(0, 40);
+      }
     } catch {
       // Not JSON: nothing to account, the bytes were already forwarded.
     }
